@@ -29,7 +29,13 @@ public struct CueMarkers: Codable, Sendable, Equatable {
 
     /// Verifies strict ordering and bounds against the track's total duration.
     public func isValid(forDuration duration: Double) -> Bool {
-        guard duration >= 0 else { return false }
+        guard duration.isFinite && duration >= 0 else { return false }
+        guard startTrimCue.isFinite
+                && vocalEntryCue.isFinite
+                && mixOutCue.isFinite
+                && endTrimCue.isFinite else {
+            return false
+        }
         return 0.0 <= startTrimCue
             && startTrimCue <= vocalEntryCue
             && vocalEntryCue <= mixOutCue
@@ -301,6 +307,44 @@ public struct TrackCacheEntry: Codable, Sendable, Equatable {
 
         return merged
     }
+
+    /// Validates structural invariants for duration, confidence, and cue markers.
+    public var isValid: Bool {
+        guard duration.isFinite && duration >= 0.0 else {
+            return false
+        }
+        guard confidence.isFinite && confidence >= 0.0 && confidence <= 1.0 else {
+            return false
+        }
+        guard cueMarkers.isValid(forDuration: duration) else {
+            return false
+        }
+        return true
+    }
+}
+
+/// Domain-specific errors thrown during library cache schema validation.
+public enum CacheValidationError: LocalizedError, Equatable {
+    case unsupportedSchemaVersion(String)
+    case emptyLibraryRoot
+    case invalidDuration(track: String, duration: Double)
+    case invalidConfidence(track: String, confidence: Double)
+    case invalidCueMarkers(track: String, duration: Double)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchemaVersion(let version):
+            return "Unsupported schema version: '\(version)' (expected '\(PulseDeckCoreConfig.cacheSchemaVersion)')"
+        case .emptyLibraryRoot:
+            return "Cache root missing or empty libraryRoot"
+        case .invalidDuration(let track, let duration):
+            return "Track '\(track)' duration must be non-negative and finite: \(duration)"
+        case .invalidConfidence(let track, let confidence):
+            return "Track '\(track)' confidence score must be between 0.0 and 1.0, got: \(confidence)"
+        case .invalidCueMarkers(let track, let duration):
+            return "Track '\(track)' cue markers violate ordering/bounds for duration \(duration)"
+        }
+    }
 }
 
 /// The root dictionary and metadata structure of `.pulsedeck_ai_cache.json`.
@@ -331,5 +375,33 @@ public struct PulseDeckLibraryCache: Codable, Sendable, Equatable {
         self.generatedAt = generatedAt
         self.libraryRoot = libraryRoot
         self.tracks = tracks
+    }
+
+    /// Validates schema invariants with strict parity to the Python cache validator.
+    /// Throws CacheValidationError if schemaVersion != 1.0.0, libraryRoot is empty,
+    /// or any track fails duration, confidence, or cue marker bounds.
+    public func validate() throws {
+        guard schemaVersion == PulseDeckCoreConfig.cacheSchemaVersion else {
+            throw CacheValidationError.unsupportedSchemaVersion(schemaVersion)
+        }
+        guard !libraryRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CacheValidationError.emptyLibraryRoot
+        }
+        for (path, track) in tracks {
+            guard track.duration.isFinite && track.duration >= 0.0 else {
+                throw CacheValidationError.invalidDuration(track: path, duration: track.duration)
+            }
+            guard track.confidence.isFinite && track.confidence >= 0.0 && track.confidence <= 1.0 else {
+                throw CacheValidationError.invalidConfidence(track: path, confidence: track.confidence)
+            }
+            guard track.cueMarkers.isValid(forDuration: track.duration) else {
+                throw CacheValidationError.invalidCueMarkers(track: path, duration: track.duration)
+            }
+        }
+    }
+
+    /// Convenience property returning true if the cache satisfies all schema and track bounds invariants.
+    public var isValid: Bool {
+        (try? validate()) != nil
     }
 }

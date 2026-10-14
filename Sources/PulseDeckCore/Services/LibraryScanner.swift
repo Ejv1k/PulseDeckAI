@@ -54,10 +54,15 @@ public struct LibraryScanner: Sendable {
         let hasCache = fileManager.fileExists(atPath: cacheURL.path)
         var cacheSchema: String? = nil
         var cachedTracks = 0
+        var cacheScanError: String? = nil
 
-        if hasCache, let cache = CachePersistence.load(from: cacheURL) {
-            cacheSchema = cache.schemaVersion
-            cachedTracks = cache.tracks.count
+        if hasCache {
+            if let cache = CachePersistence.load(from: cacheURL) {
+                cacheSchema = cache.schemaVersion
+                cachedTracks = cache.tracks.count
+            } else {
+                cacheScanError = "Cache file at '\(cacheURL.path)' failed validation (unsupported schema version or malformed track entries)"
+            }
         }
 
         let items: [URL]
@@ -133,7 +138,7 @@ public struct LibraryScanner: Sendable {
             cacheSchemaVersion: cacheSchema,
             cachedTrackCount: cachedTracks,
             crates: cratesList,
-            scanError: nil
+            scanError: cacheScanError
         )
     }
 }

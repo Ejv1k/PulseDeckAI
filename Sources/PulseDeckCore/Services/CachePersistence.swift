@@ -10,6 +10,11 @@ import Glibc
 public enum CachePersistence: Sendable {
 
     /// Loads and decodes the library cache from disk.
+    /// Strictly validates schema invariants (schemaVersion == "1.0.0", non-empty libraryRoot,
+    /// finite non-negative duration, confidence in 0...1, and valid cue bounds).
+    /// Returns nil if file is nonexistent, decoding fails, or schema validation fails.
+    /// Does not convert schema validation failures into an empty cache (empty default cache is
+    /// returned solely for a 0-byte file).
     public static func load(from fileURL: URL) -> PulseDeckLibraryCache? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
@@ -21,9 +26,12 @@ public enum CachePersistence: Sendable {
                 return PulseDeckLibraryCache()
             }
             let decoder = JSONDecoder()
-            return try decoder.decode(PulseDeckLibraryCache.self, from: data)
+            let decoded = try decoder.decode(PulseDeckLibraryCache.self, from: data)
+            // Strictly validate schema invariants with parity to Python loader
+            try decoded.validate()
+            return decoded
         } catch {
-            // If decode fails, return nil or handle gracefully
+            // Return nil on malformed JSON or schema validation failure
             return nil
         }
     }

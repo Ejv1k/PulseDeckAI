@@ -131,6 +131,92 @@ final class CacheSchemaTests: XCTestCase {
         XCTAssertEqual(decoded.tracks[entry.relativePath]?.bpm, 120.0)
     }
 
+    /// Tests that CachePersistence.load strictly validates schema invariants and rejects invalid documents.
+    func testCachePersistenceValidationRejectsInvalidDocuments() throws {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckValidationTest_\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+
+        // 1. Wrong schema version (e.g. "2.0.0") must fail validation and return nil
+        let wrongVersionCache = PulseDeckLibraryCache(schemaVersion: "2.0.0")
+        let wrongVersionURL = tempDir.appendingPathComponent("wrong_version.json")
+        try encoder.encode(wrongVersionCache).write(to: wrongVersionURL)
+        XCTAssertNil(CachePersistence.load(from: wrongVersionURL), "Wrong schemaVersion '2.0.0' must fail validation and return nil")
+
+        // 2. endTrimCue past duration must fail validation and return nil
+        var endTrimExceedsCache = PulseDeckLibraryCache()
+        var entryExceeds = makeSampleEntry(fingerprint: "hash1", analyzer: "v1", duration: 100.0)
+        entryExceeds.cueMarkers = CueMarkers(startTrimCue: 5.0, vocalEntryCue: 15.0, mixOutCue: 85.0, endTrimCue: 105.0)
+        endTrimExceedsCache.tracks[entryExceeds.relativePath] = entryExceeds
+        let endTrimURL = tempDir.appendingPathComponent("end_trim_exceeds.json")
+        try encoder.encode(endTrimExceedsCache).write(to: endTrimURL)
+        XCTAssertNil(CachePersistence.load(from: endTrimURL), "endTrimCue past duration must fail validation and return nil")
+
+        // 3. Inverted cues must fail validation and return nil
+        var invertedCuesCache = PulseDeckLibraryCache()
+        var entryInverted = makeSampleEntry(fingerprint: "hash2", analyzer: "v1", duration: 200.0)
+        entryInverted.cueMarkers = CueMarkers(startTrimCue: 50.0, vocalEntryCue: 20.0, mixOutCue: 170.0, endTrimCue: 190.0)
+        invertedCuesCache.tracks[entryInverted.relativePath] = entryInverted
+        let invertedURL = tempDir.appendingPathComponent("inverted_cues.json")
+        try encoder.encode(invertedCuesCache).write(to: invertedURL)
+        XCTAssertNil(CachePersistence.load(from: invertedURL), "Inverted cues must fail validation and return nil")
+
+        // 4. Confidence outside 0.0...1.0 (confidence of 1.5) must fail validation and return nil
+        var invalidConfidenceCache = PulseDeckLibraryCache()
+        let entryConfidence = TrackCacheEntry(
+            relativePath: "00_Test_Tracks_Dev/sample.mp3",
+            fileFingerprint: "hash3",
+            fileSizeBytes: 1000,
+            fileModificationTime: "2026-10-14T12:00:00Z",
+            duration: 120.0,
+            sampleRate: 44100.0,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "8A",
+            confidence: 1.5,
+            waveformMetadata: WaveformMetadata(
+                sampleCount: 10,
+                downsampleFactor: 256,
+                peakValues: [0.5],
+                lowBandPeaks: [0.5],
+                midBandPeaks: [0.5],
+                highBandPeaks: [0.5]
+            ),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0.0, beatIntervalSeconds: 0.5, beatTimestamps: [0.0]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0.0, vocalEntryCue: 10.0, mixOutCue: 100.0, endTrimCue: 120.0),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "v1",
+            analysisTimestamp: "2026-10-14T12:00:00Z"
+        )
+        invalidConfidenceCache.tracks[entryConfidence.relativePath] = entryConfidence
+        let confidenceURL = tempDir.appendingPathComponent("invalid_confidence.json")
+        try encoder.encode(invalidConfidenceCache).write(to: confidenceURL)
+        XCTAssertNil(CachePersistence.load(from: confidenceURL), "Confidence 1.5 must fail validation and return nil")
+
+        // 5. Negative duration must fail validation and return nil
+        var negativeDurCache = PulseDeckLibraryCache()
+        let entryNegDur = makeSampleEntry(fingerprint: "hash4", analyzer: "v1", duration: -10.0)
+        negativeDurCache.tracks[entryNegDur.relativePath] = entryNegDur
+        let negDurURL = tempDir.appendingPathComponent("negative_duration.json")
+        try encoder.encode(negativeDurCache).write(to: negDurURL)
+        XCTAssertNil(CachePersistence.load(from: negDurURL), "Negative duration must fail validation and return nil")
+
+        // 6. Empty libraryRoot must fail validation and return nil
+        let emptyRootCache = PulseDeckLibraryCache(libraryRoot: "   ")
+        let emptyRootURL = tempDir.appendingPathComponent("empty_root.json")
+        try encoder.encode(emptyRootCache).write(to: emptyRootURL)
+        XCTAssertNil(CachePersistence.load(from: emptyRootURL), "Empty libraryRoot must fail validation and return nil")
+    }
+
     private func makeSampleEntry(fingerprint: String, analyzer: String, duration: Double = 210.0) -> TrackCacheEntry {
         TrackCacheEntry(
             relativePath: "00_Test_Tracks_Dev/sample.mp3",

@@ -47,7 +47,7 @@ public struct CueMarkers: Codable, Sendable, Equatable {
     /// Defensively guards against non-finite (NaN, Infinity) values.
     public func clamped(toDuration duration: Double) -> CueMarkers {
         guard duration.isFinite && duration >= 0.0 else {
-            return CueMarkers(startTrimCue: 0.0, vocalEntryCue: 0.0, mixOutCue: 0.0, endTrimCue: 0.0)
+            return self
         }
         let maxDur = duration
         let rawS = startTrimCue.isFinite ? startTrimCue : 0.0
@@ -291,13 +291,22 @@ public struct TrackCacheEntry: Codable, Sendable, Equatable {
             return newAnalysis
         }
 
+        // Fail merge and keep existing entry if new duration is invalid (NaN, infinite, or negative)
+        guard newAnalysis.duration.isFinite && newAnalysis.duration >= 0.0 else {
+            return self
+        }
+
         var merged = newAnalysis
         merged.manualOverrides = self.manualOverrides
         merged.aiTrimBypass = self.aiTrimBypass
 
         if self.manualOverrides.overriddenFields.contains("cueMarkers") {
             merged.cueMarkers = self.cueMarkers.clamped(toDuration: merged.duration)
+        } else {
+            // Ensure automated cues on the returned entry are ordered and bounded in [0, duration]
+            merged.cueMarkers = newAnalysis.cueMarkers.clamped(toDuration: merged.duration)
         }
+
         if self.manualOverrides.overriddenFields.contains("bpm") {
             merged.bpm = self.bpm
         }

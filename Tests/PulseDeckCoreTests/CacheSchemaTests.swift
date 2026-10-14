@@ -113,6 +113,61 @@ final class CacheSchemaTests: XCTestCase {
         XCTAssertEqual(merged.cueMarkers.endTrimCue, 45.0)
     }
 
+    func testPreserveManualOverridesInvalidNewDurationFailsMerge() {
+        var existing = makeSampleEntry(fingerprint: "hash_v1", analyzer: "accelerate-dsp-v1.0", duration: 180.0)
+        existing.cueMarkers = CueMarkers(startTrimCue: 10.0, vocalEntryCue: 20.0, mixOutCue: 150.0, endTrimCue: 175.0)
+        existing.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["cueMarkers"]
+        )
+
+        // 1. Re-analysis returns NaN duration -> merge must fail and keep existing manual cues
+        let nanAnalysis = makeSampleEntry(fingerprint: "hash_nan", analyzer: "accelerate-dsp-v2.0", duration: .nan)
+        let mergedNaN = existing.mergingPreservingOverrides(with: nanAnalysis)
+        XCTAssertEqual(mergedNaN.cueMarkers.startTrimCue, 10.0)
+        XCTAssertEqual(mergedNaN.cueMarkers.endTrimCue, 175.0)
+        XCTAssertEqual(mergedNaN.duration, 180.0)
+
+        // 2. Re-analysis returns negative duration -> merge must fail and keep existing manual cues
+        let negAnalysis = makeSampleEntry(fingerprint: "hash_neg", analyzer: "accelerate-dsp-v2.0", duration: -30.0)
+        let mergedNeg = existing.mergingPreservingOverrides(with: negAnalysis)
+        XCTAssertEqual(mergedNeg.cueMarkers.startTrimCue, 10.0)
+        XCTAssertEqual(mergedNeg.cueMarkers.endTrimCue, 175.0)
+        XCTAssertEqual(mergedNeg.duration, 180.0)
+
+        // 3. Re-analysis returns +infinity duration -> merge must fail and keep existing manual cues
+        let infAnalysis = makeSampleEntry(fingerprint: "hash_inf", analyzer: "accelerate-dsp-v2.0", duration: .infinity)
+        let mergedInf = existing.mergingPreservingOverrides(with: infAnalysis)
+        XCTAssertEqual(mergedInf.cueMarkers.startTrimCue, 10.0)
+        XCTAssertEqual(mergedInf.duration, 180.0)
+    }
+
+    func testPreserveManualOverridesInvertedAutomatedCuesClampedWhenOnlyBpmOverridden() {
+        var existing = makeSampleEntry(fingerprint: "hash_v1", analyzer: "accelerate-dsp-v1.0", duration: 200.0)
+        existing.bpm = 126.0
+        // Only bpm is overridden, cueMarkers is NOT overridden
+        existing.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["bpm"]
+        )
+
+        // New analysis provides an inverted automated cue set: vocalEntry precedes startTrim, endTrim precedes mixOut
+        var newAnalysis = makeSampleEntry(fingerprint: "hash_v2", analyzer: "accelerate-dsp-v2.0", duration: 200.0)
+        newAnalysis.cueMarkers = CueMarkers(startTrimCue: 60.0, vocalEntryCue: 20.0, mixOutCue: 180.0, endTrimCue: 170.0)
+        newAnalysis.bpm = 120.0
+
+        let merged = existing.mergingPreservingOverrides(with: newAnalysis)
+
+        // Preserves manual BPM
+        XCTAssertEqual(merged.bpm, 126.0)
+        // Automated cues must be ordered and inside [0, duration]
+        XCTAssertTrue(merged.cueMarkers.isValid(forDuration: 200.0), "Automated cues must be clamped and valid on returned entry")
+        XCTAssertLessThanOrEqual(merged.cueMarkers.startTrimCue, merged.cueMarkers.vocalEntryCue)
+        XCTAssertLessThanOrEqual(merged.cueMarkers.vocalEntryCue, merged.cueMarkers.mixOutCue)
+        XCTAssertLessThanOrEqual(merged.cueMarkers.mixOutCue, merged.cueMarkers.endTrimCue)
+        XCTAssertLessThanOrEqual(merged.cueMarkers.endTrimCue, 200.0)
+    }
+
     func testCacheJSONEncodingDecoding() throws {
         let entry = makeSampleEntry(fingerprint: "abc123sha256", analyzer: "accelerate-dsp-v1.0")
         var cache = PulseDeckLibraryCache()

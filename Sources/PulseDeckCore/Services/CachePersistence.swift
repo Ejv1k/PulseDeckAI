@@ -51,18 +51,31 @@ public enum CachePersistence: Sendable {
 
         let tempURL = directoryURL.appendingPathComponent(".cache_tmp_\(UUID().uuidString).json")
 
+        var replaced = false
+        defer {
+            if !replaced {
+                try? fileManager.removeItem(at: tempURL)
+            }
+        }
+
         // Write data to temporary file
         try data.write(to: tempURL)
 
         // Ensure data bytes are physically committed to storage before atomic replacement
         let fileDescriptor = open(tempURL.path, O_RDWR)
-        if fileDescriptor >= 0 {
-            #if os(macOS)
-            _ = fcntl(fileDescriptor, F_FULLFSYNC)
-            #else
-            _ = fsync(fileDescriptor)
-            #endif
-            close(fileDescriptor)
+        guard fileDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        #if os(macOS)
+        let flushResult = fcntl(fileDescriptor, F_FULLFSYNC)
+        #else
+        let flushResult = fsync(fileDescriptor)
+        #endif
+        close(fileDescriptor)
+
+        guard flushResult == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
 
         // Atomic POSIX replace
@@ -71,12 +84,18 @@ public enum CachePersistence: Sendable {
         } else {
             try fileManager.moveItem(at: tempURL, to: targetURL)
         }
+        replaced = true
 
         // Synchronize directory metadata
         let dirDescriptor = open(directoryURL.path, O_RDONLY)
         if dirDescriptor >= 0 {
-            _ = fsync(dirDescriptor)
+            let dirSyncResult = fsync(dirDescriptor)
             close(dirDescriptor)
+            guard dirSyncResult == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
 

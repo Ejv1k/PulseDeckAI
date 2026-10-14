@@ -200,6 +200,62 @@ final class LibraryScannerTests: XCTestCase {
         XCTAssertEqual(emptyLoaded?.tracks.count, 0)
     }
 
+    /// Tests that a malformed or corrupted cache file on disk produces an explicit scanError rather than reporting verified.
+    func testScanMalformedCacheFileReportsScanError() throws {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckMalformedCacheTest_\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+
+        // Create a crate folder so the root is otherwise valid
+        let crateDir = tempDir.appendingPathComponent("01_House")
+        try fileManager.createDirectory(at: crateDir, withIntermediateDirectories: true)
+
+        // Write malformed JSON to .pulsedeck_ai_cache.json
+        let cacheURL = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        try "{ this is malformed json : [".write(to: cacheURL, atomically: true, encoding: .utf8)
+
+        let scanner = LibraryScanner()
+        let summary = scanner.scan(libraryURL: tempDir)
+
+        XCTAssertTrue(summary.hasCacheFile, "Cache file exists on disk")
+        XCTAssertNil(summary.cacheSchemaVersion, "Malformed cache cannot publish schema version")
+        XCTAssertEqual(summary.cachedTrackCount, 0, "Malformed cache cannot publish track count")
+        XCTAssertNotNil(summary.scanError, "Scanner must set scanError when cache fails validation")
+        XCTAssertTrue(summary.scanError?.contains("failed validation") ?? false)
+    }
+
+    /// Tests that when saveAtomic encounters an unwriteable target destination, the temporary file is deleted.
+    func testCachePersistenceSaveAtomicFailureCleansUpTempFile() throws {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckCleanupTest_\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+
+        // Create a directory where the target file would be, making replace/move fail or read-only directory
+        let unwriteableDir = tempDir.appendingPathComponent("ReadOnlySubdir")
+        try fileManager.createDirectory(at: unwriteableDir, withIntermediateDirectories: true)
+        // Make directory read-only
+        try fileManager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: unwriteableDir.path)
+        defer {
+            try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unwriteableDir.path)
+        }
+
+        let targetURL = unwriteableDir.appendingPathComponent("cache.json")
+        let cache = PulseDeckLibraryCache()
+
+        XCTAssertThrowsError(try CachePersistence.saveAtomic(cache: cache, to: targetURL))
+
+        // Verify no leftover .cache_tmp files exist in the directory
+        let remaining = (try? fileManager.contentsOfDirectory(atPath: unwriteableDir.path)) ?? []
+        let leftoverTemps = remaining.filter { $0.hasPrefix(".cache_tmp") }
+        XCTAssertEqual(leftoverTemps.count, 0, "No temporary files should be left behind on failure")
+    }
+
     func testDisplayNameFormatting() {
         XCTAssertEqual(LibraryScanner.displayName(for: "00_Test_Tracks_Dev"), "[00] Test Tracks Dev")
         XCTAssertEqual(LibraryScanner.displayName(for: "05_MainStage_Dance_120_128BPM"), "[05] MainStage Dance 120 128BPM")

@@ -30,6 +30,11 @@ Thumbs.db
 credentials.json
 secrets.json
 
+# Python bytecode & cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Audio and media formats (all case variants: lowercase and uppercase)
 *.mp3
 *.MP3

@@ -36,9 +36,15 @@ public struct LibraryBrowserView: View {
                                     appState.selectCrate(crate)
                                 }) {
                                     HStack(spacing: 8) {
-                                        Image(systemName: crate.trackCount > 0 ? "music.note.list" : "folder")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.deckA : DJTheme.textMuted)
+                                        if !crate.isReadable {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.orange)
+                                        } else {
+                                            Image(systemName: crate.trackCount > 0 ? "music.note.list" : "folder")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.deckA : DJTheme.textMuted)
+                                        }
 
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(crate.displayName)
@@ -47,21 +53,33 @@ public struct LibraryBrowserView: View {
                                                 .lineLimit(1)
 
                                             HStack(spacing: 6) {
-                                                Text(crate.hasGitKeep ? ".gitkeep ✓" : "no .gitkeep")
-                                                    .font(.system(size: 9, design: .monospaced))
-                                                    .foregroundColor(DJTheme.textMuted)
+                                                if !crate.isReadable {
+                                                    Text("Unreadable")
+                                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                        .foregroundColor(.orange)
+                                                } else {
+                                                    Text(crate.hasGitKeep ? ".gitkeep ✓" : "no .gitkeep")
+                                                        .font(.system(size: 9, design: .monospaced))
+                                                        .foregroundColor(DJTheme.textMuted)
+                                                }
                                             }
                                         }
 
                                         Spacer()
 
-                                        Text("\(crate.trackCount)")
-                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.3) : DJTheme.cardHeader)
-                                            .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.deckA : DJTheme.textMuted)
-                                            .cornerRadius(3)
+                                        if !crate.isReadable {
+                                            Image(systemName: "exclamationmark.triangle")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.orange)
+                                        } else {
+                                            Text("\(crate.trackCount)")
+                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.3) : DJTheme.cardHeader)
+                                                .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.deckA : DJTheme.textMuted)
+                                                .cornerRadius(3)
+                                        }
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 6)
@@ -103,16 +121,39 @@ public struct LibraryBrowserView: View {
 
                         Spacer()
 
-                        Text("\(selected.trackCount) TRACKS DETECTED")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(selected.trackCount > 0 ? DJTheme.master : DJTheme.textMuted)
+                        if !selected.isReadable {
+                            Text("READ ERROR")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(.orange)
+                        } else {
+                            Text("\(selected.trackCount) TRACKS DETECTED")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(selected.trackCount > 0 ? DJTheme.master : DJTheme.textMuted)
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DJTheme.cardHeader)
                     .cornerRadius(4)
 
-                    if selected.audioFiles.isEmpty {
+                    if !selected.isReadable {
+                        VStack(spacing: 8) {
+                            Spacer()
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.orange)
+                            Text("Crate Unreadable")
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textPrimary)
+                            Text(selected.errorMessage ?? "Permission denied or directory listing failure")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else if selected.audioFiles.isEmpty {
                         VStack(spacing: 8) {
                             Spacer()
                             Image(systemName: "opticaldisc")

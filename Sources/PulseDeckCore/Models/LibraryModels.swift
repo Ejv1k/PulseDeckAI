@@ -9,6 +9,8 @@ public struct LibraryCrateInfo: Sendable, Equatable, Identifiable {
     public let trackCount: Int
     public let hasGitKeep: Bool
     public let audioFiles: [String]
+    public let isReadable: Bool
+    public let errorMessage: String?
 
     public init(
         id: String,
@@ -17,7 +19,9 @@ public struct LibraryCrateInfo: Sendable, Equatable, Identifiable {
         relativePath: String,
         trackCount: Int,
         hasGitKeep: Bool,
-        audioFiles: [String] = []
+        audioFiles: [String] = [],
+        isReadable: Bool = true,
+        errorMessage: String? = nil
     ) {
         self.id = id
         self.folderName = folderName
@@ -26,6 +30,8 @@ public struct LibraryCrateInfo: Sendable, Equatable, Identifiable {
         self.trackCount = trackCount
         self.hasGitKeep = hasGitKeep
         self.audioFiles = audioFiles
+        self.isReadable = isReadable
+        self.errorMessage = errorMessage
     }
 }
 
@@ -38,6 +44,11 @@ public struct LibraryScanSummary: Sendable, Equatable {
     public let cacheSchemaVersion: String?
     public let cachedTrackCount: Int
     public let crates: [LibraryCrateInfo]
+    public let scanError: String?
+
+    public var isLibraryValid: Bool {
+        return scanError == nil
+    }
 
     public init(
         libraryURL: URL,
@@ -46,7 +57,8 @@ public struct LibraryScanSummary: Sendable, Equatable {
         hasCacheFile: Bool,
         cacheSchemaVersion: String?,
         cachedTrackCount: Int,
-        crates: [LibraryCrateInfo]
+        crates: [LibraryCrateInfo],
+        scanError: String? = nil
     ) {
         self.libraryURL = libraryURL
         self.totalCrates = totalCrates
@@ -55,5 +67,6 @@ public struct LibraryScanSummary: Sendable, Equatable {
         self.cacheSchemaVersion = cacheSchemaVersion
         self.cachedTrackCount = cachedTrackCount
         self.crates = crates
+        self.scanError = scanError
     }
 }

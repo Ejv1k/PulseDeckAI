@@ -1,5 +1,11 @@
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// Thread-safe service for atomic loading, serializing, and saving PulseDeck library cache.
 public enum CachePersistence: Sendable {
 
@@ -22,8 +28,8 @@ public enum CachePersistence: Sendable {
         }
     }
 
-    /// Atomically persists the library cache to disk using temporary file write + atomic rename.
-    /// Guarantees that partial writes or sudden power loss never corrupt the cache.
+    /// Atomically persists the library cache to disk using temporary file staging,
+    /// synchronous hardware flush (F_FULLFSYNC / fsync), and atomic POSIX replacement.
     public static func saveAtomic(cache: PulseDeckLibraryCache, to targetURL: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -37,13 +43,31 @@ public enum CachePersistence: Sendable {
         let tempURL = directoryURL.appendingPathComponent(".cache_tmp_\(UUID().uuidString).json")
 
         // Write data to temporary file
-        try data.write(to: tempURL, options: .atomic)
+        try data.write(to: tempURL)
 
-        // Atomic replace
+        // Ensure data bytes are physically committed to storage before rename
+        let fileDescriptor = open(tempURL.path, O_RDONLY)
+        if fileDescriptor >= 0 {
+            #if os(macOS)
+            _ = fcntl(fileDescriptor, F_FULLFSYNC)
+            #else
+            _ = fsync(fileDescriptor)
+            #endif
+            close(fileDescriptor)
+        }
+
+        // Atomic POSIX replace
         if fileManager.fileExists(atPath: targetURL.path) {
             _ = try fileManager.replaceItemAt(targetURL, withItemAt: tempURL)
         } else {
             try fileManager.moveItem(at: tempURL, to: targetURL)
+        }
+
+        // Synchronize directory metadata
+        let dirDescriptor = open(directoryURL.path, O_RDONLY)
+        if dirDescriptor >= 0 {
+            _ = fsync(dirDescriptor)
+            close(dirDescriptor)
         }
     }
 

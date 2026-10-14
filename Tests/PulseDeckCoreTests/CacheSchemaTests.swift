@@ -34,6 +34,11 @@ final class CacheSchemaTests: XCTestCase {
         let clamped = invertedCues.clamped(toDuration: 200.0)
         XCTAssertTrue(clamped.isValid(forDuration: 200.0))
         XCTAssertEqual(clamped.endTrimCue, 200.0)
+
+        // Non-finite clamping
+        let nanCues = CueMarkers(startTrimCue: .nan, vocalEntryCue: .infinity, mixOutCue: -.infinity, endTrimCue: 250.0)
+        let clampedNan = nanCues.clamped(toDuration: 100.0)
+        XCTAssertTrue(clampedNan.isValid(forDuration: 100.0))
     }
 
     func testCacheInvalidation() {
@@ -51,7 +56,7 @@ final class CacheSchemaTests: XCTestCase {
 
     func testPreserveManualOverridesDuringReanalysis() {
         var existing = makeSampleEntry(fingerprint: "hash_v1", analyzer: "accelerate-dsp-v1.0")
-        // User manually adjusted cueMarkers and BPM
+        // User manually adjusted cueMarkers and BPM; endTrimCue (215.0) originally exceeded duration (210.0)
         existing.cueMarkers = CueMarkers(startTrimCue: 12.0, vocalEntryCue: 24.0, mixOutCue: 195.0, endTrimCue: 215.0)
         existing.bpm = 126.5
         existing.aiTrimBypass = true
@@ -63,17 +68,20 @@ final class CacheSchemaTests: XCTestCase {
             notes: "Adjusted intro trim for vocal acapella"
         )
 
-        // New automated analysis arrives
-        let automatedAnalysis = makeSampleEntry(fingerprint: "hash_v2", analyzer: "accelerate-dsp-v2.0")
+        // New automated analysis arrives with duration 210.0
+        let automatedAnalysis = makeSampleEntry(fingerprint: "hash_v2", analyzer: "accelerate-dsp-v2.0", duration: 210.0)
         XCTAssertEqual(automatedAnalysis.bpm, 120.0)
         XCTAssertEqual(automatedAnalysis.cueMarkers.startTrimCue, 5.0)
 
         // Merge preserving manual overrides
         let merged = existing.mergingPreservingOverrides(with: automatedAnalysis)
 
-        // Manual adjustments MUST be preserved
+        // Manual adjustments MUST be preserved, with cues safely clamped to merged.duration
         XCTAssertEqual(merged.cueMarkers.startTrimCue, 12.0)
         XCTAssertEqual(merged.cueMarkers.vocalEntryCue, 24.0)
+        XCTAssertEqual(merged.cueMarkers.mixOutCue, 195.0)
+        XCTAssertEqual(merged.cueMarkers.endTrimCue, 210.0) // Clamped from 215.0 to merged.duration (210.0)
+        XCTAssertTrue(merged.cueMarkers.isValid(forDuration: merged.duration))
         XCTAssertEqual(merged.bpm, 126.5)
         XCTAssertTrue(merged.aiTrimBypass)
         XCTAssertTrue(merged.manualOverrides.isManual)
@@ -82,6 +90,27 @@ final class CacheSchemaTests: XCTestCase {
         // Non-overridden fields update to new analysis
         XCTAssertEqual(merged.analyzerVersion, "accelerate-dsp-v2.0")
         XCTAssertEqual(merged.fileFingerprint, "hash_v2")
+    }
+
+    func testPreserveManualOverridesShorterFileAndInvalidCues() {
+        var existing = makeSampleEntry(fingerprint: "hash_v1", analyzer: "accelerate-dsp-v1.0", duration: 200.0)
+        // Manual cues set for a 200s track
+        existing.cueMarkers = CueMarkers(startTrimCue: 30.0, vocalEntryCue: 60.0, mixOutCue: 150.0, endTrimCue: 190.0)
+        existing.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["cueMarkers"]
+        )
+
+        // Track was replaced with a shorter 45s audio file
+        let shorterAnalysis = makeSampleEntry(fingerprint: "hash_v2_short", analyzer: "accelerate-dsp-v2.0", duration: 45.0)
+        let merged = existing.mergingPreservingOverrides(with: shorterAnalysis)
+
+        // All cues must be clamped and strictly ordered within 45.0s
+        XCTAssertTrue(merged.cueMarkers.isValid(forDuration: 45.0))
+        XCTAssertEqual(merged.cueMarkers.startTrimCue, 30.0)
+        XCTAssertEqual(merged.cueMarkers.vocalEntryCue, 45.0)
+        XCTAssertEqual(merged.cueMarkers.mixOutCue, 45.0)
+        XCTAssertEqual(merged.cueMarkers.endTrimCue, 45.0)
     }
 
     func testCacheJSONEncodingDecoding() throws {
@@ -102,13 +131,13 @@ final class CacheSchemaTests: XCTestCase {
         XCTAssertEqual(decoded.tracks[entry.relativePath]?.bpm, 120.0)
     }
 
-    private func makeSampleEntry(fingerprint: String, analyzer: String) -> TrackCacheEntry {
+    private func makeSampleEntry(fingerprint: String, analyzer: String, duration: Double = 210.0) -> TrackCacheEntry {
         TrackCacheEntry(
             relativePath: "00_Test_Tracks_Dev/sample.mp3",
             fileFingerprint: fingerprint,
             fileSizeBytes: 5_242_880,
             fileModificationTime: "2026-10-14T12:00:00Z",
-            duration: 210.0,
+            duration: duration,
             sampleRate: 44100.0,
             channels: 2,
             bitDepth: 16,

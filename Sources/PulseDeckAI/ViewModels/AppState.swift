@@ -22,6 +22,7 @@ public final class AppState: ObservableObject {
     }
 
     /// Scans the library root and updates published state on MainActor.
+    /// Ensures selectedCrate is updated with fresh data on every successful rescan.
     public func refreshLibrary() {
         self.isScanning = true
         let url = self.libraryRootURL
@@ -31,11 +32,21 @@ public final class AppState: ObservableObject {
             let summary = scanner.scan(libraryURL: url)
             await MainActor.run {
                 self.scanSummary = summary
-                if self.selectedCrate == nil || !summary.crates.contains(where: { $0.id == self.selectedCrate?.id }) {
+
+                if let currentId = self.selectedCrate?.id,
+                   let updatedCrate = summary.crates.first(where: { $0.id == currentId }) {
+                    self.selectedCrate = updatedCrate
+                } else {
                     self.selectedCrate = summary.crates.first
                 }
+
                 self.isScanning = false
-                self.statusMessage = "Library Verified: \(summary.totalCrates) Crates, \(summary.totalAudioTracks) Tracks"
+
+                if let error = summary.scanError {
+                    self.statusMessage = "Library Error: \(error)"
+                } else {
+                    self.statusMessage = "Library Verified: \(summary.totalCrates) Crates, \(summary.totalAudioTracks) Tracks"
+                }
             }
         }
     }

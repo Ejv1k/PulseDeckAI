@@ -38,12 +38,21 @@ public struct CueMarkers: Codable, Sendable, Equatable {
     }
 
     /// Clamps and orders cues safely to fit within track duration without inversion.
+    /// Defensively guards against non-finite (NaN, Infinity) values.
     public func clamped(toDuration duration: Double) -> CueMarkers {
-        let maxDur = max(0.0, duration)
-        let s = min(max(0.0, startTrimCue), maxDur)
-        let v = min(max(s, vocalEntryCue), maxDur)
-        let m = min(max(v, mixOutCue), maxDur)
-        let e = min(max(m, endTrimCue), maxDur)
+        guard duration.isFinite && duration >= 0.0 else {
+            return CueMarkers(startTrimCue: 0.0, vocalEntryCue: 0.0, mixOutCue: 0.0, endTrimCue: 0.0)
+        }
+        let maxDur = duration
+        let rawS = startTrimCue.isFinite ? startTrimCue : 0.0
+        let rawV = vocalEntryCue.isFinite ? vocalEntryCue : 0.0
+        let rawM = mixOutCue.isFinite ? mixOutCue : 0.0
+        let rawE = endTrimCue.isFinite ? endTrimCue : 0.0
+
+        let s = min(max(0.0, rawS), maxDur)
+        let v = min(max(s, rawV), maxDur)
+        let m = min(max(v, rawM), maxDur)
+        let e = min(max(m, rawE), maxDur)
         return CueMarkers(startTrimCue: s, vocalEntryCue: v, mixOutCue: m, endTrimCue: e)
     }
 }
@@ -281,7 +290,7 @@ public struct TrackCacheEntry: Codable, Sendable, Equatable {
         merged.aiTrimBypass = self.aiTrimBypass
 
         if self.manualOverrides.overriddenFields.contains("cueMarkers") {
-            merged.cueMarkers = self.cueMarkers
+            merged.cueMarkers = self.cueMarkers.clamped(toDuration: merged.duration)
         }
         if self.manualOverrides.overriddenFields.contains("bpm") {
             merged.bpm = self.bpm

@@ -1,0 +1,55 @@
+# PulseDeck AI - Strict Git Ignore Rules
+
+# Swift Package Manager & Xcode build artifacts
+.build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.swp
+*.swo
+
+# macOS & Operating System artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables, credentials, and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.secret
+credentials.json
+secrets.json
+
+# Audio and media formats (all case variants: lowercase and uppercase)
+*.mp3
+*.MP3
+*.wav
+*.WAV
+*.flac
+*.FLAC
+*.m4a
+*.M4A
+*.mp4
+*.MP4
+*.aif
+*.aiff
+*.AIF
+*.AIFF
+*.aac
+*.AAC
+*.ogg
+*.OGG
+
+# Ensure all PulseDeck_Library gitkeep files and cache JSON template are tracked
+!PulseDeck_Library/**/.gitkeep
+!PulseDeck_Library/.pulsedeck_ai_cache.json

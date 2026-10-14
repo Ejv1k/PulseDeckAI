@@ -143,7 +143,9 @@ final class LibraryScannerTests: XCTestCase {
         }
     }
 
-    /// Tests atomic durable persistence with hardware sync.
+    /// Tests atomic, crash-safe cache persistence using temporary file staging,
+    /// synchronous hardware flush (F_FULLFSYNC / fsync) prior to atomic replacement,
+    /// and atomic replacement over existing files with round-trip reload verification.
     func testCachePersistenceSaveAndLoadDurable() throws {
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckPersistenceTest_\(UUID().uuidString)")
@@ -153,20 +155,94 @@ final class LibraryScannerTests: XCTestCase {
         }
 
         let cacheURL = tempDir.appendingPathComponent(".pulsedeck_ai_cache.json")
-        var cache = PulseDeckLibraryCache()
+
+        // 1. Initial save of fresh cache
+        var cache = PulseDeckLibraryCache(libraryRoot: "TestLibrary")
         cache.generatedAt = "2026-10-14T20:00:00Z"
+        let entry1 = makeTestEntry(relativePath: "01_House/track1.mp3", duration: 180.0, bpm: 124.0, fingerprint: "hash123")
+        cache.tracks["01_House/track1.mp3"] = entry1
 
         try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
 
+        // Verify initial load
         let loaded = CachePersistence.load(from: cacheURL)
-        XCTAssertNotNil(loaded)
+        XCTAssertNotNil(loaded, "Persisted cache must reload cleanly from disk")
         XCTAssertEqual(loaded?.schemaVersion, "1.0.0")
+        XCTAssertEqual(loaded?.libraryRoot, "TestLibrary")
         XCTAssertEqual(loaded?.generatedAt, "2026-10-14T20:00:00Z")
+        XCTAssertEqual(loaded?.tracks.count, 1)
+        XCTAssertEqual(loaded?.tracks["01_House/track1.mp3"]?.bpm, 124.0)
+
+        // 2. In-place atomic replacement over existing target file with hardware sync before replace
+        var updatedCache = loaded!
+        updatedCache.generatedAt = "2026-10-14T20:05:00Z"
+        let entry2 = makeTestEntry(relativePath: "02_Techno/track2.mp3", duration: 210.0, bpm: 128.0, fingerprint: "hash456")
+        CachePersistence.upsertTrack(entry2, in: &updatedCache)
+
+        try CachePersistence.saveAtomic(cache: updatedCache, to: cacheURL)
+
+        // Verify reloaded updated cache
+        let reloaded = CachePersistence.load(from: cacheURL)
+        XCTAssertNotNil(reloaded)
+        XCTAssertEqual(reloaded?.generatedAt, "2026-10-14T20:05:00Z")
+        XCTAssertEqual(reloaded?.tracks.count, 2)
+        XCTAssertEqual(reloaded?.tracks["02_Techno/track2.mp3"]?.bpm, 128.0)
+
+        // 3. Graceful handling of nonexistent file
+        let nonExistentURL = tempDir.appendingPathComponent("does_not_exist.json")
+        XCTAssertNil(CachePersistence.load(from: nonExistentURL))
+
+        // 4. Graceful handling of 0-byte empty file
+        let emptyURL = tempDir.appendingPathComponent("empty.json")
+        try Data().write(to: emptyURL)
+        let emptyLoaded = CachePersistence.load(from: emptyURL)
+        XCTAssertNotNil(emptyLoaded, "Empty 0-byte file should return an empty default cache")
+        XCTAssertEqual(emptyLoaded?.tracks.count, 0)
     }
 
     func testDisplayNameFormatting() {
         XCTAssertEqual(LibraryScanner.displayName(for: "00_Test_Tracks_Dev"), "[00] Test Tracks Dev")
         XCTAssertEqual(LibraryScanner.displayName(for: "05_MainStage_Dance_120_128BPM"), "[05] MainStage Dance 120 128BPM")
         XCTAssertEqual(LibraryScanner.displayName(for: "Custom_Crate"), "Custom Crate")
+    }
+
+    private func makeTestEntry(relativePath: String, duration: Double, bpm: Double, fingerprint: String) -> TrackCacheEntry {
+        TrackCacheEntry(
+            relativePath: relativePath,
+            fileFingerprint: fingerprint,
+            fileSizeBytes: 4_194_304,
+            fileModificationTime: "2026-10-14T19:00:00Z",
+            duration: duration,
+            sampleRate: 44100.0,
+            channels: 2,
+            bitDepth: 16,
+            bpm: bpm,
+            musicalKey: "8A",
+            confidence: 0.95,
+            waveformMetadata: WaveformMetadata(
+                sampleCount: 100,
+                downsampleFactor: 256,
+                peakValues: [0.1, 0.5, 0.9],
+                lowBandPeaks: [0.1, 0.4, 0.8],
+                midBandPeaks: [0.05, 0.3, 0.7],
+                highBandPeaks: [0.02, 0.2, 0.6]
+            ),
+            beatGrid: BeatGrid(
+                firstBeatOffsetSeconds: 0.25,
+                beatIntervalSeconds: 0.5,
+                beatTimestamps: [0.25, 0.75, 1.25]
+            ),
+            structure: TrackStructure(
+                sections: [
+                    StructureSection(name: "Intro", startSeconds: 0.0, endSeconds: 15.0, energyLevel: 0.3)
+                ],
+                vocalSegments: []
+            ),
+            cueMarkers: CueMarkers(startTrimCue: 0.0, vocalEntryCue: 15.0, mixOutCue: duration - 20.0, endTrimCue: duration),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "accelerate-dsp-v1.0",
+            analysisTimestamp: "2026-10-14T19:01:00Z"
+        )
     }
 }

@@ -29,7 +29,8 @@ public enum CachePersistence: Sendable {
     }
 
     /// Atomically persists the library cache to disk using temporary file staging,
-    /// synchronous hardware flush (F_FULLFSYNC / fsync), and atomic POSIX replacement.
+    /// synchronous hardware flush (F_FULLFSYNC on macOS / fsync on Linux) before atomic file replacement,
+    /// and parent directory sync to ensure crash-safe durability.
     public static func saveAtomic(cache: PulseDeckLibraryCache, to targetURL: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -45,8 +46,8 @@ public enum CachePersistence: Sendable {
         // Write data to temporary file
         try data.write(to: tempURL)
 
-        // Ensure data bytes are physically committed to storage before rename
-        let fileDescriptor = open(tempURL.path, O_RDONLY)
+        // Ensure data bytes are physically committed to storage before atomic replacement
+        let fileDescriptor = open(tempURL.path, O_RDWR)
         if fileDescriptor >= 0 {
             #if os(macOS)
             _ = fcntl(fileDescriptor, F_FULLFSYNC)

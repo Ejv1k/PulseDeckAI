@@ -13,7 +13,7 @@ public struct LibraryBrowserView: View {
             // Left Column: Crates Navigation List
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("DJ CRATES (10)")
+                    Text("DJ CRATES (\(appState.scanSummary?.totalCrates ?? 0))")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(DJTheme.textSecondary)
 

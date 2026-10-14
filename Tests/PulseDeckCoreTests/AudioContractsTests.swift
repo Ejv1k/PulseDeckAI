@@ -58,10 +58,17 @@ final class AudioContractsTests: XCTestCase {
         // Backoff delay calculation test
         let backoff0 = config.backoffDelaySeconds(forAttempt: 0)
         XCTAssertGreaterThan(backoff0, 0.5)
-        XCTAssertLessThan(backoff0, 2.0)
+        XCTAssertLessThanOrEqual(backoff0, 2.0)
 
         let backoff3 = config.backoffDelaySeconds(forAttempt: 3)
         XCTAssertGreaterThan(backoff3, 5.0)
-        XCTAssertLessThanOrEqual(backoff3, 36.0) // 30s cap with +/- 20% jitter
+        XCTAssertLessThanOrEqual(backoff3, 30.0) // Strictly capped at 30s after jitter
+
+        // Verify that high retry attempts are always capped after jitter at 30s
+        for _ in 0..<50 {
+            let backoffHigh = config.backoffDelaySeconds(forAttempt: 10)
+            XCTAssertGreaterThanOrEqual(backoffHigh, 24.0)
+            XCTAssertLessThanOrEqual(backoffHigh, 30.0, "Backoff delay must be strictly capped at 30s after jitter")
+        }
     }
 }

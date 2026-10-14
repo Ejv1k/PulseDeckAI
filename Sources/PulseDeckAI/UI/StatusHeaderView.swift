@@ -59,20 +59,24 @@ public struct StatusHeaderView: View {
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
-                            Text("Rescan")
+                            Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")
                         }
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(DJTheme.textPrimary)
+                        .foregroundColor(appState.isScanning ? DJTheme.deckA : DJTheme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(DJTheme.cardHeader)
                         .cornerRadius(4)
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
-                                .stroke(DJTheme.border, lineWidth: 1)
+                                .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(appState.isScanning)
+                    .opacity(appState.isScanning ? 0.7 : 1.0)
+                    .help("Rescan library directory (⌘R)")
                 }
             }
 

@@ -12,6 +12,7 @@ public final class AppState: ObservableObject {
     @Published public var statusMessage: String = "Phase 0 Operational Shell Initialized"
 
     private let scanner = LibraryScanner()
+    private var scanGeneration: UInt64 = 0
 
     public init() {
         // Resolve library folder relative to current working directory or bundle
@@ -22,15 +23,28 @@ public final class AppState: ObservableObject {
     }
 
     /// Scans the library root and updates published state on MainActor.
-    /// Ensures selectedCrate is updated with fresh data on every successful rescan.
+    /// Strictly limits scanning to one in-flight operation and protects against stale results
+    /// from out-of-order background task completion.
     public func refreshLibrary() {
+        guard !self.isScanning else {
+            // Drop concurrent rescan requests while a scan is actively running
+            return
+        }
+
         self.isScanning = true
+        self.scanGeneration &+= 1
+        let thisGeneration = self.scanGeneration
         let url = self.libraryRootURL
 
         // Perform scanner on background thread, deliver result to MainActor
         Task.detached(priority: .userInitiated) { [scanner] in
             let summary = scanner.scan(libraryURL: url)
             await MainActor.run {
+                // Ignore result if another scan generation was initiated
+                guard self.scanGeneration == thisGeneration else {
+                    return
+                }
+
                 self.scanSummary = summary
 
                 if let currentId = self.selectedCrate?.id,

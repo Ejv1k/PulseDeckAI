@@ -65,13 +65,14 @@ public struct GeminiAdvisorConfig: Sendable, Equatable {
         self.requestsPerMinute = min(requestsPerMinute, Self.maxRequestsPerMinute)
     }
 
-    /// Calculates exponential backoff with jitter for a given retry attempt.
+    /// Calculates exponential backoff with pseudo-random jitter for a given retry attempt.
+    /// Exponential delay with +/- 20% jitter is strictly capped at `maxBackoffSeconds` (30.0s)
+    /// AFTER jitter is applied to guarantee the wait duration never exceeds the ceiling.
     public func backoffDelaySeconds(forAttempt attempt: Int) -> Double {
         let exponential = Self.baseBackoffSeconds * pow(2.0, Double(attempt))
-        let capped = min(exponential, Self.maxBackoffSeconds)
-        // Add pseudo-random jitter +/- 20%
-        let jitter = capped * Double.random(in: 0.8...1.2)
-        return jitter
+        let jittered = exponential * Double.random(in: 0.8...1.2)
+        // Strictly cap after jitter at maxBackoffSeconds (30.0s)
+        return min(jittered, Self.maxBackoffSeconds)
     }
 }
 

@@ -38,10 +38,10 @@ PulseDeck AI follows a phased, verification-driven development lifecycle. It is 
 * [x] **Complete Swift 6 SPM Project Structure:** Executable target `PulseDeckAI` and library target `PulseDeckCore` with zero compilation warnings under strict Swift 6 concurrency.
 * [x] **Native Dark-Themed GUI Shell:** High-contrast macOS DJ interface styled with high-visibility colors (Deck A Teal `#00E5FF`, Deck B Amber `#FF9100`, Master Emerald `#00E676`, Cue Purple `#D500F9`).
 * [x] **Hardware & Architecture Status Display:** Real-time visual validation panel verifying hardware baselines, audio thread rules, and cache contracts.
-* [x] **Crate & Library Scanner:** Automatic discovery and structural validation of all 10 standard DJ crates in `PulseDeck_Library`, including track count enumeration and `.gitkeep` checks.
+* [x] **Crate & Library Scanner:** Automatic discovery and structural validation of all standard DJ crates in `PulseDeck_Library`, including dynamic track count enumeration, error detection, `.gitkeep` checks, and single in-flight rescan (`Cmd + R`).
 * [x] **Local Test Media Preservation:** Integration of real test MP3 files in `00_Test_Tracks_Dev` (media files remain strictly local and git-ignored).
-* [x] **Unified Cache Schema v1.0.0:** Production-grade JSON Schema specification (`docs/cache_schema_v1.json`), Swift Codable models (`CacheSchema.swift`), and Python companion classes (`scripts/pulsedeck_cache.py`).
-* [x] **Atomic Persistence Service:** Thread-safe temporary-file serialization with atomic rename guarantees against cache corruption.
+* [x] **Unified Cache Schema v1.0.0:** Production-grade JSON Schema specification (`docs/cache_schema_v1.json`), Swift Codable models (`CacheSchema.swift`), and Python companion classes (`scripts/pulsedeck_cache.py`) with 30 unit tests.
+* [x] **Atomic Persistence Service:** Crash-safe temporary-file serialization with synchronous hardware flush (`F_FULLFSYNC` on macOS / `fsync` on Linux) before atomic file replacement guarantees against cache corruption.
 * [x] **Codified Architectural Protocols:** Formal Swift protocol specifications for dual audio engines, deck signal processing graphs, latency compensation, and AI advisors.
 
 ### Planned for Future Phases (Roadmap Preview)

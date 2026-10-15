@@ -3,18 +3,29 @@ import CoreAudio
 import AudioToolbox
 import AVFoundation
 
-/// Thread-safe monitor for CoreAudio hardware device additions, removals, and configuration changes.
+/// Thread-safe monitor for CoreAudio output-device additions, removals, and configuration changes.
 ///
-/// ## Synchronization & Concurrency Model:
-/// - Internal mutable state is strictly serialized on a private control queue (`com.pulsedeck.audio.control`).
-/// - `@unchecked Sendable` is justified because all mutations of registered engines, listener tokens,
-///   coalesced work items, and recovery states are locked behind this serial queue.
-/// - Conforms strictly to synchronous Phase 0 protocols; avoids actor reentrancy during HAL notifications.
-/// - CoreAudio callbacks are `nonisolated` and `@Sendable`, immediately dispatching coalesced events
-///   to the serial queue without mutating `AVAudioEngine` or graphs on the HAL callback thread.
+/// ## Output-only boundary
+/// Direction-sensitive HAL queries use `kAudioDevicePropertyScopeOutput`. Device-wide properties use the global scope.
+/// This type never reads `AVAudioEngine.inputNode`.
+///
+/// ## Engine mutation ownership
+/// For a registered engine, `AVAudioEngine.start()`, `pause()`, `stop()`, and output-device bind run only on
+/// `com.pulsedeck.audio.control`. `AVAudioEngine` is not thread-safe. Clients must not mutate a registered engine
+/// concurrently with this monitor. Recovery pauses a running engine before rebind so the scheduled graph is kept.
+/// `AVAudioEngine.stop()` is not used. The engine restarts only when `intendedRunningState` is true.
+///
+/// ## Synchronization
+/// Mutable monitor state is serialized on the control queue. The queue carries a specific key. Work already running
+/// on that queue runs inline and never calls `sync` on it. `onChange` and `onError` run only after the control-queue
+/// section has finished, and never on that queue. `deinit` uses the same rule, including when the last reference
+/// drops on the control queue.
+///
+/// `@unchecked Sendable` is limited to that queue ownership. Listener blocks are `nonisolated` and hop onto the queue
+/// before touching an engine.
 public final class OutputDeviceMonitor: @unchecked Sendable {
 
-    /// Registered audio engine record tracking fallback state, intended lifecycle state, and NotificationCenter tokens.
+    /// Registered engine record. Mutated only on the control queue.
     final class RegisteredEngine {
         weak var engine: AVAudioEngine?
         let role: AudioEngineRole
@@ -22,8 +33,11 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         var boundDeviceID: AudioDeviceID?
         var boundDeviceUID: String?
         var intendedRunningState: Bool
-        var retryCount: Int
         var observerToken: NSObjectProtocol?
+        /// Candidate UID plus topology generation currently being retried.
+        var recoveryEpoch: String = ""
+        var recoveryAttempts: Int = 0
+        var recoveryLimitEmitted: Bool = false
 
         init(
             engine: AVAudioEngine,
@@ -39,13 +53,29 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             self.boundDeviceID = boundDeviceID
             self.boundDeviceUID = boundDeviceUID
             self.intendedRunningState = intendedRunningState
-            self.retryCount = 0
             self.observerToken = nil
         }
     }
 
+    private enum MonitorEvent: Sendable {
+        case failure(CoreAudioError)
+        case topologyChanged
+    }
+
+    /// Planned against a successful topology snapshot, then applied. Lookup failures produce no steps.
+    private enum RecoveryStep {
+        case maintain(RegisteredEngine, AVAudioEngine, candidateUID: String)
+        case attach(RegisteredEngine, AVAudioEngine, deviceID: AudioDeviceID, uid: String)
+        case clearMissing(RegisteredEngine, AVAudioEngine)
+    }
+
+    private static let maxRecoveryAttempts = 3
+    private static let controlQueueToken: UInt8 = 1
+
     private let hal: AudioHardwareInterface
     private let controlQueue: DispatchQueue
+    private let callbackQueue: DispatchQueue
+    private let controlQueueKey = DispatchSpecificKey<UInt8>()
     private let coalescingDelayMs: Int
     private let onChange: (@Sendable () -> Void)?
     private let onError: (@Sendable (CoreAudioError) -> Void)?
@@ -57,17 +87,17 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     private var coalesceWorkItem: DispatchWorkItem?
     private var registeredEngines: [RegisteredEngine] = []
 
-    // Retained exact listener block references required by CoreAudio HAL for listener removal
-    private var devicesListenerBlock: AudioObjectPropertyListenerBlock?
-    private var defaultListenerBlock: AudioObjectPropertyListenerBlock?
+    // Exact Objective-C blocks passed to the HAL. Removal must pass these same objects.
+    private var devicesListenerBlock: OutputPropertyListenerBlock?
+    private var defaultListenerBlock: OutputPropertyListenerBlock?
 
     /// Initializes a new `OutputDeviceMonitor`.
     ///
     /// - Parameters:
     ///   - hal: Injected audio hardware abstraction layer.
     ///   - coalescingDelayMs: Delay in milliseconds to coalesce rapid successive HAL events (defaults to 50ms).
-    ///   - onChange: Callback invoked on device topology or active endpoint changes.
-    ///   - onError: Callback invoked when a recoverable HAL or recovery error occurs.
+    ///   - onChange: Callback invoked after a successful topology pass. Not invoked when a HAL query fails.
+    ///   - onError: Callback invoked when a HAL, bind, or start error occurs.
     public init(
         hal: AudioHardwareInterface = SystemAudioHardware.shared,
         coalescingDelayMs: Int = 50,
@@ -76,98 +106,66 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     ) {
         self.hal = hal
         self.controlQueue = DispatchQueue(label: "com.pulsedeck.audio.control", qos: .userInitiated)
+        self.callbackQueue = DispatchQueue(label: "com.pulsedeck.audio.control.callbacks", qos: .userInitiated)
+        self.controlQueue.setSpecific(key: controlQueueKey, value: Self.controlQueueToken)
         self.coalescingDelayMs = coalescingDelayMs
         self.onChange = onChange
         self.onError = onError
     }
 
-    /// Convenience initializer matching required Phase 1A signature.
+    /// Convenience initializer matching the Phase 1A signature.
     ///
-    /// - Parameter onChange: Closure invoked whenever output device topology changes.
+    /// - Parameter onChange: Closure invoked whenever an output-device topology pass succeeds.
     public convenience init(onChange: @escaping @Sendable () -> Void) {
         self.init(hal: SystemAudioHardware.shared, coalescingDelayMs: 50, onChange: onChange, onError: nil)
     }
 
     deinit {
-        stop()
+        // `stop()` takes the queue. `sync` from this queue deadlocks, so a release on the queue cleans up inline.
+        if isOnControlQueue {
+            _ = stopLocked()
+        } else {
+            controlQueue.sync {
+                _ = self.stopLocked()
+            }
+        }
     }
 
     /// Starts monitoring CoreAudio hardware device events and configuration changes.
     ///
-    /// - Throws: `CoreAudioError` if listener registration fails (rolls back any partial registrations).
+    /// - Throws: `CoreAudioError` if listener registration fails. Listeners added during this attempt are removed.
+    ///   A listener that is still installed from an earlier failed removal is kept and is not registered twice.
     public func start() throws {
-        try controlQueue.sync {
-            guard !isMonitoring else { return }
-
-            isShuttingDown = false
-
-            // Define exact listener closures
-            let devBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                self?.handleHALEvent()
-            }
-            let defBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                self?.handleHALEvent()
-            }
-
-            self.devicesListenerBlock = devBlock
-            self.defaultListenerBlock = defBlock
-
-            // Register kAudioHardwarePropertyDevices listener
-            do {
-                try hal.addDevicesListener(on: controlQueue, block: devBlock)
-                devicesListenerRegistered = true
-            } catch {
-                cleanupInternalListeners()
-                throw error
-            }
-
-            // Register kAudioHardwarePropertyDefaultOutputDevice listener with rollback on failure
-            do {
-                try hal.addDefaultOutputDeviceListener(on: controlQueue, block: defBlock)
-                defaultListenerRegistered = true
-            } catch {
-                cleanupInternalListeners()
-                throw error
-            }
-
-            isMonitoring = true
+        let result: (events: [MonitorEvent], error: CoreAudioError?) = syncControl {
+            self.beginMonitoring()
+        }
+        deliver(result.events)
+        if let error = result.error {
+            throw error
         }
     }
 
-    /// Stops monitoring and unregisters all HAL property listeners and NotificationCenter observers.
+    /// Stops monitoring and unregisters HAL property listeners and configuration observers.
+    ///
+    /// A failed `AudioObjectRemovePropertyListenerBlock` reports `listenerRemovalFailed` and keeps that block.
+    /// The next `start()` does not add a second listener for a block that is still installed.
     public func stop() {
-        controlQueue.sync {
-            guard isMonitoring || devicesListenerRegistered || defaultListenerRegistered else { return }
-
-            isShuttingDown = true
-            isMonitoring = false
-
-            coalesceWorkItem?.cancel()
-            coalesceWorkItem = nil
-
-            cleanupInternalListeners()
-
-            // Remove engine observers
-            for registration in registeredEngines {
-                if let token = registration.observerToken {
-                    NotificationCenter.default.removeObserver(token)
-                    registration.observerToken = nil
-                }
-            }
-            registeredEngines.removeAll()
-
-            isShuttingDown = false
-        }
+        let events = syncControl { self.stopLocked() }
+        deliver(events)
     }
 
-    /// Registers an `AVAudioEngine` for automatic device recovery and configuration change observation.
+    /// Registers an `AVAudioEngine` for automatic device recovery and configuration observation.
+    ///
+    /// The configuration observer does not retain `engine`. After registration, this monitor is the exclusive
+    /// mutator of that engine's running state and output device. Pass `intendedRunningState` changes through
+    /// `setIntendedRunningState`. The flag is copied from `engine.isRunning` at registration.
     ///
     /// - Parameters:
     ///   - engine: The audio engine instance to register (held via weak reference).
     ///   - role: The architectural role of the engine (Master or Cue).
     ///   - desiredDeviceUID: Optional preferred device UID string.
     ///   - boundDeviceID: Optional initial bound `AudioDeviceID`.
-    ///   - boundDeviceUID: Optional initial bound device UID string.
+    ///   - boundDeviceUID: Optional initial bound device UID string. When omitted, the UID is read from `boundDeviceID`.
     public func registerEngine(
         _ engine: AVAudioEngine,
         role: AudioEngineRole,
@@ -175,26 +173,24 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         boundDeviceID: AudioDeviceID? = nil,
         boundDeviceUID: String? = nil
     ) {
-        controlQueue.sync {
-            // Prune dead references
-            registeredEngines.removeAll { $0.engine == nil }
+        let events = syncControl { () -> [MonitorEvent] in
+            self.registeredEngines.removeAll { $0.engine == nil }
 
-            let resolvedBoundUID: String?
-            if let explicitUID = boundDeviceUID {
-                resolvedBoundUID = explicitUID
-            } else if let id = boundDeviceID {
-                resolvedBoundUID = try? hal.getDeviceUID(deviceID: id)
-            } else {
-                resolvedBoundUID = nil
-            }
+            let resolvedBoundUID = self.resolveInitialUID(
+                explicitUID: boundDeviceUID,
+                deviceID: boundDeviceID
+            )
 
-            // Check if already registered
-            if let existing = registeredEngines.first(where: { $0.engine === engine }) {
+            if let existing = self.registeredEngines.first(where: { $0.engine === engine }) {
                 existing.desiredDeviceUID = desiredDeviceUID
                 existing.boundDeviceID = boundDeviceID
-                existing.boundDeviceUID = resolvedBoundUID
+                if let uid = resolvedBoundUID.uid {
+                    existing.boundDeviceUID = uid
+                } else if boundDeviceUID == nil && boundDeviceID == nil {
+                    existing.boundDeviceUID = nil
+                }
                 existing.intendedRunningState = engine.isRunning
-                return
+                return resolvedBoundUID.events
             }
 
             let registration = RegisteredEngine(
@@ -202,30 +198,37 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 role: role,
                 desiredDeviceUID: desiredDeviceUID,
                 boundDeviceID: boundDeviceID,
-                boundDeviceUID: resolvedBoundUID,
+                boundDeviceUID: resolvedBoundUID.uid,
                 intendedRunningState: engine.isRunning
             )
 
-            // Listen for engine configuration change notifications
+            // `object: nil` so NotificationCenter does not retain the engine for the lifetime of the token.
+            // The block stores `ObjectIdentifier` instead of the engine, so the closure stays sendable and
+            // does not keep the engine alive.
+            let engineID = ObjectIdentifier(engine)
             let token = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange,
-                object: engine,
+                object: nil,
                 queue: nil
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                guard let posted = notification.object as? AVAudioEngine else { return }
+                guard ObjectIdentifier(posted) == engineID else { return }
                 self?.handleHALEvent()
             }
             registration.observerToken = token
-            registeredEngines.append(registration)
+            self.registeredEngines.append(registration)
+            return resolvedBoundUID.events
         }
+        deliver(events)
     }
 
     /// Unregisters an `AVAudioEngine` from device monitoring and recovery.
     ///
     /// - Parameter engine: The engine to remove.
     public func unregisterEngine(_ engine: AVAudioEngine) {
-        controlQueue.sync {
-            if let index = registeredEngines.firstIndex(where: { $0.engine === engine }) {
-                let registration = registeredEngines.remove(at: index)
+        syncControl {
+            if let index = self.registeredEngines.firstIndex(where: { $0.engine === engine }) {
+                let registration = self.registeredEngines.remove(at: index)
                 if let token = registration.observerToken {
                     NotificationCenter.default.removeObserver(token)
                 }
@@ -235,62 +238,233 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
 
     /// Updates the intended running state for a registered engine.
     ///
-    /// When recovery or rebind occurs, the engine will only restart if intended running state is true.
+    /// Recovery restarts the engine only when this value is true. A still-running engine does not override `false`.
     public func setIntendedRunningState(for engine: AVAudioEngine, running: Bool) {
-        controlQueue.sync {
-            if let registration = registeredEngines.first(where: { $0.engine === engine }) {
+        syncControl {
+            if let registration = self.registeredEngines.first(where: { $0.engine === engine }) {
                 registration.intendedRunningState = running
             }
         }
     }
 
     /// Updates the active bound device identifier and persists its UID for a registered engine.
+    ///
+    /// A failed UID lookup leaves the previous UID in place and is reported through `onError`.
     public func setBoundDeviceID(for engine: AVAudioEngine, deviceID: AudioDeviceID?, desiredUID: String? = nil) {
-        controlQueue.sync {
-            if let registration = registeredEngines.first(where: { $0.engine === engine }) {
+        let events = syncControl { () -> [MonitorEvent] in
+            guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
+                return []
+            }
+            if let desiredUID {
+                registration.desiredDeviceUID = desiredUID
+            }
+            guard let deviceID else {
+                registration.boundDeviceID = nil
+                registration.boundDeviceUID = nil
+                return []
+            }
+            do {
+                let uid = try self.hal.getDeviceUID(deviceID: deviceID)
                 registration.boundDeviceID = deviceID
-                registration.boundDeviceUID = deviceID.flatMap { try? hal.getDeviceUID(deviceID: $0) }
-                if let uid = desiredUID {
-                    registration.desiredDeviceUID = uid
-                }
+                registration.boundDeviceUID = uid
+                return []
+            } catch {
+                return [.failure(Self.coreAudioError(error, operation: "getDeviceUID"))]
             }
         }
+        deliver(events)
     }
 
     /// Explicitly updates both the bound device ID and its persistent UID.
+    ///
+    /// When `uid` is nil, the UID is read from `deviceID`. A failed read keeps the previous binding and reports the error.
     public func setBoundDevice(
         for engine: AVAudioEngine,
         deviceID: AudioDeviceID?,
         uid: String?,
         desiredUID: String? = nil
     ) {
-        controlQueue.sync {
-            if let registration = registeredEngines.first(where: { $0.engine === engine }) {
+        let events = syncControl { () -> [MonitorEvent] in
+            guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
+                return []
+            }
+            if let desiredUID {
+                registration.desiredDeviceUID = desiredUID
+            }
+            if let uid {
                 registration.boundDeviceID = deviceID
-                registration.boundDeviceUID = uid ?? deviceID.flatMap { try? hal.getDeviceUID(deviceID: $0) }
-                if let desired = desiredUID {
-                    registration.desiredDeviceUID = desired
-                }
+                registration.boundDeviceUID = uid
+                return []
+            }
+            guard let deviceID else {
+                registration.boundDeviceID = nil
+                registration.boundDeviceUID = nil
+                return []
+            }
+            do {
+                let resolved = try self.hal.getDeviceUID(deviceID: deviceID)
+                registration.boundDeviceID = deviceID
+                registration.boundDeviceUID = resolved
+                return []
+            } catch {
+                return [.failure(Self.coreAudioError(error, operation: "getDeviceUID"))]
+            }
+        }
+        deliver(events)
+    }
+
+    /// Synchronously executes device reconciliation for tests and immediate state sync.
+    ///
+    /// Callbacks run on the caller after the control queue is released, so they may re-enter the monitor.
+    public func reconcileImmediately() {
+        let events = syncControl { self.performReconciliation() }
+        deliver(events)
+    }
+
+    /// Schedules `body` on the monitor control queue.
+    ///
+    /// Tests use this to drop the last monitor reference from that queue and prove `deinit` does not deadlock.
+    func scheduleOnControlQueueForTesting(_ body: @escaping @Sendable () -> Void) {
+        controlQueue.async(execute: body)
+    }
+
+    // MARK: - Queue ownership
+
+    private var isOnControlQueue: Bool {
+        DispatchQueue.getSpecific(key: controlQueueKey) == Self.controlQueueToken
+    }
+
+    private func syncControl<T: Sendable>(_ body: () throws -> T) rethrows -> T {
+        if isOnControlQueue {
+            return try body()
+        }
+        return try controlQueue.sync(execute: body)
+    }
+
+    private func deliver(_ events: [MonitorEvent]) {
+        guard !events.isEmpty else { return }
+        // Callbacks that re-enter `stop` or `registerEngine` must not run inside the control-queue section.
+        if isOnControlQueue {
+            let copied = events
+            callbackQueue.async { [weak self] in
+                self?.emit(copied)
+            }
+            return
+        }
+        emit(events)
+    }
+
+    private func emit(_ events: [MonitorEvent]) {
+        for event in events {
+            switch event {
+            case .failure(let error):
+                onError?(error)
+            case .topologyChanged:
+                onChange?()
             }
         }
     }
 
-    /// Synchronously executes device reconciliation (primarily for test verification and immediate state sync).
-    public func reconcileImmediately() {
-        controlQueue.sync {
-            performReconciliation()
+    // MARK: - Listener lifecycle
+
+    private func beginMonitoring() -> (events: [MonitorEvent], error: CoreAudioError?) {
+        guard !isMonitoring else { return ([], nil) }
+        isShuttingDown = false
+
+        do {
+            try installListenersIfNeeded()
+            isMonitoring = true
+            return ([], nil)
+        } catch let error as CoreAudioError {
+            let events = removeInstalledListeners()
+            return (events, error)
+        } catch {
+            let events = removeInstalledListeners()
+            return (events, Self.coreAudioError(error, operation: "startMonitoring"))
         }
     }
 
-    // MARK: - Private Serialized Control-Plane Logic
+    private func installListenersIfNeeded() throws {
+        if !devicesListenerRegistered {
+            let block: OutputPropertyListenerBlock = { [weak self] _, _ in
+                self?.handleHALEvent()
+            }
+            try hal.addDevicesListener(on: controlQueue, block: block)
+            devicesListenerBlock = block
+            devicesListenerRegistered = true
+        }
+
+        if !defaultListenerRegistered {
+            let block: OutputPropertyListenerBlock = { [weak self] _, _ in
+                self?.handleHALEvent()
+            }
+            do {
+                try hal.addDefaultOutputDeviceListener(on: controlQueue, block: block)
+            } catch {
+                throw Self.coreAudioError(error, operation: "addDefaultOutputDeviceListener")
+            }
+            defaultListenerBlock = block
+            defaultListenerRegistered = true
+        }
+    }
+
+    private func stopLocked() -> [MonitorEvent] {
+        let hasListener = devicesListenerRegistered || defaultListenerRegistered
+        let hasEngineState = !registeredEngines.isEmpty || coalesceWorkItem != nil
+        guard isMonitoring || hasListener || hasEngineState else { return [] }
+
+        isShuttingDown = true
+        isMonitoring = false
+        coalesceWorkItem?.cancel()
+        coalesceWorkItem = nil
+
+        let events = removeInstalledListeners()
+        for registration in registeredEngines {
+            if let token = registration.observerToken {
+                NotificationCenter.default.removeObserver(token)
+                registration.observerToken = nil
+            }
+        }
+        registeredEngines.removeAll()
+        isShuttingDown = false
+        return events
+    }
+
+    /// Removes installed listeners. A removal failure keeps that block and registration flag.
+    private func removeInstalledListeners() -> [MonitorEvent] {
+        var events: [MonitorEvent] = []
+
+        if defaultListenerRegistered, let block = defaultListenerBlock {
+            do {
+                try hal.removeDefaultOutputDeviceListener(on: controlQueue, block: block)
+                defaultListenerRegistered = false
+                defaultListenerBlock = nil
+            } catch {
+                events.append(.failure(Self.coreAudioError(error, operation: "removeDefaultOutputDeviceListener")))
+            }
+        }
+
+        if devicesListenerRegistered, let block = devicesListenerBlock {
+            do {
+                try hal.removeDevicesListener(on: controlQueue, block: block)
+                devicesListenerRegistered = false
+                devicesListenerBlock = nil
+            } catch {
+                events.append(.failure(Self.coreAudioError(error, operation: "removeDevicesListener")))
+            }
+        }
+
+        return events
+    }
 
     private func handleHALEvent() {
-        controlQueue.async { [weak self] in
-            guard let self = self, self.isMonitoring, !self.isShuttingDown else { return }
-
+        let schedule: @Sendable () -> Void = { [weak self] in
+            guard let self, self.isMonitoring, !self.isShuttingDown else { return }
             self.coalesceWorkItem?.cancel()
             let item = DispatchWorkItem { [weak self] in
-                self?.performReconciliation()
+                guard let self else { return }
+                let events = self.performReconciliation()
+                self.deliver(events)
             }
             self.coalesceWorkItem = item
             if self.coalescingDelayMs <= 0 {
@@ -302,125 +476,272 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 )
             }
         }
+
+        if isOnControlQueue {
+            schedule()
+        } else {
+            controlQueue.async(execute: schedule)
+        }
     }
 
-    private func performReconciliation() {
-        guard isMonitoring, !isShuttingDown else { return }
+    // MARK: - Reconciliation
 
-        // Prune deallocated engines
+    private func performReconciliation() -> [MonitorEvent] {
+        guard isMonitoring, !isShuttingDown else { return [] }
         registeredEngines.removeAll { $0.engine == nil }
 
-        let availableDevices = (try? CoreAudioOutputDevices.enumerate(using: hal)) ?? []
-        let defaultDeviceID = try? CoreAudioOutputDevices.defaultOutputDeviceID(using: hal)
-
-        for registration in registeredEngines {
-            guard let engine = registration.engine else { continue }
-
-            // Presence verification: binding is valid ONLY when deviceID(forUID:) returns
-            // an active output endpoint matching the persisted bound UID and numeric ID.
-            // CoreAudio recycles ephemeral numeric IDs, so checking numeric ID alone is insufficient.
-            if let boundUID = registration.boundDeviceUID,
-               let boundID = registration.boundDeviceID,
-               let resolvedID = try? CoreAudioOutputDevices.deviceID(forUID: boundUID, using: hal),
-               resolvedID == boundID,
-               availableDevices.contains(where: { $0.id == boundUID }) {
-                // Device is present, numeric ID is unchanged, and endpoint is an active output
-                registration.retryCount = 0
-
-                // If running was intended but engine stopped during HAL change, restart it
-                if registration.intendedRunningState && !engine.isRunning {
-                    do {
-                        try engine.start()
-                    } catch {
-                        onError?(.osStatus(OSStatus(-1), operation: "engineRestartAfterConfigChange"))
-                    }
-                }
-                continue
-            }
-
-            // Active binding is lost or invalidated.
-            // Pick target in priority order:
-            // 1. Preferred UID (desiredDeviceUID) if online
-            // 2. System default output device
-            // 3. First enumerated output endpoint with channels
-            var targetCandidate: (id: AudioDeviceID, uid: String)? = nil
-
-            // 1. Preferred UID
-            if let preferredUID = registration.desiredDeviceUID,
-               let preferredDesc = availableDevices.first(where: { $0.id == preferredUID }),
-               let preferredID = try? CoreAudioOutputDevices.deviceID(forUID: preferredUID, using: hal) {
-                targetCandidate = (preferredID, preferredDesc.id)
-            }
-
-            // 2. System default output
-            if targetCandidate == nil,
-               let defID = defaultDeviceID,
-               let defUID = try? hal.getDeviceUID(deviceID: defID),
-               availableDevices.contains(where: { $0.id == defUID }) {
-                targetCandidate = (defID, defUID)
-            }
-
-            // 3. First enumerated output with channels
-            if targetCandidate == nil,
-               let firstDesc = availableDevices.first(where: { $0.outputChannelCount > 0 }),
-               let firstID = try? CoreAudioOutputDevices.deviceID(forUID: firstDesc.id, using: hal) {
-                targetCandidate = (firstID, firstDesc.id)
-            }
-
-            // Report noOutputDeviceAvailable ONLY when no candidate output is found
-            guard let target = targetCandidate else {
-                if engine.isRunning {
-                    engine.stop()
-                }
-                registration.boundDeviceID = nil
-                registration.boundDeviceUID = nil
-                onError?(.noOutputDeviceAvailable)
-                continue
-            }
-
-            // Enforce bounded retries to prevent restart loops
-            guard registration.retryCount < 3 else {
-                onError?(.recoveryRetryLimitExceeded(registration.role))
-                continue
-            }
-            registration.retryCount += 1
-
-            // Rebind target device preserving intended running/stopped state
-            let shouldBeRunning = registration.intendedRunningState || engine.isRunning
-            if engine.isRunning {
-                engine.stop()
-            }
-
-            do {
-                try CoreAudioOutputDevices.bind(target.id, to: engine, using: hal)
-                // Persist the bound UID and numeric ID after every successful bind
-                registration.boundDeviceID = target.id
-                registration.boundDeviceUID = target.uid
-                if shouldBeRunning {
-                    try engine.start()
-                }
-                registration.retryCount = 0
-            } catch let error as CoreAudioError {
-                onError?(error)
-            } catch {
-                onError?(.osStatus(OSStatus(-1), operation: "rebindTargetDevice: \(error.localizedDescription)"))
-            }
+        let devices: [AudioDeviceDescriptor]
+        let defaultDeviceID: AudioDeviceID?
+        do {
+            devices = try CoreAudioOutputDevices.enumerate(using: hal)
+            defaultDeviceID = try CoreAudioOutputDevices.defaultOutputDeviceID(using: hal)
+        } catch {
+            return [.failure(Self.coreAudioError(error, operation: "outputTopology"))]
         }
 
-        // Notify client listener of configuration/topology changes
-        onChange?()
+        let topology = devices.map(\.id).sorted().joined(separator: "\u{1e}")
+        let snapshot = registeredEngines
+
+        let steps: [RecoveryStep]
+        do {
+            steps = try planRecovery(snapshot: snapshot, devices: devices, defaultDeviceID: defaultDeviceID)
+        } catch {
+            // A thrown UID or device-list read is not an empty topology. Leave every binding untouched.
+            return [.failure(Self.coreAudioError(error, operation: "outputTopology"))]
+        }
+
+        var events: [MonitorEvent] = []
+        for step in steps {
+            apply(step, topology: topology, events: &events)
+        }
+        events.append(.topologyChanged)
+        return events
     }
 
-    private func cleanupInternalListeners() {
-        if defaultListenerRegistered, let block = defaultListenerBlock {
-            try? hal.removeDefaultOutputDeviceListener(on: controlQueue, block: block)
-            defaultListenerRegistered = false
+    private func planRecovery(
+        snapshot: [RegisteredEngine],
+        devices: [AudioDeviceDescriptor],
+        defaultDeviceID: AudioDeviceID?
+    ) throws -> [RecoveryStep] {
+        var steps: [RecoveryStep] = []
+        for registration in snapshot {
+            guard let engine = registration.engine else { continue }
+
+            if let boundUID = registration.boundDeviceUID,
+               devices.contains(where: { $0.id == boundUID }) {
+                // Throws stay failures. `nil` means this successful read did not find the UID.
+                if let resolvedID = try CoreAudioOutputDevices.deviceID(forUID: boundUID, using: hal) {
+                    if registration.boundDeviceID == resolvedID {
+                        steps.append(.maintain(registration, engine, candidateUID: boundUID))
+                    } else {
+                        // Same UID, new numeric ID. Stay on this device. Do not accept another UID at the old ID.
+                        steps.append(.attach(registration, engine, deviceID: resolvedID, uid: boundUID))
+                    }
+                    continue
+                }
+            }
+
+            if let target = try selectFallback(
+                for: registration,
+                devices: devices,
+                defaultDeviceID: defaultDeviceID
+            ) {
+                steps.append(.attach(registration, engine, deviceID: target.id, uid: target.uid))
+            } else {
+                steps.append(.clearMissing(registration, engine))
+            }
         }
-        if devicesListenerRegistered, let block = devicesListenerBlock {
-            try? hal.removeDevicesListener(on: controlQueue, block: block)
-            devicesListenerRegistered = false
+        return steps
+    }
+
+    private func selectFallback(
+        for registration: RegisteredEngine,
+        devices: [AudioDeviceDescriptor],
+        defaultDeviceID: AudioDeviceID?
+    ) throws -> (id: AudioDeviceID, uid: String)? {
+        if let preferredUID = registration.desiredDeviceUID,
+           devices.contains(where: { $0.id == preferredUID }) {
+            if let preferredID = try CoreAudioOutputDevices.deviceID(forUID: preferredUID, using: hal) {
+                return (preferredID, preferredUID)
+            }
         }
-        devicesListenerBlock = nil
-        defaultListenerBlock = nil
+
+        if let defaultDeviceID {
+            let defaultUID = try hal.getDeviceUID(deviceID: defaultDeviceID)
+            if devices.contains(where: { $0.id == defaultUID }) {
+                return (defaultDeviceID, defaultUID)
+            }
+        }
+
+        if let first = devices.first(where: { $0.outputChannelCount > 0 }) {
+            if let firstID = try CoreAudioOutputDevices.deviceID(forUID: first.id, using: hal) {
+                return (firstID, first.id)
+            }
+        }
+
+        return nil
+    }
+
+    private func apply(_ step: RecoveryStep, topology: String, events: inout [MonitorEvent]) {
+        switch step {
+        case .maintain(let registration, let engine, let candidateUID):
+            maintain(registration, engine: engine, candidateUID: candidateUID, topology: topology, events: &events)
+        case .attach(let registration, let engine, let deviceID, let uid):
+            attach(registration, engine: engine, deviceID: deviceID, uid: uid, topology: topology, events: &events)
+        case .clearMissing(let registration, let engine):
+            if engine.isRunning {
+                engine.pause()
+            }
+            registration.boundDeviceID = nil
+            registration.boundDeviceUID = nil
+            events.append(.failure(.noOutputDeviceAvailable))
+        }
+    }
+
+    private func maintain(
+        _ registration: RegisteredEngine,
+        engine: AVAudioEngine,
+        candidateUID: String,
+        topology: String,
+        events: inout [MonitorEvent]
+    ) {
+        guard registration.intendedRunningState else {
+            // The caller asked the engine to stay stopped. Do not restart it because it is still running,
+            // and do not reset the cap in front of a start that this pass is about to attempt.
+            return
+        }
+        if engine.isRunning {
+            noteRecoverySuccess(registration)
+            return
+        }
+        attemptStart(registration, engine: engine, candidateUID: candidateUID, topology: topology, events: &events)
+    }
+
+    private func attach(
+        _ registration: RegisteredEngine,
+        engine: AVAudioEngine,
+        deviceID: AudioDeviceID,
+        uid: String,
+        topology: String,
+        events: inout [MonitorEvent]
+    ) {
+        guard beginRecoveryAttempt(registration, candidateUID: uid, topology: topology, events: &events) else {
+            return
+        }
+
+        if engine.isRunning {
+            engine.pause()
+        }
+
+        do {
+            try CoreAudioOutputDevices.bind(deviceID, to: engine, using: hal)
+        } catch {
+            noteRecoveryFailure(registration, error: error, operation: "bindOutputDevice", events: &events)
+            return
+        }
+
+        registration.boundDeviceID = deviceID
+        registration.boundDeviceUID = uid
+
+        guard registration.intendedRunningState else {
+            noteRecoverySuccess(registration)
+            return
+        }
+
+        do {
+            try engine.start()
+            noteRecoverySuccess(registration)
+        } catch {
+            // Bind succeeded, so the stored ID now matches. Further attempts use the start-on-present path
+            // and keep this epoch's counter. The cap is not cleared before this start failure.
+            noteRecoveryFailure(registration, error: error, operation: "AVAudioEngine.start", events: &events)
+        }
+    }
+
+    private func attemptStart(
+        _ registration: RegisteredEngine,
+        engine: AVAudioEngine,
+        candidateUID: String,
+        topology: String,
+        events: inout [MonitorEvent]
+    ) {
+        guard beginRecoveryAttempt(registration, candidateUID: candidateUID, topology: topology, events: &events) else {
+            return
+        }
+        do {
+            try engine.start()
+            noteRecoverySuccess(registration)
+        } catch {
+            noteRecoveryFailure(registration, error: error, operation: "AVAudioEngine.start", events: &events)
+        }
+    }
+
+    private func beginRecoveryAttempt(
+        _ registration: RegisteredEngine,
+        candidateUID: String,
+        topology: String,
+        events: inout [MonitorEvent]
+    ) -> Bool {
+        let epoch = recoveryEpoch(candidateUID: candidateUID, topology: topology)
+        if registration.recoveryEpoch != epoch {
+            registration.recoveryEpoch = epoch
+            registration.recoveryAttempts = 0
+            registration.recoveryLimitEmitted = false
+        }
+        guard registration.recoveryAttempts < Self.maxRecoveryAttempts else {
+            if !registration.recoveryLimitEmitted {
+                registration.recoveryLimitEmitted = true
+                events.append(.failure(.recoveryRetryLimitExceeded(registration.role)))
+            }
+            return false
+        }
+        return true
+    }
+
+    private func noteRecoverySuccess(_ registration: RegisteredEngine) {
+        registration.recoveryAttempts = 0
+        registration.recoveryLimitEmitted = false
+    }
+
+    private func noteRecoveryFailure(
+        _ registration: RegisteredEngine,
+        error: Error,
+        operation: String,
+        events: inout [MonitorEvent]
+    ) {
+        events.append(.failure(Self.coreAudioError(error, operation: operation)))
+        registration.recoveryAttempts += 1
+        if registration.recoveryAttempts >= Self.maxRecoveryAttempts && !registration.recoveryLimitEmitted {
+            registration.recoveryLimitEmitted = true
+            events.append(.failure(.recoveryRetryLimitExceeded(registration.role)))
+        }
+    }
+
+    private func recoveryEpoch(candidateUID: String, topology: String) -> String {
+        "\(topology.utf8.count):\(topology)|\(candidateUID.utf8.count):\(candidateUID)"
+    }
+
+    private func resolveInitialUID(
+        explicitUID: String?,
+        deviceID: AudioDeviceID?
+    ) -> (uid: String?, events: [MonitorEvent]) {
+        if let explicitUID {
+            return (explicitUID, [])
+        }
+        guard let deviceID else {
+            return (nil, [])
+        }
+        do {
+            return (try hal.getDeviceUID(deviceID: deviceID), [])
+        } catch {
+            return (nil, [.failure(Self.coreAudioError(error, operation: "getDeviceUID"))])
+        }
+    }
+
+    private static func coreAudioError(_ error: Error, operation: String) -> CoreAudioError {
+        if let coreAudioError = error as? CoreAudioError {
+            return coreAudioError
+        }
+        return .engineOperationFailed(operation: operation, message: String(describing: error))
     }
 }

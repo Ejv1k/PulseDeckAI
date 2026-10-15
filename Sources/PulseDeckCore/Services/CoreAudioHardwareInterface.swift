@@ -15,6 +15,9 @@ public enum CoreAudioError: LocalizedError, Sendable, Equatable {
     case listenerRemovalFailed(OSStatus, property: String)
     case invalidSampleRate(Double)
     case recoveryRetryLimitExceeded(AudioEngineRole)
+    /// A non-`CoreAudioError` failure from `AVAudioEngine` or another engine call.
+    /// The message is the thrown error's description. Callers must not replace it with a synthetic `OSStatus`.
+    case engineOperationFailed(operation: String, message: String)
 
     public var errorDescription: String? {
         switch self {
@@ -23,7 +26,7 @@ public enum CoreAudioError: LocalizedError, Sendable, Equatable {
         case .missingAudioUnit:
             return "AVAudioEngine outputNode audioUnit is nil; output device cannot be bound."
         case .engineRunning:
-            return "Cannot bind output device while AVAudioEngine is running. Stop the engine first."
+            return "Cannot bind output device while AVAudioEngine is running. Pause the engine first."
         case .notAnOutputDevice(let id):
             return "Device ID \(id) has 0 output channels and cannot be used as an output device."
         case .deviceNotFound(let uid):
@@ -38,9 +41,18 @@ public enum CoreAudioError: LocalizedError, Sendable, Equatable {
             return "CoreAudio device reported an invalid or non-finite sample rate: \(rate)."
         case .recoveryRetryLimitExceeded(let role):
             return "Exceeded maximum retry limit attempting to recover output engine for role '\(role.rawValue)'."
+        case .engineOperationFailed(let operation, let message):
+            return "Audio engine operation '\(operation)' failed: \(message)."
         }
     }
 }
+
+/// Objective-C block passed to `AudioObjectAddPropertyListenerBlock`.
+/// A Swift function value is a different size on every read, so listener add and remove must share this block object.
+public typealias OutputPropertyListenerBlock = @convention(block) (
+    UInt32,
+    UnsafePointer<AudioObjectPropertyAddress>
+) -> Void
 
 /// Abstraction layer for CoreAudio HAL queries, listener registration, and device property modification.
 ///
@@ -74,16 +86,18 @@ public protocol AudioHardwareInterface: Sendable {
     func setOutputDevice(deviceID: AudioDeviceID, for audioUnit: AudioUnit) throws
 
     /// Registers a listener block on the specified queue for system device list changes (`kAudioHardwarePropertyDevices`).
-    func addDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws
+    func addDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws
 
     /// Removes a previously registered device list listener block.
-    func removeDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws
+    /// The block object must be the one passed to `addDevicesListener`.
+    func removeDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws
 
     /// Registers a listener block on the specified queue for default output device changes (`kAudioHardwarePropertyDefaultOutputDevice`).
-    func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws
+    func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws
 
     /// Removes a previously registered default output device listener block.
-    func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws
+    /// The block object must be the one passed to `addDefaultOutputDeviceListener`.
+    func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws
 }
 
 /// Production implementation of `AudioHardwareInterface` interfacing directly with the macOS CoreAudio HAL C API.
@@ -328,7 +342,7 @@ public final class SystemAudioHardware: AudioHardwareInterface, @unchecked Senda
         }
     }
 
-    public func addDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    public func addDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -345,7 +359,7 @@ public final class SystemAudioHardware: AudioHardwareInterface, @unchecked Senda
         }
     }
 
-    public func removeDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    public func removeDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -362,7 +376,7 @@ public final class SystemAudioHardware: AudioHardwareInterface, @unchecked Senda
         }
     }
 
-    public func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    public func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -379,7 +393,7 @@ public final class SystemAudioHardware: AudioHardwareInterface, @unchecked Senda
         }
     }
 
-    public func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    public func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,

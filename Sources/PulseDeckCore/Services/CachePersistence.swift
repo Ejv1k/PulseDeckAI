@@ -40,6 +40,9 @@ public enum CachePersistence: Sendable {
     /// synchronous hardware flush (F_FULLFSYNC on macOS / fsync on Linux) before atomic file replacement,
     /// and parent directory sync to ensure crash-safe durability.
     public static func saveAtomic(cache: PulseDeckLibraryCache, to targetURL: URL) throws {
+        // Enforce strict schema and track bounds validation before creating temp file or touching destination
+        try cache.validate()
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(cache)

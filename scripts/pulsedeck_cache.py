@@ -402,11 +402,43 @@ class PulseDeckLibraryCache:
             data = json.load(f)
         return cls.from_dict(data)
 
+    def validate(self) -> None:
+        """
+        Validates schema invariants with strict parity to Swift CachePersistence.
+        Raises ValueError or TypeError if schemaVersion != 1.0.0, libraryRoot is empty,
+        or any track fails duration, confidence, or cue marker bounds.
+        """
+        if self.schemaVersion != SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema version: '{self.schemaVersion}' (expected '{SCHEMA_VERSION}')"
+            )
+        if not isinstance(self.libraryRoot, str) or not self.libraryRoot.strip():
+            raise ValueError(f"Invalid libraryRoot: {self.libraryRoot}")
+        if not isinstance(self.tracks, dict):
+            raise ValueError("Property 'tracks' must be a dictionary")
+        for track_path, entry in self.tracks.items():
+            if not isinstance(entry, TrackCacheEntry):
+                raise TypeError(f"Track entry for '{track_path}' must be a TrackCacheEntry")
+            if not math.isfinite(entry.duration) or entry.duration < 0.0:
+                raise ValueError(
+                    f"TrackCacheEntry duration must be non-negative and finite: {entry.duration}"
+                )
+            if not (0.0 <= entry.confidence <= 1.0):
+                raise ValueError(
+                    f"Confidence score must be between 0.0 and 1.0, got: {entry.confidence}"
+                )
+            if not entry.cueMarkers.validate(entry.duration):
+                raise ValueError(
+                    f"CueMarkers violate ordering/bounds for duration {entry.duration}: {entry.cueMarkers}"
+                )
+
     def save_atomic(self, file_path: str) -> None:
         """
         Serialize atomically: writes to temporary file in destination directory,
         flushes, fsyncs, and POSIX renames to target.
+        Validates schema invariants before creating temp file or touching destination.
         """
+        self.validate()
         target_dir = os.path.dirname(os.path.abspath(file_path))
         os.makedirs(target_dir, exist_ok=True)
         temp_fd, temp_path = tempfile.mkstemp(dir=target_dir, prefix=".cache_tmp_")

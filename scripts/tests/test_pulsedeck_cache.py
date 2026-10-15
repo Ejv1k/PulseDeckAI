@@ -563,6 +563,47 @@ class TestAtomicSaveAndRoundTrip(unittest.TestCase):
         self.assertTrue(loaded_cache.tracks["Track2.mp3"].manualOverrides.isManual)
         self.assertEqual(loaded_cache.tracks["Track2.mp3"].manualOverrides.author, "DJ Test")
 
+    def test_rejected_save_preserves_existing_file_and_leaves_no_temp_file(self):
+        # 1. Write an initial valid cache
+        track1 = create_sample_entry(relative_path="Track1.mp3", duration=180.0, bpm=125.0)
+        valid_cache = PulseDeckLibraryCache(
+            schemaVersion=SCHEMA_VERSION,
+            generatedAt="2026-10-14T20:30:00Z",
+            libraryRoot="PulseDeck_Library",
+            tracks={"Track1.mp3": track1},
+        )
+        save_path = os.path.join(self.temp_dir.name, ".pulsedeck_ai_cache.json")
+        valid_cache.save_atomic(save_path)
+        self.assertTrue(os.path.exists(save_path))
+
+        with open(save_path, "r", encoding="utf-8") as f:
+            initial_content = f.read()
+
+        # 2. Build an invalid cache with cues violating ordering (startTrimCue > vocalEntryCue)
+        bad_track = create_sample_entry(relative_path="TrackBad.mp3", duration=100.0)
+        bad_track.cueMarkers = CueMarkers(startTrimCue=50.0, vocalEntryCue=20.0, mixOutCue=80.0, endTrimCue=100.0)
+        invalid_cache = PulseDeckLibraryCache(
+            schemaVersion=SCHEMA_VERSION,
+            generatedAt="2026-10-14T20:35:00Z",
+            libraryRoot="PulseDeck_Library",
+            tracks={"Track1.mp3": track1, "TrackBad.mp3": bad_track},
+        )
+
+        # 3. Attempt save_atomic — must raise ValueError from validate()
+        with self.assertRaises(ValueError):
+            invalid_cache.save_atomic(save_path)
+
+        # 4. Verify previous file content remains completely unchanged
+        with open(save_path, "r", encoding="utf-8") as f:
+            current_content = f.read()
+        self.assertEqual(current_content, initial_content, "Previous file content must be unchanged on rejected save")
+
+        # 5. Verify no .cache_tmp files exist in the directory
+        files = os.listdir(self.temp_dir.name)
+        temp_files = [f for f in files if f.startswith(".cache_tmp_")]
+        self.assertEqual(len(temp_files), 0, "No temporary files should be left behind on rejected save")
+
+
 
 if __name__ == "__main__":
     unittest.main()

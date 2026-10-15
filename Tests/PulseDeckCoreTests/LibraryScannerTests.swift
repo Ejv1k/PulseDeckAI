@@ -256,6 +256,57 @@ final class LibraryScannerTests: XCTestCase {
         XCTAssertEqual(leftoverTemps.count, 0, "No temporary files should be left behind on failure")
     }
 
+    /// Tests that when saveAtomic is called with an invalid cache (e.g. invalid cue ordering),
+    /// it throws CacheValidationError, leaves the existing destination file bytes completely unchanged,
+    /// and leaves no .cache_tmp files behind.
+    func testCachePersistenceSaveAtomicRejectedLeavesPreviousFileUnchangedAndCleansUpTempFile() throws {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckRejectedSaveTest_\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+
+        let cacheURL = tempDir.appendingPathComponent(".pulsedeck_ai_cache.json")
+
+        // 1. Write an initial valid cache
+        var validCache = PulseDeckLibraryCache(libraryRoot: "ValidLibrary")
+        let validEntry = makeTestEntry(relativePath: "01_Crate/valid.mp3", duration: 120.0, bpm: 120.0, fingerprint: "hashValid")
+        validCache.tracks["01_Crate/valid.mp3"] = validEntry
+        try CachePersistence.saveAtomic(cache: validCache, to: cacheURL)
+
+        let initialBytes = try Data(contentsOf: cacheURL)
+        XCTAssertFalse(initialBytes.isEmpty)
+
+        // 2. Build an invalid cache with cues violating ordering (startTrimCue > vocalEntryCue)
+        var invalidCache = validCache
+        var badEntry = validEntry
+        badEntry.cueMarkers = CueMarkers(startTrimCue: 50.0, vocalEntryCue: 20.0, mixOutCue: 100.0, endTrimCue: 120.0)
+        invalidCache.tracks["01_Crate/bad.mp3"] = badEntry
+
+        // 3. Attempt saveAtomic — must throw CacheValidationError
+        XCTAssertThrowsError(try CachePersistence.saveAtomic(cache: invalidCache, to: cacheURL)) { error in
+            guard let validationError = error as? CacheValidationError else {
+                XCTFail("Expected CacheValidationError, got \(error)")
+                return
+            }
+            if case .invalidCueMarkers(let track, _) = validationError {
+                XCTAssertEqual(track, "01_Crate/bad.mp3")
+            } else {
+                XCTFail("Expected .invalidCueMarkers, got \(validationError)")
+            }
+        }
+
+        // 4. Verify previous file bytes remain completely unchanged
+        let currentBytes = try Data(contentsOf: cacheURL)
+        XCTAssertEqual(currentBytes, initialBytes, "Previous cache file bytes must remain untouched on rejected save")
+
+        // 5. Verify no .cache_tmp files exist
+        let dirContents = (try? fileManager.contentsOfDirectory(atPath: tempDir.path)) ?? []
+        let leftoverTemps = dirContents.filter { $0.hasPrefix(".cache_tmp") }
+        XCTAssertEqual(leftoverTemps.count, 0, "No temporary files should be left behind on rejected save")
+    }
+
     func testDisplayNameFormatting() {
         XCTAssertEqual(LibraryScanner.displayName(for: "00_Test_Tracks_Dev"), "[00] Test Tracks Dev")
         XCTAssertEqual(LibraryScanner.displayName(for: "05_MainStage_Dance_120_128BPM"), "[05] MainStage Dance 120 128BPM")

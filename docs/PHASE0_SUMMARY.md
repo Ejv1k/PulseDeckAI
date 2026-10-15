@@ -16,16 +16,14 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `5407c7e78a93ac8d925e5bc7509ca528eae5352c` (native Grok run `7ad9b327` verdict: `CHANGES_REQUESTED` on `5407c7e`).
-  * Review Fix Commit 1: `c13a5e67778f003a7f2f71ee73d42a28d3fae9f2` (`scripts/pulsedeck_cache.py`: substitute 0.0 for non-finite automated cues before clamping in `merge_preserving_overrides`, matching Swift; unit tests in `test_pulsedeck_cache.py`; thread `PRRT_kwDOVJOZu86sy7ZZ` resolved).
-  * Review Fix Commit 2: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (`Sources/PulseDeckCore/Models/AudioContracts.swift`: `LatencyCompensation.init` guards `offsetMs.isFinite`, defaulting non-finite to 0.0 before clamping into `[-300.0, 300.0]`; unit tests in `AudioContractsTests.swift`; thread `PRRT_kwDOVJOZu86sy7Ze` resolved).
-  * Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e`.
+  * Last Reviewed SHA: `ff47ce7abbce3776f01fb7c3347762130c9c594c` (native Grok run `9e756a3c-62fc-416a-b559-1dca7d127c1d` verdict: `CHANGES_REQUESTED` on `ff47ce7`).
+  * Verified Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
+  * Documentation-Only Fix: `README.md` lines 238-239 updated to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
 * **Audit & Approval Status:**
-  * Commits `c13a5e6` and `f0784c8` are **NOT re-reviewed**.
-  * Native Grok re-review on updated head is pending.
+  * Source code is identical to verified code head `f0784c8`; documentation fix is pending final re-review.
   * There is **NO current approval**.
-  * Resolved review threads (all 15 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
-* **Phase Boundary:** **Phase 1 has NOT been started.** PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
+  * Resolved review threads (all 16 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
+* **Phase Boundary:** **Phase 1 has NOT been started.** STOP AFTER PHASE 0. PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status
 > *Note: Build and test evidence belongs to the latest code commit with review fixes, not fresh execution on documentation-only edits.*
@@ -34,6 +32,7 @@
 * **Python Test Suite:** 35/35 tests passing (0 failures) via `scripts/tests/test_pulsedeck_cache.py`.
 * **Companion Cache Validator:** `python3 scripts/pulsedeck_cache.py` validates `PulseDeck_Library/.pulsedeck_ai_cache.json` with exit code 0.
 * **Release Executable Build:** `swift build -c release` succeeds; produces `.build/release/PulseDeckAI` (Mach-O 64-bit arm64, 925 KB).
+* **Quiet Swift Build Verification:** `swift build -q` executed with exit code 0.
 * **Physical Hardware Validation:** Zero physical audio device validation has been conducted in Phase 0. No physical DAC routing, Bluetooth A2DP latency calibration, or hardware audio output has run.
 
 ---
@@ -187,7 +186,7 @@ The following non-blocking observations from prior review audits are recorded as
    ```bash
    ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
    ```
-4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `5407c7e` with verdict `CHANGES_REQUESTED`; code `f0784c8` is pending re-review.
+4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `ff47ce7` with verdict `CHANGES_REQUESTED`; code `f0784c8` was verified correct by Grok, with documentation fix pending re-review.
 5. **Validation Commands:**
    ```bash
    swift build -c release

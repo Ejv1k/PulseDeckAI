@@ -235,5 +235,5 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 
 ## Documentation Links
 
-* [**Technical Architecture Specification**](file:///Users/tomaselagin/.ao/data/worktrees/pulsedeckai/pulsedeckai-3/docs/TECHNICAL_ARCHITECTURE.md): Deep technical breakdown of dual-engine audio graphs, real-time thread safety, latency alignment, cache serialization, and transition contracts.
-* [**Event DJ User Manual**](file:///Users/tomaselagin/.ao/data/worktrees/pulsedeckai/pulsedeckai-3/docs/USER_MANUAL.md): Step-by-step operational guide for live performance, hardware setups, keyboard shortcuts, AI Studio API configuration, and troubleshooting.
+* [**Technical Architecture Specification**](docs/TECHNICAL_ARCHITECTURE.md): Deep technical breakdown of dual-engine audio graphs, real-time thread safety, latency alignment, cache serialization, and transition contracts.
+* [**Event DJ User Manual**](docs/USER_MANUAL.md): Step-by-step operational guide for live performance, hardware setups, keyboard shortcuts, AI Studio API configuration, and troubleshooting.

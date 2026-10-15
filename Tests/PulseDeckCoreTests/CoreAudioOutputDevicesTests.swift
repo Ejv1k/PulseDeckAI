@@ -1317,6 +1317,30 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
         XCTAssertNil(weakEngine, "The configuration observer must not keep the engine alive.")
         monitor.stop()
     }
+
+    func testPrunedRegistrationRemovesConfigurationObserver() throws {
+        let mock = MockAudioHardware()
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+
+        var engine: AVAudioEngine? = AVAudioEngine()
+        monitor.registerEngine(engine!, role: .master)
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
+        XCTAssertEqual(monitor.configurationObserverFireCountForTesting(), 1)
+
+        engine = nil
+        monitor.reconcileImmediately()
+        NotificationCenter.default.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: AVAudioEngine()
+        )
+        XCTAssertEqual(
+            monitor.configurationObserverFireCountForTesting(),
+            1,
+            "Dropping a registration must remove its configuration observer."
+        )
+        monitor.stop()
+    }
 }
 
 private func isRetryLimit(_ error: CoreAudioError) -> Bool {

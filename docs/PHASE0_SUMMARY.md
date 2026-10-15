@@ -16,15 +16,16 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `ff47ce7abbce3776f01fb7c3347762130c9c594c` (native Grok run `9e756a3c-62fc-416a-b559-1dca7d127c1d` verdict: `CHANGES_REQUESTED` on `ff47ce7`).
+  * Last Reviewed SHA: `130bfc36f31bb037520cd949e603df0de9a84ad1` (native Grok 4.7 run `1dd995eb-9e2e-4389-a39a-b759e0cf0c5d`, verdict: `CHANGES_REQUESTED`). The reviewer confirmed the Phase 0 code and README links; the remaining required findings concerned this handover document.
   * Product Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
   * Test Suite Update: `d34f8a8d4c2d2bbb6a08127d7ae53b3c32dda504` added `test_reanalysis_with_infinity_automated_cues_and_manual_bpm_override` to `scripts/tests/test_pulsedeck_cache.py`.
   * Documentation Hash Alignment: `ff47ce7abbce3776f01fb7c3347762130c9c594c` aligned exact commit hashes in `docs/PHASE0_SUMMARY.md`.
   * Documentation-Only Fix: `130bfc36f31bb037520cd949e603df0de9a84ad1` updated `README.md` lines 238-239 to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
+  * Lineage Correction: `ba331f74c2a736828cafe0b5451f9bee9c0010aa` distinguished unchanged product sources from the additional Python regression test. The subsequent documentation correction aligns the inventory below with the actual Swift declarations.
 * **Audit & Approval Status:**
   * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) is not unchanged, having received an additional test in ancestor commit `d34f8a8`. Documentation fixes are pending final re-review.
   * There is **NO current approval**.
-  * Resolved review threads (all 17 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
+  * Resolved review threads do **NOT** constitute review approval. Check the verdict and target SHA with `ao review ls pulsedeckai-2`. Native AO approval does **NOT** constitute independent GitHub PR approval.
 * **Phase Boundary:** **Phase 1 has NOT been started.** STOP AFTER PHASE 0. PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status
@@ -83,9 +84,9 @@ Every path and declaration kind listed below matches actual repository declarati
   * `public protocol AudioEngineCoordinatorContract`: Dual-engine coordinator protocol.
 * **`Sources/PulseDeckCore/Models/CacheSchema.swift`**:
   * `public struct CueMarkers`: Four ordered cues (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), validation via `isValid(forDuration:)`, clamping via `clamped(toDuration:)`.
-  * `public struct BeatGrid`: BPM, beat grid anchor, confidence, and `isAnalyzed`.
-  * `public struct WaveformMetadata`: Multi-band peak and RMS waveform buffers.
-  * `public struct ManualOverrides`: User override tracking flags (`isManual`, `overriddenFields`, `lastModifiedAt`).
+  * `public struct BeatGrid`: Beat grid timing model (`firstBeatOffsetSeconds`, `beatIntervalSeconds`, `beatTimestamps`). BPM and analysis confidence belong to `TrackCacheEntry`; `BeatGrid` has no `isAnalyzed` property.
+  * `public struct WaveformMetadata`: Multi-band waveform display buffers (`sampleCount`, `downsampleFactor`, `peakValues`, `lowBandPeaks`, `midBandPeaks`, `highBandPeaks`); no RMS buffer is stored.
+  * `public struct ManualOverrides`: User override tracking flags (`isManual`, `overriddenFields`, `updatedAt`, `author`, `notes`).
   * `public struct TrackCacheEntry`: Per-track record with re-analysis merge protection (`mergingPreservingOverrides(with:)`).
   * `public struct PulseDeckLibraryCache`: Root cache container with `validate()` enforcing schema version, library root, and track bounds.
   * `public enum CacheValidationError`: Strongly typed schema validation error.
@@ -104,7 +105,7 @@ Every path and declaration kind listed below matches actual repository declarati
 * **`Sources/PulseDeckAI/PulseDeckApp.swift`**:
   * `@main public struct PulseDeckApp: App`: SwiftUI application entry point, sets window minimum dimensions (`1024x680`), registers Cmd+R library rescan shortcut.
 * **`Sources/PulseDeckAI/ViewModels/AppState.swift`**:
-  * `@MainActor public final class AppState: ObservableObject`: Manages library scanning, crate selection persistence, background serialization, and debounced generation-stamped scan requests.
+  * `@MainActor public final class AppState: ObservableObject`: Runs library scans in a detached task and publishes results on the main actor. Retains the selected crate by ID across rescans, drops requests while `isScanning` is true, and checks scan generation before applying results. This is an in-flight guard, not debouncing.
 * **`Sources/PulseDeckAI/UI/Theme.swift`**:
   * `public enum DJTheme`: Standardized color system (`background`, `cardBackground`, `deckA`, `deckB`, `master`, `cue`).
 * **`Sources/PulseDeckAI/UI/ContentView.swift`**:
@@ -114,7 +115,7 @@ Every path and declaration kind listed below matches actual repository declarati
 * **`Sources/PulseDeckAI/UI/LibraryBrowserView.swift`**:
   * `public struct LibraryBrowserView: View`: 10-crate sidebar and track list.
 * **`Sources/PulseDeckAI/UI/ArchitectureStatusView.swift`**:
-  * `public struct ArchitectureStatusView: View`: Output routing indicator for Master, Cue, and Latency compensation.
+  * `public struct ArchitectureStatusView: View`: Static architectural contract card grid describing dual outputs, audio-thread safety, and cache/advisor requirements; it does not report live audio routing.
 
 ### 3.3 Test Suites & Companion Scripts
 * **`Tests/PulseDeckCoreTests/AudioContractsTests.swift`**: 4 tests verifying latency compensation model math, non-finite guard defaulting to zero, boundary clamping, EQ/filter/pitch defaults, and Gemini rate limiter backoff capping.
@@ -184,11 +185,11 @@ The following non-blocking observations from prior review audits are recorded as
 
 1. **Verify Worktree & Remote State:** Confirm HEAD commit on `phase-0-foundation` matches remote `origin/phase-0-foundation`.
 2. **Review Status Check:** Run `ao review ls pulsedeckai-2` (bare `ao review ls` defaults to the wrong session). Check for completed native Grok review verdict on PR #1.
-3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e`:
+3. **Optional Re-Review Trigger:** Only if the current PR head lacks approval and a further review is authorized, review the current remote PR head (the command does not select an older code commit):
    ```bash
    ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
    ```
-4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `ff47ce7` with verdict `CHANGES_REQUESTED`; code `f0784c8` was verified correct by Grok, with documentation fix pending re-review.
+4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. See section 1.1 for the last recorded audit. The documentation corrections require a final verdict; do not infer approval from a clean build or resolved comments.
 5. **Validation Commands:**
    ```bash
    swift build -c release
@@ -197,3 +198,7 @@ The following non-blocking observations from prior review audits are recorded as
    python3 scripts/pulsedeck_cache.py
    ```
 6. **Phase 1 Scope:** Proceed with Phase 1 only when a fresh, explicit user request instructs Phase 1 implementation to begin.
+
+### Session boundary and escalation
+
+The user authorized the GPT orchestrator to finish these documentation corrections directly after repeated handover inaccuracies. The Gemini agent in existing session `pulsedeckai-2` was exited; its worktree and PR ownership remain intact. AO rejected a switch to Grok with `UNSUPPORTED_SWITCH_HARNESS`. Do not restart Gemini to retry the same failed issue: after two failed attempts, GPT or Grok must take over. No new worker or Phase 1 implementation is authorized by this handover.

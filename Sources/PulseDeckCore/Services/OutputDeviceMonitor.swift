@@ -328,6 +328,13 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         controlQueue.async(execute: body)
     }
 
+    /// Returns the UID stored for `engine`, or `nil` when that engine is not registered.
+    func boundDeviceUIDForTesting(of engine: AVAudioEngine) -> String? {
+        syncControl {
+            self.registeredEngines.first { $0.engine === engine }?.boundDeviceUID
+        }
+    }
+
     // MARK: - Queue ownership
 
     private var isOnControlQueue: Bool {

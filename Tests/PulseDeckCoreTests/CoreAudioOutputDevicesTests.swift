@@ -55,6 +55,8 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     var defaultOutputError: CoreAudioError?
     var setOutputDeviceError: CoreAudioError?
     var sampleRateErrors: [AudioDeviceID: CoreAudioError] = [:]
+    /// Throws on the next `getDeviceUID` for that device, then clears so a later read can succeed.
+    var oneShotUIDErrors: [AudioDeviceID: CoreAudioError] = [:]
     /// When set, the first N `getDeviceIDs` calls succeed and the next call throws.
     var remainingSuccessfulDeviceIDQueries: Int?
     private var setOutputDeviceAttempts: Int = 0
@@ -179,6 +181,9 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     func getDeviceUID(deviceID: AudioDeviceID) throws -> String {
         lock.lock()
         defer { lock.unlock() }
+        if let error = oneShotUIDErrors.removeValue(forKey: deviceID) {
+            throw error
+        }
         guard let dev = devices.first(where: { $0.id == deviceID }) else {
             throw CoreAudioError.osStatus(-50, operation: "getDeviceUID")
         }
@@ -742,6 +747,22 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
         }
     }
 
+    func testEnumerateThrowsWhenUIDReadFailsAndSkipsEmptyUID() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 1, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 2, uid: "", name: "Blank", outputChannels: 2)
+        mock.addDevice(id: 3, uid: "speakers", name: "Speakers", outputChannels: 2)
+        let uidError = CoreAudioError.osStatus(-50, operation: "getDeviceUID")
+        mock.oneShotUIDErrors[1] = uidError
+
+        XCTAssertThrowsError(try CoreAudioOutputDevices.enumerate(using: mock)) { error in
+            XCTAssertEqual(error as? CoreAudioError, uidError)
+        }
+
+        let descriptors = try CoreAudioOutputDevices.enumerate(using: mock)
+        XCTAssertEqual(descriptors.map(\.id), ["dac", "speakers"])
+    }
+
     func testEnumerateSkipsFailedOrNonFiniteSampleRate() throws {
         let mock = MockAudioHardware()
         mock.addDevice(id: 410, uid: "good_speakers", name: "Good Speakers", outputChannels: 2, sampleRate: 48000.0)
@@ -790,6 +811,54 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
 
         let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
         XCTAssertEqual(mock.boundUnits[audioUnit], 12, "Same bound UID under a new numeric ID stays selected when no preferred UID is set.")
+        monitor.stop()
+    }
+
+    func testBoundDeviceUIDReadFailurePreservesBindingUntilReadSucceeds() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 31, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 32, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(32)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(31, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let changes = TestBox(0)
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: { changes.value += 1 },
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 31)
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+
+        let uidError = CoreAudioError.osStatus(-50, operation: "getDeviceUID")
+        mock.oneShotUIDErrors[31] = uidError
+        monitor.reconcileImmediately()
+
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(errors.value, [uidError])
+        XCTAssertEqual(changes.value, 0, "A failed UID read must not report onChange.")
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+        XCTAssertEqual(mock.boundUnits[audioUnit], 31)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertEqual(engine.stopCount, 0)
+
+        monitor.reconcileImmediately()
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+        XCTAssertEqual(mock.boundUnits[audioUnit], 31, "A later healthy read must stay on the bound device, not the default.")
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertEqual(engine.stopCount, 0)
         monitor.stop()
     }
 

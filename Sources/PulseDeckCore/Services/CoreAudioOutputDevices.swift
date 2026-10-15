@@ -16,25 +16,19 @@ public enum CoreAudioOutputDevices {
     ///
     /// - Parameter hal: The underlying HAL abstraction interface (defaults to `SystemAudioHardware.shared`).
     /// - Returns: An array of `AudioDeviceDescriptor` representing output-capable hardware endpoints.
-    /// - Throws: `CoreAudioError` if the device-list query fails, or if any output device's UID cannot be read.
-    ///   A thrown UID read fails the whole list. It is not treated as absence of that device.
-    ///   An empty UID is omitted. A device whose nominal sample rate query fails, or whose rate is
-    ///   non-finite or not positive, is omitted. This method never substitutes a fabricated sample rate.
+    /// - Throws: `CoreAudioError` if the device-list query fails, or if a UID, output channel-count,
+    ///   or sample-rate read throws. A thrown read fails the whole list. It is not absence of that device.
+    ///   `invalidSampleRate` is the exception: the HAL answered, and that device is omitted.
+    ///   An empty UID, a channel count of 0, and a rate that was read and is non-finite or not positive
+    ///   are also omitted. This method never substitutes a fabricated sample rate.
     public static func enumerate(using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> [AudioDeviceDescriptor] {
         let deviceIDs = try hal.getDeviceIDs()
         var descriptors: [AudioDeviceDescriptor] = []
         let defaultOutputID = try? hal.getDefaultOutputDeviceID()
 
         for deviceID in deviceIDs {
-            // Strictly query output channels in output scope; filter out input-only or zero-channel endpoints
-            let channelCount: Int
-            do {
-                channelCount = try hal.getOutputChannelCount(deviceID: deviceID)
-            } catch {
-                // If a device fails channel count query (e.g. unplugged during iteration), skip safely
-                continue
-            }
-
+            // A thrown channel-count read is not "not an output". Zero channels are.
+            let channelCount = try hal.getOutputChannelCount(deviceID: deviceID)
             guard channelCount > 0 else {
                 continue
             }
@@ -52,13 +46,17 @@ public enum CoreAudioOutputDevices {
             // Manufacturer with safe fallback
             let manufacturer = (try? hal.getDeviceManufacturer(deviceID: deviceID)) ?? "Generic"
 
-            // Skip the endpoint when the device does not report a usable rate.
-            // Never publish a stand-in such as 44.1 kHz.
+            // invalidSampleRate means the HAL answered with an unusable rate. Omit that device.
+            // Any other thrown read, including osStatus, fails the list. A value that was read and is
+            // non-finite or not positive is also omitted. Never publish a stand-in such as 44.1 kHz.
             let sampleRate: Double
             do {
                 sampleRate = try hal.getNominalSampleRate(deviceID: deviceID)
-            } catch {
-                continue
+            } catch let error as CoreAudioError {
+                if case .invalidSampleRate = error {
+                    continue
+                }
+                throw error
             }
             guard sampleRate.isFinite && sampleRate > 0.0 else {
                 continue

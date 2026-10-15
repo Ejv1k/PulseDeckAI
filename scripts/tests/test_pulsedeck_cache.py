@@ -451,6 +451,43 @@ class TestMergePreservingOverrides(unittest.TestCase):
         self.assertEqual(merged.musicalKey, "6B")  # from new analysis
         self.assertEqual(merged.cueMarkers, new_cues)  # from new analysis
 
+    def test_reanalysis_with_nan_automated_cues_and_manual_bpm_override(self):
+        # isManual is True, overriddenFields is ["bpm"]
+        existing_entry = create_sample_entry(
+            duration=180.0,
+            bpm=132.0,
+            musical_key="5A",
+            cue_markers=CueMarkers(10.0, 20.0, 150.0, 170.0),
+            manual_overrides=ManualOverrides(
+                isManual=True,
+                overriddenFields=["bpm"],
+            ),
+        )
+
+        # New analysis contains NaN automated cue markers
+        new_cues_with_nan = CueMarkers(float("nan"), 25.0, 160.0, 175.0)
+        new_analysis = create_sample_entry(
+            duration=200.0,
+            bpm=120.0,
+            musical_key="8B",
+            cue_markers=new_cues_with_nan,
+            manual_overrides=ManualOverrides(isManual=False, overriddenFields=[]),
+        )
+
+        # Must return without raising, keep manual bpm, and satisfy cueMarkers.validate(duration)
+        merged = existing_entry.merge_preserving_overrides(new_analysis)
+        self.assertEqual(merged.bpm, 132.0, "Must preserve manual bpm override")
+        self.assertEqual(merged.musicalKey, "8B", "Must adopt new musicalKey")
+        self.assertEqual(merged.duration, 200.0, "Must adopt new duration")
+        self.assertTrue(
+            merged.cueMarkers.validate(merged.duration),
+            f"Merged cues must satisfy validate(duration): {merged.cueMarkers}",
+        )
+        self.assertEqual(merged.cueMarkers.startTrimCue, 0.0, "NaN cue must be substituted with 0.0")
+        self.assertEqual(merged.cueMarkers.vocalEntryCue, 25.0)
+        self.assertEqual(merged.cueMarkers.mixOutCue, 160.0)
+        self.assertEqual(merged.cueMarkers.endTrimCue, 175.0)
+
 
 class TestSchemaValidation(unittest.TestCase):
     """Tests for strict schema validation, malformed JSON, and false success prevention."""

@@ -290,9 +290,37 @@ class TrackCacheEntry:
             # Clamp preserved cues to new track duration to guarantee valid bounds
             merged.cueMarkers = self.cueMarkers.clamped(merged.duration)
         else:
-            # Final invariant verification: cues must be ordered and bounded
+            # Ensure automated cues on the returned entry are ordered and bounded in [0, duration].
+            # If any automated cue is non-finite (NaN or infinite), substitute 0.0 for that component,
+            # then clamp and do not raise (matching Swift TrackCacheEntry.mergingPreservingOverrides).
             if not merged.cueMarkers.validate(merged.duration):
-                merged.cueMarkers = merged.cueMarkers.clamped(merged.duration)
+                cues = merged.cueMarkers
+                raw_s = (
+                    cues.startTrimCue
+                    if (isinstance(cues.startTrimCue, (int, float)) and math.isfinite(cues.startTrimCue))
+                    else 0.0
+                )
+                raw_v = (
+                    cues.vocalEntryCue
+                    if (isinstance(cues.vocalEntryCue, (int, float)) and math.isfinite(cues.vocalEntryCue))
+                    else 0.0
+                )
+                raw_m = (
+                    cues.mixOutCue
+                    if (isinstance(cues.mixOutCue, (int, float)) and math.isfinite(cues.mixOutCue))
+                    else 0.0
+                )
+                raw_e = (
+                    cues.endTrimCue
+                    if (isinstance(cues.endTrimCue, (int, float)) and math.isfinite(cues.endTrimCue))
+                    else 0.0
+                )
+                merged.cueMarkers = CueMarkers(
+                    startTrimCue=raw_s,
+                    vocalEntryCue=raw_v,
+                    mixOutCue=raw_m,
+                    endTrimCue=raw_e,
+                ).clamped(merged.duration)
 
         if "bpm" in self.manualOverrides.overriddenFields:
             merged.bpm = self.bpm

@@ -15,14 +15,15 @@
 ### 1.1 Review State & Commit Lineage
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
-* **Audit History:**
-  * Native Grok run `20b1b216-7f9f-4f6c-b21b-fa2fee351ac6` completed with verdict `CHANGES_REQUESTED` on code commit `34b9454`.
-  * All three required audit findings were addressed in the final Phase 0 closeout:
-    1. `scripts/pulsedeck_cache.py`: `merge_preserving_overrides` returns `copy.deepcopy(self)` when new duration is NaN, negative, or infinite, preserving previous cues, duration, and fingerprint without raising.
-    2. `Sources/PulseDeckCore/Models/CacheSchema.swift` & `scripts/pulsedeck_cache.py`: `mergingPreservingOverrides` / `merge_preserving_overrides` checks if manual cues contain any non-finite component using `.isNaN` / `math.isnan` / `isFinite`, and returns `self` (Swift) or `copy.deepcopy(self)` (Python) without converting to zeros or adopting new fingerprint/analyzerVersion.
-    3. `Sources/PulseDeckCore/Services/CachePersistence.swift` & `scripts/pulsedeck_cache.py`: `saveAtomic` / `save_atomic` enforces `validate()` before creating temporary files or modifying the destination, leaving prior bytes unchanged and cleaning up temporary files.
-  * Resolved review threads: `PRRT_kwDOVJOZu86ssDN6`, `PRRT_kwDOVJOZu86ssDOB`, and `PRRT_kwDOVJOZu86ssDOF`.
-* **Final Phase 0 Boundary:** This final fix commit represents the definitive Phase 0 closeout. Final code is **NOT** re-reviewed; no new review will be triggered, and no Phase 1 work will begin.
+* **Final Code Lineage:**
+  * Last Reviewed SHA: `34b9454f22ae94a91fb63a41ea8fde93c0399213` (native Grok run `20b1b216-7f9f-4f6c-b21b-fa2fee351ac6` verdict: `CHANGES_REQUESTED`).
+  * Fix Commit 1: `164b5d60a9ba0e4ed5359b4b01d4793dd56cea22` (enforce `validate()` before temporary file creation in `CachePersistence.saveAtomic` and `PulseDeckLibraryCache.save_atomic`).
+  * Final Code SHA: `1c8c27b71055dc21544f9909e6a681cbcc0f05b0` (Python `merge_preserving_overrides` fallback on NaN/negative/infinite duration; Swift & Python `mergingPreservingOverrides` non-finite manual cue preservation via `.isNaN`/`isFinite`).
+* **Audit & Approval Status:**
+  * Commits `164b5d6` and `1c8c27b` are **NOT re-reviewed**.
+  * Next fresh session must obtain native Grok re-review of the updated head before merging.
+  * There is **NO current approval**.
+  * Resolved review threads (all 13 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
 * **Phase Boundary:** **Phase 1 has NOT been started.** PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status
@@ -129,13 +130,15 @@ Every path and declaration kind listed below matches actual repository declarati
 
 The following non-blocking observations from prior review audits are recorded as unresolved / requiring future verification. They are retained as notes; product code changes for these items are deferred unless a new verdict changes severity:
 
-1. **Zero-Byte Cache Handling:** `CachePersistence.load` returns a default empty cache when encountering a 0-byte file on disk.
-2. **Schema Bounds Coverage Gaps:** Some structural model fields have basic type validation in Swift models but rely on upstream DSP analyzers for extended semantic validation.
-3. **Library Path Working Directory Dependency:** `AppState` resolves `PulseDeck_Library` relative to `FileManager.default.currentDirectoryPath`, requiring the execution working directory to match the package root.
-4. **Duplicate Cmd+R Registration Risk:** The Cmd+R shortcut is registered in the application menu commands; views attaching additional shortcut handlers could produce duplicate triggers.
-5. **Python `save_atomic` Parent Directory Fsync:** In `scripts/pulsedeck_cache.py`, `save_atomic` executes `os.fsync` on the file descriptor before `os.replace`, but does not open and sync the parent directory descriptor on POSIX platforms.
-6. **Absent Standard Crate Warning:** The scanner detects missing standard crate directories without crashing, but does not currently surface a visible UI warning when expected crates are absent.
-7. **README Cue Color Naming Discrepancy:** Textual color naming in documentation/README has minor naming variations (e.g. Amber vs Gold).
+1. **Standard Crates Completeness:** Scanner enumerates directories but does not validate completeness against the standard 10-crate list or warn when standard crates are absent.
+2. **README Cue Color Discrepancy:** README specifies purple `#D500F9`, but `Theme.swift` defines cue color as gold/amber (`#FFD600`).
+3. **Duplicate Cmd+R Registration:** The Cmd+R shortcut is attached both to the UI button and to the application menu commands, risking duplicate invocation handling.
+4. **Generation Guard Early-Return Cleanup Risk:** In `AppState.refreshLibrary()`, a generation mismatch returns early without resetting `isScanning = false`.
+5. **AI Advisor Request Interval Bounds:** `minRequestIntervalSeconds = 5.0` is fixed, so setting `requestsPerMinute < 12` does not automatically increase the 5.0s minimum interval.
+6. **Zero-Byte Cache Handling:** `CachePersistence.load` accepts a 0-byte file on disk as an empty default cache.
+7. **Python `save_atomic` Parent Directory Fsync:** In `scripts/pulsedeck_cache.py`, `save_atomic` calls `os.fsync` on the file descriptor before `os.replace`, but does not open and sync the parent directory descriptor on POSIX platforms.
+8. **Schema Bounds Coverage Gaps:** Some structural model fields rely on upstream DSP analyzers for deep semantic validation beyond basic type decoding.
+9. **Library Path Working Directory Dependency:** `AppState` resolves `PulseDeck_Library` relative to `FileManager.default.currentDirectoryPath`, requiring the execution working directory to match the project root.
 
 ---
 
@@ -178,13 +181,17 @@ The following non-blocking observations from prior review audits are recorded as
 > **USER DIRECTIVE:** **STOP AFTER PHASE 0.** Do NOT start Phase 1, do NOT merge PR #1, and do NOT treat Phase 1 transition as automatic.
 
 1. **Verify Worktree & Remote State:** Confirm HEAD commit on `phase-0-foundation` matches remote `origin/phase-0-foundation`.
-2. **Review Status Check:** Run `ao review ls`. Check for completed native Grok review verdict on PR #1.
-3. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit orchestrator confirmation and human authorization.
-4. **Validation Commands:**
+2. **Review Status Check:** Run `ao review ls pulsedeckai-2` (bare `ao review ls` defaults to the wrong session). Check for completed native Grok review verdict on PR #1.
+3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `1c8c27b71055dc21544f9909e6a681cbcc0f05b0`:
+   ```bash
+   ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
+   ```
+4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `34b9454` with verdict `CHANGES_REQUESTED`; code `1c8c27b` has not been re-reviewed.
+5. **Validation Commands:**
    ```bash
    swift build -c release
    swift test
    python3 -m unittest discover -s scripts/tests
    python3 scripts/pulsedeck_cache.py
    ```
-5. **Phase 1 Scope:** Proceed with Phase 1 only when a fresh, explicit user request instructs Phase 1 implementation to begin.
+6. **Phase 1 Scope:** Proceed with Phase 1 only when a fresh, explicit user request instructs Phase 1 implementation to begin.

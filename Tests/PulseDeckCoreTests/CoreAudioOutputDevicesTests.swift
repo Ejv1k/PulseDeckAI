@@ -57,6 +57,12 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     var sampleRateErrors: [AudioDeviceID: CoreAudioError] = [:]
     /// Throws on the next `getDeviceUID` for that device, then clears so a later read can succeed.
     var oneShotUIDErrors: [AudioDeviceID: CoreAudioError] = [:]
+    /// Throws once when `getDeviceUID` for that device reaches this 1-based call count.
+    var uidThrowOnCall: [AudioDeviceID: Int] = [:]
+    /// Throws once when `getOutputChannelCount` for that device reaches this 1-based call count.
+    var channelCountThrowOnCall: [AudioDeviceID: Int] = [:]
+    private var uidReadCounts: [AudioDeviceID: Int] = [:]
+    private var channelCountReads: [AudioDeviceID: Int] = [:]
     /// When set, the first N `getDeviceIDs` calls succeed and the next call throws.
     var remainingSuccessfulDeviceIDQueries: Int?
     private var setOutputDeviceAttempts: Int = 0
@@ -181,8 +187,14 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     func getDeviceUID(deviceID: AudioDeviceID) throws -> String {
         lock.lock()
         defer { lock.unlock() }
+        let uidReads = (uidReadCounts[deviceID] ?? 0) + 1
+        uidReadCounts[deviceID] = uidReads
         if let error = oneShotUIDErrors.removeValue(forKey: deviceID) {
             throw error
+        }
+        if uidThrowOnCall[deviceID] == uidReads {
+            uidThrowOnCall[deviceID] = nil
+            throw CoreAudioError.osStatus(-50, operation: "getDeviceUID")
         }
         guard let dev = devices.first(where: { $0.id == deviceID }) else {
             throw CoreAudioError.osStatus(-50, operation: "getDeviceUID")
@@ -211,6 +223,12 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     func getOutputChannelCount(deviceID: AudioDeviceID) throws -> Int {
         lock.lock()
         defer { lock.unlock() }
+        let reads = (channelCountReads[deviceID] ?? 0) + 1
+        channelCountReads[deviceID] = reads
+        if channelCountThrowOnCall[deviceID] == reads {
+            channelCountThrowOnCall[deviceID] = nil
+            throw CoreAudioError.osStatus(-50, operation: "getOutputChannelCount")
+        }
         guard let dev = devices.first(where: { $0.id == deviceID }) else {
             throw CoreAudioError.osStatus(-50, operation: "getOutputChannelCount")
         }
@@ -859,6 +877,103 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
         XCTAssertTrue(engine.isRunning)
         XCTAssertEqual(engine.pauseCount, 0)
         XCTAssertEqual(engine.stopCount, 0)
+        monitor.stop()
+    }
+
+    func testDefaultChannelCountFailureDoesNotReplaceBoundDevice() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 71, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 72, uid: "booth", name: "Booth", outputChannels: 2)
+        mock.addDevice(id: 73, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(73)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(71, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let changes = TestBox(0)
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: { changes.value += 1 },
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 71)
+        mock.removeDevice(id: 71)
+        // enumerate reads the default's channel count once. The default-output query is the second read.
+        mock.channelCountThrowOnCall[73] = 2
+
+        let channelError = CoreAudioError.osStatus(-50, operation: "getOutputChannelCount")
+        monitor.reconcileImmediately()
+
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(errors.value, [channelError])
+        XCTAssertEqual(changes.value, 0)
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+        XCTAssertEqual(mock.boundUnits[audioUnit], 71)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+
+        monitor.reconcileImmediately()
+        XCTAssertEqual(mock.boundUnits[audioUnit], 73, "The healthy pass must bind the default, not the output chosen while the read was failing.")
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "speakers")
+        XCTAssertTrue(engine.isRunning)
+        monitor.stop()
+    }
+
+    func testRegisterEngineUIDFailureKeepsNumericBinding() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 81, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 82, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(82)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(81, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let changes = TestBox(0)
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: { changes.value += 1 },
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        // Call 1 is registration. Call 2 is enumerate. Call 3 is the unresolved-ID lookup.
+        mock.uidThrowOnCall[81] = 1
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 81)
+        XCTAssertNil(monitor.boundDeviceUIDForTesting(of: engine))
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 81)
+        XCTAssertEqual(errors.value, [CoreAudioError.osStatus(-50, operation: "getDeviceUID")])
+
+        mock.uidThrowOnCall[81] = 3
+        changes.value = 0
+        errors.value = []
+        monitor.reconcileImmediately()
+        XCTAssertEqual(errors.value, [CoreAudioError.osStatus(-50, operation: "getDeviceUID")])
+        XCTAssertEqual(changes.value, 0)
+        XCTAssertNil(monitor.boundDeviceUIDForTesting(of: engine))
+        XCTAssertEqual(mock.boundUnits[audioUnit], 81)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+
+        monitor.reconcileImmediately()
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+        XCTAssertEqual(mock.boundUnits[audioUnit], 81, "The original device must remain the bound output.")
+        XCTAssertNotEqual(mock.boundUnits[audioUnit], 82)
+        XCTAssertTrue(engine.isRunning)
         monitor.stop()
     }
 

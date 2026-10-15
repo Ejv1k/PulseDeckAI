@@ -129,7 +129,7 @@ Device management interfaces directly with the CoreAudio Hardware Abstraction La
 * **Fault Recovery:** If an active output device is unplugged during a live set:
   1. The affected engine's render graph is paused with `AVAudioEngine.pause()` so scheduled playback is kept. `stop()` is not used, because it resets the graph.
   2. The same device UID remains selected when CoreAudio assigns it a new numeric ID. Fallback runs only after a successful topology query proves that UID absent. Order is the preferred UID, then the system default output, then the first enumerated output with channels.
-  3. A failed enumerate, default-device, or UID lookup reports that error and leaves the engine running state and the bound UID/ID unchanged. It is not an empty device list. A thrown UID read during enumeration fails that pass. An empty UID is omitted.
+  3. A failed enumerate, default-device, or UID lookup reports that error and leaves the engine running state and the bound UID/ID unchanged. It is not an empty device list. A thrown UID read during enumeration fails that pass. An empty UID is omitted. A thrown output-channel count for the default device fails that pass. A registration that kept a numeric ID and no UID resolves that ID before fallback.
   4. Bind and start retries are capped at three attempts per candidate UID and topology generation. The cap resets when that set changes or recovery succeeds.
   5. An alert ribbon notifies the DJ on the `@MainActor` UI.
 * **Engine mutation ownership:** `start`, `pause`, `stop`, and output-device bind for a registered engine run only on `com.pulsedeck.audio.control`. Other callers must not mutate that engine concurrently. Listener callbacks are delivered off that queue.

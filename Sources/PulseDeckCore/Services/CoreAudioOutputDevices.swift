@@ -90,13 +90,15 @@ public enum CoreAudioOutputDevices {
     /// Queries the current system default output device ID.
     ///
     /// - Parameter hal: The underlying HAL abstraction interface (defaults to `SystemAudioHardware.shared`).
-    /// - Returns: The active default `AudioDeviceID`, or `nil` if no usable default output is available.
-    /// - Throws: `CoreAudioError` if HAL query fails.
+    /// - Returns: The active default `AudioDeviceID`, or `nil` when no default is selected or the
+    ///   successful channel-count query reports no output channels.
+    /// - Throws: `CoreAudioError` when the default-device query or its output channel-count query fails.
+    ///   A thrown channel-count read is not "no default".
     public static func defaultOutputDeviceID(using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> AudioDeviceID? {
         guard let deviceID = try hal.getDefaultOutputDeviceID(), deviceID != 0 else {
             return nil
         }
-        let channels = (try? hal.getOutputChannelCount(deviceID: deviceID)) ?? 0
+        let channels = try hal.getOutputChannelCount(deviceID: deviceID)
         guard channels > 0 else {
             return nil
         }

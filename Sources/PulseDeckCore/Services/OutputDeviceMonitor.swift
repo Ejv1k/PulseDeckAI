@@ -534,6 +534,19 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         for registration in snapshot {
             guard let engine = registration.engine else { continue }
 
+            if registration.boundDeviceUID == nil, let boundID = registration.boundDeviceID {
+                // A failed UID read at registration stores the numeric ID and leaves the UID nil.
+                // Nil here means "not known yet", not "unbound". Resolve that ID before any fallback.
+                let listedIDs = try hal.getDeviceIDs()
+                if listedIDs.contains(boundID) {
+                    let uid = try hal.getDeviceUID(deviceID: boundID)
+                    if !uid.isEmpty, devices.contains(where: { $0.id == uid }) {
+                        steps.append(.maintain(registration, engine, candidateUID: uid))
+                        continue
+                    }
+                }
+            }
+
             if let boundUID = registration.boundDeviceUID,
                devices.contains(where: { $0.id == boundUID }) {
                 // Throws stay failures. `nil` means this successful read did not find the UID.
@@ -612,6 +625,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         topology: String,
         events: inout [MonitorEvent]
     ) {
+        registration.boundDeviceUID = candidateUID
         guard registration.intendedRunningState else {
             // The caller asked the engine to stay stopped. Do not restart it because it is still running,
             // and do not reset the cap in front of a start that this pass is about to attempt.

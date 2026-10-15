@@ -20,6 +20,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         let role: AudioEngineRole
         var desiredDeviceUID: String?
         var boundDeviceID: AudioDeviceID?
+        var boundDeviceUID: String?
         var intendedRunningState: Bool
         var retryCount: Int
         var observerToken: NSObjectProtocol?
@@ -29,12 +30,14 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             role: AudioEngineRole,
             desiredDeviceUID: String? = nil,
             boundDeviceID: AudioDeviceID? = nil,
+            boundDeviceUID: String? = nil,
             intendedRunningState: Bool = false
         ) {
             self.engine = engine
             self.role = role
             self.desiredDeviceUID = desiredDeviceUID
             self.boundDeviceID = boundDeviceID
+            self.boundDeviceUID = boundDeviceUID
             self.intendedRunningState = intendedRunningState
             self.retryCount = 0
             self.observerToken = nil
@@ -164,20 +167,32 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     ///   - role: The architectural role of the engine (Master or Cue).
     ///   - desiredDeviceUID: Optional preferred device UID string.
     ///   - boundDeviceID: Optional initial bound `AudioDeviceID`.
+    ///   - boundDeviceUID: Optional initial bound device UID string.
     public func registerEngine(
         _ engine: AVAudioEngine,
         role: AudioEngineRole,
         desiredDeviceUID: String? = nil,
-        boundDeviceID: AudioDeviceID? = nil
+        boundDeviceID: AudioDeviceID? = nil,
+        boundDeviceUID: String? = nil
     ) {
         controlQueue.sync {
             // Prune dead references
             registeredEngines.removeAll { $0.engine == nil }
 
+            let resolvedBoundUID: String?
+            if let explicitUID = boundDeviceUID {
+                resolvedBoundUID = explicitUID
+            } else if let id = boundDeviceID {
+                resolvedBoundUID = try? hal.getDeviceUID(deviceID: id)
+            } else {
+                resolvedBoundUID = nil
+            }
+
             // Check if already registered
             if let existing = registeredEngines.first(where: { $0.engine === engine }) {
                 existing.desiredDeviceUID = desiredDeviceUID
                 existing.boundDeviceID = boundDeviceID
+                existing.boundDeviceUID = resolvedBoundUID
                 existing.intendedRunningState = engine.isRunning
                 return
             }
@@ -187,6 +202,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 role: role,
                 desiredDeviceUID: desiredDeviceUID,
                 boundDeviceID: boundDeviceID,
+                boundDeviceUID: resolvedBoundUID,
                 intendedRunningState: engine.isRunning
             )
 
@@ -228,13 +244,32 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         }
     }
 
-    /// Updates the active bound device identifier for a registered engine.
+    /// Updates the active bound device identifier and persists its UID for a registered engine.
     public func setBoundDeviceID(for engine: AVAudioEngine, deviceID: AudioDeviceID?, desiredUID: String? = nil) {
         controlQueue.sync {
             if let registration = registeredEngines.first(where: { $0.engine === engine }) {
                 registration.boundDeviceID = deviceID
+                registration.boundDeviceUID = deviceID.flatMap { try? hal.getDeviceUID(deviceID: $0) }
                 if let uid = desiredUID {
                     registration.desiredDeviceUID = uid
+                }
+            }
+        }
+    }
+
+    /// Explicitly updates both the bound device ID and its persistent UID.
+    public func setBoundDevice(
+        for engine: AVAudioEngine,
+        deviceID: AudioDeviceID?,
+        uid: String?,
+        desiredUID: String? = nil
+    ) {
+        controlQueue.sync {
+            if let registration = registeredEngines.first(where: { $0.engine === engine }) {
+                registration.boundDeviceID = deviceID
+                registration.boundDeviceUID = uid ?? deviceID.flatMap { try? hal.getDeviceUID(deviceID: $0) }
+                if let desired = desiredUID {
+                    registration.desiredDeviceUID = desired
                 }
             }
         }
@@ -281,10 +316,15 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         for registration in registeredEngines {
             guard let engine = registration.engine else { continue }
 
-            // Verify currently bound device validity
-            if let boundID = registration.boundDeviceID,
-               availableDevices.contains(where: { (try? hal.getDeviceUID(deviceID: boundID)) == $0.id }) {
-                // Device is present and valid; reset retry count
+            // Presence verification: binding is valid ONLY when deviceID(forUID:) returns
+            // an active output endpoint matching the persisted bound UID and numeric ID.
+            // CoreAudio recycles ephemeral numeric IDs, so checking numeric ID alone is insufficient.
+            if let boundUID = registration.boundDeviceUID,
+               let boundID = registration.boundDeviceID,
+               let resolvedID = try? CoreAudioOutputDevices.deviceID(forUID: boundUID, using: hal),
+               resolvedID == boundID,
+               availableDevices.contains(where: { $0.id == boundUID }) {
+                // Device is present, numeric ID is unchanged, and endpoint is an active output
                 registration.retryCount = 0
 
                 // If running was intended but engine stopped during HAL change, restart it
@@ -298,12 +338,42 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 continue
             }
 
-            // Active device is disconnected or disappeared! Fallback to default usable output
-            guard let fallbackID = defaultDeviceID else {
+            // Active binding is lost or invalidated.
+            // Pick target in priority order:
+            // 1. Preferred UID (desiredDeviceUID) if online
+            // 2. System default output device
+            // 3. First enumerated output endpoint with channels
+            var targetCandidate: (id: AudioDeviceID, uid: String)? = nil
+
+            // 1. Preferred UID
+            if let preferredUID = registration.desiredDeviceUID,
+               let preferredDesc = availableDevices.first(where: { $0.id == preferredUID }),
+               let preferredID = try? CoreAudioOutputDevices.deviceID(forUID: preferredUID, using: hal) {
+                targetCandidate = (preferredID, preferredDesc.id)
+            }
+
+            // 2. System default output
+            if targetCandidate == nil,
+               let defID = defaultDeviceID,
+               let defUID = try? hal.getDeviceUID(deviceID: defID),
+               availableDevices.contains(where: { $0.id == defUID }) {
+                targetCandidate = (defID, defUID)
+            }
+
+            // 3. First enumerated output with channels
+            if targetCandidate == nil,
+               let firstDesc = availableDevices.first(where: { $0.outputChannelCount > 0 }),
+               let firstID = try? CoreAudioOutputDevices.deviceID(forUID: firstDesc.id, using: hal) {
+                targetCandidate = (firstID, firstDesc.id)
+            }
+
+            // Report noOutputDeviceAvailable ONLY when no candidate output is found
+            guard let target = targetCandidate else {
                 if engine.isRunning {
                     engine.stop()
                 }
                 registration.boundDeviceID = nil
+                registration.boundDeviceUID = nil
                 onError?(.noOutputDeviceAvailable)
                 continue
             }
@@ -315,15 +385,17 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             }
             registration.retryCount += 1
 
-            // Rebind fallback device preserving intended running/stopped state
+            // Rebind target device preserving intended running/stopped state
             let shouldBeRunning = registration.intendedRunningState || engine.isRunning
             if engine.isRunning {
                 engine.stop()
             }
 
             do {
-                try CoreAudioOutputDevices.bind(fallbackID, to: engine, using: hal)
-                registration.boundDeviceID = fallbackID
+                try CoreAudioOutputDevices.bind(target.id, to: engine, using: hal)
+                // Persist the bound UID and numeric ID after every successful bind
+                registration.boundDeviceID = target.id
+                registration.boundDeviceUID = target.uid
                 if shouldBeRunning {
                     try engine.start()
                 }
@@ -331,7 +403,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             } catch let error as CoreAudioError {
                 onError?(error)
             } catch {
-                onError?(.osStatus(OSStatus(-1), operation: "rebindFallbackDevice: \(error.localizedDescription)"))
+                onError?(.osStatus(OSStatus(-1), operation: "rebindTargetDevice: \(error.localizedDescription)"))
             }
         }
 

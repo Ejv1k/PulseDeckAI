@@ -496,6 +496,91 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
         monitor.stop()
     }
 
+    func testPreferredUIDRebindsUnderNewDeviceIDOverDefault() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 1001, uid: "pref_dac", name: "Preferred DAC", outputChannels: 2)
+        mock.addDevice(id: 1002, uid: "default_speakers", name: "Default Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(1002)
+
+        let engine = AVAudioEngine()
+        try CoreAudioOutputDevices.bind(1001, to: engine, using: mock)
+
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, desiredDeviceUID: "pref_dac", boundDeviceID: 1001)
+
+        // Device 1001 disconnects and reconnects under new numeric ID 1005
+        mock.removeDevice(id: 1001)
+        mock.addDevice(id: 1005, uid: "pref_dac", name: "Preferred DAC", outputChannels: 2)
+
+        monitor.reconcileImmediately()
+
+        let au = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(
+            mock.boundUnits[au],
+            1005,
+            "Preferred UID must be chosen over default output when returning under a new numeric ID."
+        )
+
+        monitor.stop()
+    }
+
+    func testRecycledNumericIDDoesNotCountAsOriginalDevice() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 2001, uid: "original_dac", name: "Original DAC", outputChannels: 2)
+        mock.addDevice(id: 2002, uid: "default_speakers", name: "Default Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(2002)
+
+        let engine = AVAudioEngine()
+        try CoreAudioOutputDevices.bind(2001, to: engine, using: mock)
+
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 2001)
+
+        // Simulate disconnect of original_dac, then OS recycles numeric ID 2001 for a different device
+        mock.removeDevice(id: 2001)
+        mock.addDevice(id: 2001, uid: "recycled_headset", name: "Recycled Headset", outputChannels: 2)
+
+        monitor.reconcileImmediately()
+
+        let au = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(
+            mock.boundUnits[au],
+            2002,
+            "Recycled numeric ID with different UID must not count as original device; must fallback to default."
+        )
+
+        monitor.stop()
+    }
+
+    func testFallbackToFirstEnumeratedOutputWhenDefaultIsNil() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 3001, uid: "active_device", name: "Active Device", outputChannels: 2)
+        mock.addDevice(id: 3002, uid: "other_device", name: "Other Device", outputChannels: 2)
+        mock.setDefaultOutputID(nil) // Default is nil
+
+        let engine = AVAudioEngine()
+        try CoreAudioOutputDevices.bind(3001, to: engine, using: mock)
+
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 3001)
+
+        // Disconnect 3001
+        mock.removeDevice(id: 3001)
+        monitor.reconcileImmediately()
+
+        let au = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(
+            mock.boundUnits[au],
+            3002,
+            "When default output is nil, monitor must fallback to the first enumerated output with channels."
+        )
+
+        monitor.stop()
+    }
+
     func testLiveSystemCoreAudioEnumeration() throws {
         // Live Mac smoke test to verify real HAL queries do not crash or access inputNode
         let descriptors = try CoreAudioOutputDevices.enumerate()

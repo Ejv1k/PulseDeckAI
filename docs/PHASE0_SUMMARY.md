@@ -16,7 +16,7 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `130bfc36f31bb037520cd949e603df0de9a84ad1` (native Grok 4.7 run `1dd995eb-9e2e-4389-a39a-b759e0cf0c5d`, verdict: `CHANGES_REQUESTED`). The reviewer confirmed the Phase 0 code and README links; the remaining required findings concerned this handover document.
+  * Last Reviewed SHA: `bcf3ec5ae486a6f9e42992418e38fc2507e196d1` (native Grok 4.7 run `eccc7165-3d83-4975-88bb-1b5cbfbe1e69`, verdict: `CHANGES_REQUESTED`). The reviewer confirmed the code, lineage, and corrected model/view descriptions. Its remaining required finding was the header description, corrected below to list the fields actually rendered.
   * Product Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
   * Test Suite Update: `d34f8a8d4c2d2bbb6a08127d7ae53b3c32dda504` added `test_reanalysis_with_infinity_automated_cues_and_manual_bpm_override` to `scripts/tests/test_pulsedeck_cache.py`.
   * Documentation Hash Alignment: `ff47ce7abbce3776f01fb7c3347762130c9c594c` aligned exact commit hashes in `docs/PHASE0_SUMMARY.md`.
@@ -109,11 +109,11 @@ Every path and declaration kind listed below matches actual repository declarati
 * **`Sources/PulseDeckAI/UI/Theme.swift`**:
   * `public enum DJTheme`: Standardized color system (`background`, `cardBackground`, `deckA`, `deckB`, `master`, `cue`).
 * **`Sources/PulseDeckAI/UI/ContentView.swift`**:
-  * `public struct ContentView: View`: Primary application view assembling status header, library browser, and architecture indicator.
+  * `public struct ContentView: View`: Primary application view assembling the status header, library browser, and static architectural contract cards.
 * **`Sources/PulseDeckAI/UI/StatusHeaderView.swift`**:
-  * `public struct StatusHeaderView: View`: Status header displaying app version and hardware baseline.
+  * `public struct StatusHeaderView: View`: Displays the PulseDeck AI title, PHASE 0 badge, hardware baseline, macOS 14+ / Swift 6 label, library path, status message, and rescan control. It does not render `appState.appVersion`.
 * **`Sources/PulseDeckAI/UI/LibraryBrowserView.swift`**:
-  * `public struct LibraryBrowserView: View`: 10-crate sidebar and track list.
+  * `public struct LibraryBrowserView: View`: Sidebar listing scanned subdirectories with track counts and read errors, plus the selected crate's audio-file list; the sidebar is not fixed to ten entries.
 * **`Sources/PulseDeckAI/UI/ArchitectureStatusView.swift`**:
   * `public struct ArchitectureStatusView: View`: Static architectural contract card grid describing dual outputs, audio-thread safety, and cache/advisor requirements; it does not report live audio routing.
 
@@ -134,12 +134,12 @@ Every path and declaration kind listed below matches actual repository declarati
 The following non-blocking observations from prior review audits are recorded as unresolved / requiring future verification. They are retained as notes; product code changes for these items are deferred unless a new verdict changes severity:
 
 1. **Standard Crates Completeness:** Scanner enumerates directories but does not validate completeness against the standard 10-crate list or warn when standard crates are absent.
-2. **README Cue Color Discrepancy:** README specifies purple `#D500F9`, but `Theme.swift` defines cue color as gold/amber (`#FFD600`).
+2. **README Display/Test Details:** README lists cue as purple `#D500F9` and Deck B as `#FF9100`; `Theme.swift` uses gold/amber (approximately `#FFD600`) and orange (approximately `#FF6E00`). README also still mentions 30 Python tests; the verified suite has 35.
 3. **Duplicate Cmd+R Registration:** The Cmd+R shortcut is attached both to the UI button and to the application menu commands, risking duplicate invocation handling.
 4. **Generation Guard Early-Return Cleanup Risk:** In `AppState.refreshLibrary()`, a generation mismatch returns early without resetting `isScanning = false`.
 5. **AI Advisor Request Interval Bounds:** `minRequestIntervalSeconds = 5.0` is fixed, so setting `requestsPerMinute < 12` does not automatically increase the 5.0s minimum interval.
 6. **Zero-Byte Cache Handling:** `CachePersistence.load` accepts a 0-byte file on disk as an empty default cache.
-7. **Python `save_atomic` Parent Directory Fsync:** In `scripts/pulsedeck_cache.py`, `save_atomic` calls `os.fsync` on the file descriptor before `os.replace`, but does not open and sync the parent directory descriptor on POSIX platforms.
+7. **Python `save_atomic` Parent Directory Fsync:** In `scripts/pulsedeck_cache.py`, `save_atomic` calls `os.fsync` on the file descriptor before `os.replace`, but does not open and sync the parent directory descriptor on POSIX platforms or use macOS `F_FULLFSYNC`. The Swift implementation does sync the parent; section 7.4 of `TECHNICAL_ARCHITECTURE.md` omits that final step.
 8. **Schema Bounds Coverage Gaps:** Some structural model fields rely on upstream DSP analyzers for deep semantic validation beyond basic type decoding.
 9. **Library Path Working Directory Dependency:** `AppState` resolves `PulseDeck_Library` relative to `FileManager.default.currentDirectoryPath`, requiring the execution working directory to match the project root.
 
@@ -201,4 +201,4 @@ The following non-blocking observations from prior review audits are recorded as
 
 ### Session boundary and escalation
 
-The user authorized the GPT orchestrator to finish these documentation corrections directly after repeated handover inaccuracies. The Gemini agent in existing session `pulsedeckai-2` was exited; its worktree and PR ownership remain intact. AO rejected a switch to Grok with `UNSUPPORTED_SWITCH_HARNESS`. Do not restart Gemini to retry the same failed issue: after two failed attempts, GPT or Grok must take over. No new worker or Phase 1 implementation is authorized by this handover.
+The user authorized the GPT orchestrator to finish these documentation corrections directly after repeated handover inaccuracies. The Gemini agent in existing session `pulsedeckai-2` was exited and its session was subsequently restored solely because AO requires an active PR owner for native review. It is on an explicit no-edit hold; its worktree and PR ownership remain intact. AO rejected a switch to Grok with `UNSUPPORTED_SWITCH_HARNESS`. Do not restart Gemini to retry the same failed issue: after two failed attempts, GPT or Grok must take over. No new worker or Phase 1 implementation is authorized by this handover.

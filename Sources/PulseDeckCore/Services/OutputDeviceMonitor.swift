@@ -55,6 +55,13 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             self.intendedRunningState = intendedRunningState
             self.observerToken = nil
         }
+
+        deinit {
+            if let token = observerToken {
+                NotificationCenter.default.removeObserver(token)
+                observerToken = nil
+            }
+        }
     }
 
     private enum MonitorEvent: Sendable {
@@ -211,6 +218,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 object: nil,
                 queue: nil
             ) { [weak self] notification in
+                self?.noteConfigurationObserverFireForTesting()
                 guard let posted = notification.object as? AVAudioEngine else { return }
                 guard ObjectIdentifier(posted) == engineID else { return }
                 self?.handleHALEvent()
@@ -231,6 +239,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 let registration = self.registeredEngines.remove(at: index)
                 if let token = registration.observerToken {
                     NotificationCenter.default.removeObserver(token)
+                    registration.observerToken = nil
                 }
             }
         }
@@ -326,6 +335,22 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     /// Tests use this to drop the last monitor reference from that queue and prove `deinit` does not deadlock.
     func scheduleOnControlQueueForTesting(_ body: @escaping @Sendable () -> Void) {
         controlQueue.async(execute: body)
+    }
+
+    private let configurationObserverFireLock = NSLock()
+    private var configurationObserverFireCount = 0
+
+    private func noteConfigurationObserverFireForTesting() {
+        configurationObserverFireLock.lock()
+        configurationObserverFireCount += 1
+        configurationObserverFireLock.unlock()
+    }
+
+    /// How many times the configuration-change block has been entered.
+    func configurationObserverFireCountForTesting() -> Int {
+        configurationObserverFireLock.lock()
+        defer { configurationObserverFireLock.unlock() }
+        return configurationObserverFireCount
     }
 
     /// Returns the UID stored for `engine`, or `nil` when that engine is not registered.

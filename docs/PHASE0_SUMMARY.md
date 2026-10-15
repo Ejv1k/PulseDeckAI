@@ -1,10 +1,10 @@
 # PulseDeck AI — Phase 0 Operational Foundation & Architecture Contracts
 **Authoritative Phase 0 Status & Phase 1 Handover Specification**
 
-> **USER SCOPE OVERRIDE:** **STOP AFTER PHASE 0.** No Phase 1 or additional implementation work until explicitly requested in a fresh session. Merging PR #1 and advancing to Phase 1 are not automatic steps.  
+> **USER SCOPE OVERRIDE (SUPERSEDED):** Phase 0 consolidation was authorized and completed via PR #1 merge onto `origin/main`. Fresh user authorization supersedes historical STOP AFTER PHASE 0, authorizing advancement to Phase 1 Block 1A.  
 > **Document Purpose:** Accurate repository state, component inventory, open notes, and Phase 1 contract handover. Enables any fresh orchestrator or engineer to resume development without prior chat context.  
 > **Repository:** `https://github.com/Ejv1k/PulseDeckAI.git`  
-> **Pull Request:** [PR #1: feat: implement Phase 0 operational foundation and architecture contracts](https://github.com/Ejv1k/PulseDeckAI/pull/1)  
+> **Pull Request:** [PR #1: feat: implement Phase 0 operational foundation and architecture contracts](https://github.com/Ejv1k/PulseDeckAI/pull/1) (**MERGED**)  
 > **Target Hardware Baseline:** Apple Silicon MacBook Pro 14" / 16" (M1 Pro, 16GB Unified Memory)  
 > **Target Software Platform:** macOS 14.0+ (Sonoma) / macOS 15.0+ (Sequoia), Swift 6.0 Concurrency Mode  
 
@@ -13,8 +13,8 @@
 ## 1. Project & Review Gate Status
 
 ### 1.1 Review State & Commit Lineage
-* **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
-* **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
+* **PR Status:** PR #1 is **MERGED** into `origin/main` via merge commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`.
+* **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry) consolidated with Phase 0 foundation.
 * **Final Code Lineage:**
   * Approved SHA: `9a6158305149cc04915591b072c1c198aef5a90f` (native Grok 4.7 run `b3930dcf-106b-4c25-ac00-06772db7d06d`, completed with verdict **APPROVED**). [Published review](https://github.com/Ejv1k/PulseDeckAI/pull/1#pullrequestreview-5538504679). The reviewer confirmed the code, lineage, model/view descriptions, and header correction; no further changes are required. Section 4 observations remain non-blocking.
   * Product Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
@@ -22,11 +22,13 @@
   * Documentation Hash Alignment: `ff47ce7abbce3776f01fb7c3347762130c9c594c` aligned exact commit hashes in `docs/PHASE0_SUMMARY.md`.
   * Documentation-Only Fix: `130bfc36f31bb037520cd949e603df0de9a84ad1` updated `README.md` lines 238-239 to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
   * Lineage Correction: `ba331f74c2a736828cafe0b5451f9bee9c0010aa` distinguished unchanged product sources from the additional Python regression test. The subsequent documentation correction aligns the inventory below with the actual Swift declarations.
+  * Phase 0 Stop Checkpoint: `18e2a026fc3cd7840bd5cb6676eb22dc7e399b31` recorded completed audit and stop state before consolidation.
+  * Consolidation Merge SHA: `d50e5c85d70f0340798e1f5707bb8a8ce799f972` (merged PR #1 into `origin/main`).
 * **Audit & Approval Status:**
   * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) received an additional regression test in `d34f8a8`. Both are included in the approved SHA above.
-  * **Phase 0 implementation and required corrections are approved at the SHA above.** This final documentation-only commit records that completed audit and the stop state; it does not change product sources or tests and is not itself the reviewed SHA. AO may show `needs_review` for the newer documentation head; preserve the distinction between the approved snapshot and this audit record.
+  * **Phase 0 implementation and required corrections are approved at the SHA above.** Commit `18e2a02` recorded that completed audit and the pre-consolidation stop state; the distinction between the approved snapshot (`9a61583`), the audit record (`18e2a02`), and the merge commit (`d50e5c8`) is strictly preserved.
   * Resolved review threads do **NOT** constitute review approval. Check the verdict and target SHA with `ao review ls pulsedeckai-2`. Native AO approval does **NOT** constitute independent GitHub PR approval.
-* **Phase Boundary:** **Phase 1 has NOT been started.** STOP AFTER PHASE 0. PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
+* **Phase Boundary:** Phase 0 consolidation is complete on `main`. User has authorized proceeding to Phase 1 Block 1A.
 
 ### 1.2 Automated Verification Status
 > *Note: Build and test evidence belongs to the latest code commit with review fixes, not fresh execution on documentation-only edits.*
@@ -43,11 +45,9 @@
 ## 2. Git Hygiene & Worktree Source-of-Truth
 
 ### 2.1 Worktree Directory Structure & Legacy Caution
-* **Active Authorized Worktree (Source-of-Truth):**  
-  `/Users/tomaselagin/.ao/data/worktrees/pulsedeckai/pulsedeckai-2`  
-  Branch: `phase-0-foundation` tracking `origin/phase-0-foundation`.
-* **Legacy Checkout Caution:**  
-  The original local checkout at `/Users/tomaselagin/Desktop/PulseDeckAI` has old media-tracking ancestry (commit `fe2a499` tracked 25 MB of binary MP3 files). Preserve media and local history, and do **NOT** publish `fe2a499` ancestry to remote. Use the PR review branch `phase-0-foundation` or a clean checkout when resuming.
+* **Consolidated Main:** `main` tracking `origin/main` (commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`).
+* **Desktop Worktree Realigned:** `/Users/tomaselagin/Desktop/PulseDeckAI` realigned to clean `origin/main` with legacy commit `fe2a499` safely preserved under backup ref `refs/backups/desktop-main-fe2a499` and branch `backup/legacy-main-fe2a499`. Local media files remain intact and git-ignored.
+* **Legacy Checkout Caution:** Preserve media and local history; never publish `fe2a499` ancestry to remote. Use clean worktree branches tracking `origin/main` for subsequent phases.
 
 ### 2.2 Local Media Preservation
 The 7 development audio files remain physically preserved in `PulseDeck_Library/00_Test_Tracks_Dev/`:
@@ -179,18 +179,13 @@ The following non-blocking observations from prior review audits are recorded as
 
 ---
 
-## 6. Resumption Instructions (For Fresh Orchestrator)
+## 6. Phase 0 Consolidation & Phase 1 Resumption
 
-> **USER DIRECTIVE:** **STOP AFTER PHASE 0.** Do NOT start Phase 1, do NOT merge PR #1, and do NOT treat Phase 1 transition as automatic.
+> **USER DIRECTIVE (SUPERSEDED):** Phase 0 consolidation was authorized and completed via PR #1 merge onto `origin/main`. Fresh user authorization supersedes historical STOP AFTER PHASE 0 to begin Phase 1 Block 1A.
 
-1. **Verify Worktree & Remote State:** Confirm HEAD commit on `phase-0-foundation` matches remote `origin/phase-0-foundation`.
-2. **Review Status Check:** Run `ao review ls pulsedeckai-2` (bare `ao review ls` defaults to the wrong session). Check for completed native Grok review verdict on PR #1.
-3. **Optional Re-Review Trigger:** Only if the current PR head lacks approval and a further review is authorized, review the current remote PR head (the command does not select an older code commit):
-   ```bash
-   ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
-   ```
-4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Section 1.1 records the completed approval of `9a61583`. This final audit-record commit is documentation-only. No merge was performed; do not infer independent GitHub approval or permission to begin Phase 1 from the native verdict.
-5. **Validation Commands:**
+1. **Remote State & Consolidated Main:** `origin/main` commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972` contains consolidated Phase 0 code, tests, and contracts.
+2. **Review & Approval Lineage:** PR #1 was reviewed and approved under native Grok review (approved snapshot `9a6158305149cc04915591b072c1c198aef5a90f`), with stop checkpoint recorded at `18e2a026fc3cd7840bd5cb6676eb22dc7e399b31` and merged cleanly via PR #1 without force-push or protection bypass.
+3. **Validation Commands:**
    ```bash
    swift build -q
    swift build -c release
@@ -198,12 +193,12 @@ The following non-blocking observations from prior review audits are recorded as
    python3 -m unittest discover -s scripts/tests
    python3 scripts/pulsedeck_cache.py
    ```
-6. **Phase 1 Scope:** Proceed with Phase 1 only when a fresh, explicit user request instructs Phase 1 implementation to begin.
+4. **Phase 1 Block 1A Authorization:** The user explicitly authorized advancing from consolidated `origin/main` into Phase 1 Block 1A (CoreAudio output enumeration, device binding helper, device/configuration listeners, and recovery foundation).
 
 ### Session boundary and escalation
 
-The user authorized the GPT orchestrator to finish these documentation corrections directly after repeated handover inaccuracies. The Gemini agent in existing session `pulsedeckai-2` was exited and its session was subsequently restored solely because AO requires an active PR owner for native review. It is on an explicit no-edit hold; its worktree and PR ownership remain intact. AO rejected a switch to Grok with `UNSUPPORTED_SWITCH_HARNESS`. Do not restart Gemini to retry the same failed issue: after two failed attempts, GPT or Grok must take over. No new worker or Phase 1 implementation is authorized by this handover.
+Historical notes: The GPT orchestrator completed prior documentation corrections. The Gemini agent session `pulsedeckai-2` was exited following audit completion. Phase 0 consolidation is executed on authorized worker `pulsedeckai-5` under explicit user instruction.
 
-### Final stop checkpoint
+### Phase 0 Consolidation Checkpoint
 
-Phase 0 is complete: package and shell, library scanner, shared cache models and persistence, Python cache companion, architectural contracts, and documentation are committed. Required Grok findings are closed and the approved snapshot is recorded above. `swift build -q` passed during direct closeout; the existing 24 Swift and 35 Python passing tests still apply because subsequent edits affect only this document. Work stops here. Start a fresh orchestrator session from this file; install the new skill only when the user identifies and requests it. Phase 1 remains unstarted, PR #1 remains open/unmerged, and no credentials are included in this handover.
+Phase 0 is fully consolidated onto `main`. Package, library scanner, shared cache models and persistence, Python cache companion, architectural contracts, and documentation are merged to `origin/main`. All 24 Swift unit tests and 35 Python unit tests pass. Local test audio media remains preserved and git-ignored. Development proceeds to Phase 1 Block 1A.

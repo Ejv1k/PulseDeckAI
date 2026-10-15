@@ -347,6 +347,86 @@ class TestMergePreservingOverrides(unittest.TestCase):
         self.assertEqual(merged.cueMarkers.mixOutCue, 150.0)
         self.assertEqual(merged.cueMarkers.endTrimCue, 150.0)
 
+    def test_invalid_new_duration_nan_inf_negative_preserves_existing_entry(self):
+        manual_cues = CueMarkers(10.0, 20.0, 150.0, 175.0)
+        existing_entry = create_sample_entry(
+            duration=180.0,
+            fingerprint="fp_v1",
+            analyzer_version="dsp-v1",
+            cue_markers=manual_cues,
+            manual_overrides=ManualOverrides(
+                isManual=True,
+                overriddenFields=["cueMarkers"],
+            ),
+        )
+
+        for invalid_duration in [float("nan"), -30.0, float("inf"), float("-inf")]:
+            new_analysis = create_sample_entry(
+                duration=invalid_duration,
+                fingerprint="fp_new",
+                analyzer_version="dsp-v2",
+                manual_overrides=ManualOverrides(isManual=False, overriddenFields=[]),
+            )
+            existing_snap = copy.deepcopy(existing_entry)
+            merged = existing_entry.merge_preserving_overrides(new_analysis)
+
+            self.assertEqual(existing_entry, existing_snap, "Input existing entry must not be mutated")
+            self.assertEqual(merged.duration, 180.0, "Must preserve original duration on invalid new duration")
+            self.assertEqual(merged.fileFingerprint, "fp_v1", "Must preserve original fingerprint")
+            self.assertEqual(merged.analyzerVersion, "dsp-v1", "Must preserve original analyzerVersion")
+            self.assertEqual(merged.cueMarkers.startTrimCue, 10.0)
+            self.assertEqual(merged.cueMarkers.endTrimCue, 175.0)
+
+    def test_nan_or_non_finite_manual_cue_preserves_existing_entry(self):
+        # Existing track has a manual NaN vocalEntryCue
+        manual_cues_nan = CueMarkers(10.0, float("nan"), 150.0, 175.0)
+        existing_entry = create_sample_entry(
+            duration=180.0,
+            fingerprint="fp_orig",
+            analyzer_version="dsp-v1",
+            cue_markers=manual_cues_nan,
+            manual_overrides=ManualOverrides(
+                isManual=True,
+                overriddenFields=["cueMarkers"],
+            ),
+        )
+        new_analysis = create_sample_entry(
+            duration=200.0,
+            fingerprint="fp_new",
+            analyzer_version="dsp-v2",
+            manual_overrides=ManualOverrides(isManual=False, overriddenFields=[]),
+        )
+
+        existing_snap = copy.deepcopy(existing_entry)
+        merged = existing_entry.merge_preserving_overrides(new_analysis)
+
+        # Must not raise from clamped, must return deepcopy(self)
+        self.assertEqual(existing_entry.duration, existing_snap.duration)
+        self.assertTrue(math.isnan(merged.cueMarkers.vocalEntryCue))
+        self.assertEqual(merged.cueMarkers.startTrimCue, 10.0)
+        self.assertEqual(merged.cueMarkers.mixOutCue, 150.0)
+        self.assertEqual(merged.cueMarkers.endTrimCue, 175.0)
+        self.assertEqual(merged.duration, 180.0)
+        self.assertEqual(merged.fileFingerprint, "fp_orig")
+        self.assertEqual(merged.analyzerVersion, "dsp-v1")
+
+        # Also test infinite manual cue
+        existing_inf = create_sample_entry(
+            duration=180.0,
+            fingerprint="fp_inf_cue",
+            analyzer_version="dsp-v1",
+            cue_markers=CueMarkers(10.0, 20.0, float("inf"), 175.0),
+            manual_overrides=ManualOverrides(
+                isManual=True,
+                overriddenFields=["cueMarkers"],
+            ),
+        )
+        merged_inf = existing_inf.merge_preserving_overrides(new_analysis)
+        self.assertTrue(math.isinf(merged_inf.cueMarkers.mixOutCue))
+        self.assertEqual(merged_inf.fileFingerprint, "fp_inf_cue")
+        self.assertEqual(merged_inf.duration, 180.0)
+
+
 
     def test_partial_overrides(self):
         # Only BPM overridden, cues should come from new_analysis

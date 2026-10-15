@@ -168,6 +168,40 @@ final class CacheSchemaTests: XCTestCase {
         XCTAssertLessThanOrEqual(merged.cueMarkers.endTrimCue, 200.0)
     }
 
+    func testPreserveManualOverridesNaNManualCueLeavesOriginalUnchanged() {
+        var existing = makeSampleEntry(fingerprint: "hash_orig", analyzer: "accelerate-dsp-v1.0", duration: 180.0)
+        existing.cueMarkers = CueMarkers(startTrimCue: 10.0, vocalEntryCue: .nan, mixOutCue: 150.0, endTrimCue: 175.0)
+        existing.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["cueMarkers"]
+        )
+
+        // New valid analysis
+        let newAnalysis = makeSampleEntry(fingerprint: "hash_new", analyzer: "accelerate-dsp-v2.0", duration: 200.0)
+        let merged = existing.mergingPreservingOverrides(with: newAnalysis)
+
+        // When checking NaN use isNaN rather than whole-value equality
+        XCTAssertTrue(merged.cueMarkers.vocalEntryCue.isNaN, "Original NaN cue marker must be preserved")
+        XCTAssertEqual(merged.cueMarkers.startTrimCue, 10.0)
+        XCTAssertEqual(merged.cueMarkers.mixOutCue, 150.0)
+        XCTAssertEqual(merged.cueMarkers.endTrimCue, 175.0)
+        XCTAssertEqual(merged.duration, 180.0, "Original duration must remain intact")
+        XCTAssertEqual(merged.fileFingerprint, "hash_orig", "Original fingerprint must not be overwritten by new analysis")
+        XCTAssertEqual(merged.analyzerVersion, "accelerate-dsp-v1.0", "Original analyzerVersion must not be overwritten")
+
+        // Also test infinity cue
+        var existingInf = makeSampleEntry(fingerprint: "hash_inf_cue", analyzer: "accelerate-dsp-v1.0", duration: 180.0)
+        existingInf.cueMarkers = CueMarkers(startTrimCue: 10.0, vocalEntryCue: 20.0, mixOutCue: .infinity, endTrimCue: 175.0)
+        existingInf.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["cueMarkers"]
+        )
+        let mergedInf = existingInf.mergingPreservingOverrides(with: newAnalysis)
+        XCTAssertTrue(mergedInf.cueMarkers.mixOutCue.isInfinite)
+        XCTAssertEqual(mergedInf.fileFingerprint, "hash_inf_cue")
+        XCTAssertEqual(mergedInf.duration, 180.0)
+    }
+
     func testCacheJSONEncodingDecoding() throws {
         let entry = makeSampleEntry(fingerprint: "abc123sha256", analyzer: "accelerate-dsp-v1.0")
         var cache = PulseDeckLibraryCache()

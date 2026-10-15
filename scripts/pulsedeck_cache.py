@@ -266,6 +266,22 @@ class TrackCacheEntry:
         if not self.manualOverrides.isManual:
             return copy.deepcopy(new_analysis)
 
+        # Fail merge and keep existing entry if new duration is invalid (NaN, infinite, or negative)
+        if not math.isfinite(new_analysis.duration) or new_analysis.duration < 0.0:
+            return copy.deepcopy(self)
+
+        # If manual cues are preserved and ANY cue is non-finite (NaN or infinite),
+        # fail merge and keep existing entry without adopting new duration, fingerprint, or analyzerVersion
+        if "cueMarkers" in self.manualOverrides.overriddenFields:
+            cues = self.cueMarkers
+            if (
+                math.isnan(cues.startTrimCue) or not math.isfinite(cues.startTrimCue)
+                or math.isnan(cues.vocalEntryCue) or not math.isfinite(cues.vocalEntryCue)
+                or math.isnan(cues.mixOutCue) or not math.isfinite(cues.mixOutCue)
+                or math.isnan(cues.endTrimCue) or not math.isfinite(cues.endTrimCue)
+            ):
+                return copy.deepcopy(self)
+
         merged = copy.deepcopy(new_analysis)
         merged.manualOverrides = copy.deepcopy(self.manualOverrides)
         merged.aiTrimBypass = self.aiTrimBypass
@@ -273,14 +289,15 @@ class TrackCacheEntry:
         if "cueMarkers" in self.manualOverrides.overriddenFields:
             # Clamp preserved cues to new track duration to guarantee valid bounds
             merged.cueMarkers = self.cueMarkers.clamped(merged.duration)
+        else:
+            # Final invariant verification: cues must be ordered and bounded
+            if not merged.cueMarkers.validate(merged.duration):
+                merged.cueMarkers = merged.cueMarkers.clamped(merged.duration)
+
         if "bpm" in self.manualOverrides.overriddenFields:
             merged.bpm = self.bpm
         if "musicalKey" in self.manualOverrides.overriddenFields:
             merged.musicalKey = self.musicalKey
-
-        # Final invariant verification: cues must be ordered and bounded
-        if not merged.cueMarkers.validate(merged.duration):
-            merged.cueMarkers = merged.cueMarkers.clamped(merged.duration)
 
         return merged
 

@@ -15,22 +15,21 @@
 ### 1.1 Review State & Commit Lineage
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
-* **Last Functional Code Commits:**
-  * `5dd90ad`: Strict schema version `"1.0.0"` validation and track bounds checking on cache load.
-  * `34b9454`: Fail re-analysis merge on invalid duration, clamp cues, throw POSIXError on flush failure, and cleanup temporary cache files on failure.
-  * Latest review fix: Enforce `cache.validate()` in `CachePersistence.saveAtomic` and `PulseDeckLibraryCache.save_atomic` before temp file creation; verify destination bytes unchanged and temp files cleaned up on rejected saves.
-* **Last Completed Native Review Verdict:** `changes_requested` on commit `18c05f2`.
-* **Current Audit Status:**
-  * Native Grok review run `20b1b216-7f9f-4f6c-b21b-fa2fee351ac6` is auditing the PR.
-  * Current audit outcome is **PENDING** until the orchestrator confirms reviewer findings.
-  * **Critical Distinction:** Resolving inline review threads in AO is a prerequisite, but does **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
-* **Phase Boundary:** **Phase 1 has NOT been started.** PR #1 must not be merged to `main` until the orchestrator confirms approval of the updated head.
+* **Audit History:**
+  * Native Grok run `20b1b216-7f9f-4f6c-b21b-fa2fee351ac6` completed with verdict `CHANGES_REQUESTED` on code commit `34b9454`.
+  * All three required audit findings were addressed in the final Phase 0 closeout:
+    1. `scripts/pulsedeck_cache.py`: `merge_preserving_overrides` returns `copy.deepcopy(self)` when new duration is NaN, negative, or infinite, preserving previous cues, duration, and fingerprint without raising.
+    2. `Sources/PulseDeckCore/Models/CacheSchema.swift` & `scripts/pulsedeck_cache.py`: `mergingPreservingOverrides` / `merge_preserving_overrides` checks if manual cues contain any non-finite component using `.isNaN` / `math.isnan` / `isFinite`, and returns `self` (Swift) or `copy.deepcopy(self)` (Python) without converting to zeros or adopting new fingerprint/analyzerVersion.
+    3. `Sources/PulseDeckCore/Services/CachePersistence.swift` & `scripts/pulsedeck_cache.py`: `saveAtomic` / `save_atomic` enforces `validate()` before creating temporary files or modifying the destination, leaving prior bytes unchanged and cleaning up temporary files.
+  * Resolved review threads: `PRRT_kwDOVJOZu86ssDN6`, `PRRT_kwDOVJOZu86ssDOB`, and `PRRT_kwDOVJOZu86ssDOF`.
+* **Final Phase 0 Boundary:** This final fix commit represents the definitive Phase 0 closeout. Final code is **NOT** re-reviewed; no new review will be triggered, and no Phase 1 work will begin.
+* **Phase Boundary:** **Phase 1 has NOT been started.** PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status
 > *Note: Build and test evidence belongs to the latest code commit with review fixes, not fresh execution on documentation-only edits.*
 
-* **Swift Test Suite:** 22/22 tests passing (0 failures).
-* **Python Test Suite:** 31/31 tests passing (0 failures) via `scripts/tests/test_pulsedeck_cache.py`.
+* **Swift Test Suite:** 23/23 tests passing (0 failures).
+* **Python Test Suite:** 33/33 tests passing (0 failures) via `scripts/tests/test_pulsedeck_cache.py`.
 * **Companion Cache Validator:** `python3 scripts/pulsedeck_cache.py` validates `PulseDeck_Library/.pulsedeck_ai_cache.json` with exit code 0.
 * **Release Executable Build:** `swift build -c release` succeeds; produces `.build/release/PulseDeckAI` (Mach-O 64-bit arm64, 925 KB).
 * **Physical Hardware Validation:** Zero physical audio device validation has been conducted in Phase 0. No physical DAC routing, Bluetooth A2DP latency calibration, or hardware audio output has run.
@@ -116,10 +115,10 @@ Every path and declaration kind listed below matches actual repository declarati
 
 ### 3.3 Test Suites & Companion Scripts
 * **`Tests/PulseDeckCoreTests/AudioContractsTests.swift`**: 3 tests verifying latency compensation model math and boundary clamping.
-* **`Tests/PulseDeckCoreTests/CacheSchemaTests.swift`**: 9 tests verifying cue ordering bounds, re-analysis override preservation, and invalid duration fail-safes.
+* **`Tests/PulseDeckCoreTests/CacheSchemaTests.swift`**: 10 tests verifying cue ordering bounds, re-analysis override preservation, invalid duration fail-safes, and NaN manual cue preservation.
 * **`Tests/PulseDeckCoreTests/LibraryScannerTests.swift`**: 10 tests verifying hermetic temporary library scans, unreadable folder handling, corrupted cache reporting, atomic persistence, and rejected save destination preservation.
-* **`scripts/pulsedeck_cache.py`**: Python companion script performing handwritten subset validation (not full JSON Schema enforcement) for v1.0.0 cache files, deepcopy immutability, and pre-save validation.
-* **`scripts/tests/test_pulsedeck_cache.py`**: 31 Python unit tests validating Python cache engine parity and rejected save file preservation.
+* **`scripts/pulsedeck_cache.py`**: Python companion script performing handwritten subset validation (not full JSON Schema enforcement) for v1.0.0 cache files, deepcopy immutability, safe re-analysis merge fallback on invalid duration or non-finite cues, and pre-save validation.
+* **`scripts/tests/test_pulsedeck_cache.py`**: 33 Python unit tests validating Python cache engine parity, override preservation with invalid duration/cues, and rejected save file preservation.
 * **`docs/TECHNICAL_ARCHITECTURE.md`**: Architectural specification and system overview.
 * **`docs/USER_MANUAL.md`**: Operational manual and user guide.
 * **`docs/cache_schema_v1.json`**: JSON Schema definition for v1.0.0 cache files.

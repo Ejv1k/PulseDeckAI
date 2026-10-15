@@ -296,6 +296,18 @@ public struct TrackCacheEntry: Codable, Sendable, Equatable {
             return self
         }
 
+        // If manual cues are preserved and ANY cue is non-finite (NaN or infinite),
+        // fail merge and keep existing entry without adopting new duration, fingerprint, or analyzerVersion
+        if self.manualOverrides.overriddenFields.contains("cueMarkers") {
+            let cues = self.cueMarkers
+            if cues.startTrimCue.isNaN || !cues.startTrimCue.isFinite
+                || cues.vocalEntryCue.isNaN || !cues.vocalEntryCue.isFinite
+                || cues.mixOutCue.isNaN || !cues.mixOutCue.isFinite
+                || cues.endTrimCue.isNaN || !cues.endTrimCue.isFinite {
+                return self
+            }
+        }
+
         var merged = newAnalysis
         merged.manualOverrides = self.manualOverrides
         merged.aiTrimBypass = self.aiTrimBypass

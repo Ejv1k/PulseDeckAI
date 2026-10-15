@@ -29,6 +29,23 @@ final class AudioContractsTests: XCTestCase {
         XCTAssertEqual(clampedNegative.masterDelayMs, 300.0)
     }
 
+    func testLatencyCompensationNonFiniteValuesDefaultToZero() {
+        let nanComp = LatencyCompensation(offsetMs: .nan)
+        XCTAssertEqual(nanComp.offsetMs, 0.0)
+        XCTAssertEqual(nanComp.masterDelayMs, 0.0)
+        XCTAssertEqual(nanComp.cueDelayMs, 0.0)
+
+        let posInfComp = LatencyCompensation(offsetMs: .infinity)
+        XCTAssertEqual(posInfComp.offsetMs, 0.0)
+        XCTAssertEqual(posInfComp.masterDelayMs, 0.0)
+        XCTAssertEqual(posInfComp.cueDelayMs, 0.0)
+
+        let negInfComp = LatencyCompensation(offsetMs: -.infinity)
+        XCTAssertEqual(negInfComp.offsetMs, 0.0)
+        XCTAssertEqual(negInfComp.masterDelayMs, 0.0)
+        XCTAssertEqual(negInfComp.cueDelayMs, 0.0)
+    }
+
     func testAudioParametersDefaults() {
         let eq = EQ3BandParameters()
         XCTAssertEqual(eq.lowGainDB, 0.0)

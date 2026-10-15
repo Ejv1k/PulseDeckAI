@@ -112,6 +112,10 @@ public struct LatencyCompensation: Sendable, Equatable {
     public let offsetMs: Double
 
     public init(offsetMs: Double) {
+        guard offsetMs.isFinite else {
+            self.offsetMs = 0.0
+            return
+        }
         self.offsetMs = min(max(offsetMs, Self.minOffsetMs), Self.maxOffsetMs)
     }
 

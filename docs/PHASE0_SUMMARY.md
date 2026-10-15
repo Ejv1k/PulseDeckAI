@@ -16,10 +16,10 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `5407c7e54f73aa8b88f6a9e1eec70425c2763f35` (native Grok run `7ad9b327` verdict: `CHANGES_REQUESTED` on `5407c7e`).
-  * Review Fix Commit 1: `c13a5e656d0290cae25076cf9d84bf402ee3cce8` (`scripts/pulsedeck_cache.py`: substitute 0.0 for non-finite automated cues before clamping in `merge_preserving_overrides`, matching Swift; unit tests in `test_pulsedeck_cache.py`; thread `PRRT_kwDOVJOZu86sy7ZZ` resolved).
-  * Review Fix Commit 2: `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a` (`Sources/PulseDeckCore/Models/AudioContracts.swift`: `LatencyCompensation.init` guards `offsetMs.isFinite`, defaulting non-finite to 0.0 before clamping into `[-300.0, 300.0]`; unit tests in `AudioContractsTests.swift`; thread `PRRT_kwDOVJOZu86sy7Ze` resolved).
-  * Code Head SHA: `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a`.
+  * Last Reviewed SHA: `5407c7e78a93ac8d925e5bc7509ca528eae5352c` (native Grok run `7ad9b327` verdict: `CHANGES_REQUESTED` on `5407c7e`).
+  * Review Fix Commit 1: `c13a5e67778f003a7f2f71ee73d42a28d3fae9f2` (`scripts/pulsedeck_cache.py`: substitute 0.0 for non-finite automated cues before clamping in `merge_preserving_overrides`, matching Swift; unit tests in `test_pulsedeck_cache.py`; thread `PRRT_kwDOVJOZu86sy7ZZ` resolved).
+  * Review Fix Commit 2: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (`Sources/PulseDeckCore/Models/AudioContracts.swift`: `LatencyCompensation.init` guards `offsetMs.isFinite`, defaulting non-finite to 0.0 before clamping into `[-300.0, 300.0]`; unit tests in `AudioContractsTests.swift`; thread `PRRT_kwDOVJOZu86sy7Ze` resolved).
+  * Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e`.
 * **Audit & Approval Status:**
   * Commits `c13a5e6` and `f0784c8` are **NOT re-reviewed**.
   * Native Grok re-review on updated head is pending.
@@ -183,7 +183,7 @@ The following non-blocking observations from prior review audits are recorded as
 
 1. **Verify Worktree & Remote State:** Confirm HEAD commit on `phase-0-foundation` matches remote `origin/phase-0-foundation`.
 2. **Review Status Check:** Run `ao review ls pulsedeckai-2` (bare `ao review ls` defaults to the wrong session). Check for completed native Grok review verdict on PR #1.
-3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a`:
+3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e`:
    ```bash
    ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
    ```

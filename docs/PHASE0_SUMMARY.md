@@ -17,12 +17,14 @@
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
   * Last Reviewed SHA: `ff47ce7abbce3776f01fb7c3347762130c9c594c` (native Grok run `9e756a3c-62fc-416a-b559-1dca7d127c1d` verdict: `CHANGES_REQUESTED` on `ff47ce7`).
-  * Verified Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
-  * Documentation-Only Fix: `README.md` lines 238-239 updated to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
+  * Product Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
+  * Test Suite Update: `d34f8a8d4c2d2bbb6a08127d7ae53b3c32dda504` added `test_reanalysis_with_infinity_automated_cues_and_manual_bpm_override` to `scripts/tests/test_pulsedeck_cache.py`.
+  * Documentation Hash Alignment: `ff47ce7abbce3776f01fb7c3347762130c9c594c` aligned exact commit hashes in `docs/PHASE0_SUMMARY.md`.
+  * Documentation-Only Fix: `130bfc36f31bb037520cd949e603df0de9a84ad1` updated `README.md` lines 238-239 to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
 * **Audit & Approval Status:**
-  * Source code is identical to verified code head `f0784c8`; documentation fix is pending final re-review.
+  * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) is not unchanged, having received an additional test in ancestor commit `d34f8a8`. Documentation fixes are pending final re-review.
   * There is **NO current approval**.
-  * Resolved review threads (all 16 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
+  * Resolved review threads (all 17 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
 * **Phase Boundary:** **Phase 1 has NOT been started.** STOP AFTER PHASE 0. PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status

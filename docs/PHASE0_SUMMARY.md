@@ -16,15 +16,15 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `bcf3ec5ae486a6f9e42992418e38fc2507e196d1` (native Grok 4.7 run `eccc7165-3d83-4975-88bb-1b5cbfbe1e69`, verdict: `CHANGES_REQUESTED`). The reviewer confirmed the code, lineage, and corrected model/view descriptions. Its remaining required finding was the header description, corrected below to list the fields actually rendered.
+  * Approved SHA: `9a6158305149cc04915591b072c1c198aef5a90f` (native Grok 4.7 run `b3930dcf-106b-4c25-ac00-06772db7d06d`, completed with verdict **APPROVED**). [Published review](https://github.com/Ejv1k/PulseDeckAI/pull/1#pullrequestreview-5538504679). The reviewer confirmed the code, lineage, model/view descriptions, and header correction; no further changes are required. Section 4 observations remain non-blocking.
   * Product Code Head SHA: `f0784c89f3ef5322aff2dd415c2b7ba73fd3e31e` (Grok confirmed all code fixes correct: manual cue clamping, non-finite manual cues, non-finite automated cues substitution to 0.0 before clamping, invalid duration fail-safe, atomic F_FULLFSYNC, schema validation, and LatencyCompensation non-finite offset handling).
   * Test Suite Update: `d34f8a8d4c2d2bbb6a08127d7ae53b3c32dda504` added `test_reanalysis_with_infinity_automated_cues_and_manual_bpm_override` to `scripts/tests/test_pulsedeck_cache.py`.
   * Documentation Hash Alignment: `ff47ce7abbce3776f01fb7c3347762130c9c594c` aligned exact commit hashes in `docs/PHASE0_SUMMARY.md`.
   * Documentation-Only Fix: `130bfc36f31bb037520cd949e603df0de9a84ad1` updated `README.md` lines 238-239 to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
   * Lineage Correction: `ba331f74c2a736828cafe0b5451f9bee9c0010aa` distinguished unchanged product sources from the additional Python regression test. The subsequent documentation correction aligns the inventory below with the actual Swift declarations.
 * **Audit & Approval Status:**
-  * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) is not unchanged, having received an additional test in ancestor commit `d34f8a8`. Documentation fixes are pending final re-review.
-  * There is **NO current approval**.
+  * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) received an additional regression test in `d34f8a8`. Both are included in the approved SHA above.
+  * **Phase 0 implementation and required corrections are approved at the SHA above.** This final documentation-only commit records that completed audit and the stop state; it does not change product sources or tests and is not itself the reviewed SHA. AO may show `needs_review` for the newer documentation head; preserve the distinction between the approved snapshot and this audit record.
   * Resolved review threads do **NOT** constitute review approval. Check the verdict and target SHA with `ao review ls pulsedeckai-2`. Native AO approval does **NOT** constitute independent GitHub PR approval.
 * **Phase Boundary:** **Phase 1 has NOT been started.** STOP AFTER PHASE 0. PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
@@ -189,9 +189,10 @@ The following non-blocking observations from prior review audits are recorded as
    ```bash
    ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
    ```
-4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. See section 1.1 for the last recorded audit. The documentation corrections require a final verdict; do not infer approval from a clean build or resolved comments.
+4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Section 1.1 records the completed approval of `9a61583`. This final audit-record commit is documentation-only. No merge was performed; do not infer independent GitHub approval or permission to begin Phase 1 from the native verdict.
 5. **Validation Commands:**
    ```bash
+   swift build -q
    swift build -c release
    swift test
    python3 -m unittest discover -s scripts/tests
@@ -202,3 +203,7 @@ The following non-blocking observations from prior review audits are recorded as
 ### Session boundary and escalation
 
 The user authorized the GPT orchestrator to finish these documentation corrections directly after repeated handover inaccuracies. The Gemini agent in existing session `pulsedeckai-2` was exited and its session was subsequently restored solely because AO requires an active PR owner for native review. It is on an explicit no-edit hold; its worktree and PR ownership remain intact. AO rejected a switch to Grok with `UNSUPPORTED_SWITCH_HARNESS`. Do not restart Gemini to retry the same failed issue: after two failed attempts, GPT or Grok must take over. No new worker or Phase 1 implementation is authorized by this handover.
+
+### Final stop checkpoint
+
+Phase 0 is complete: package and shell, library scanner, shared cache models and persistence, Python cache companion, architectural contracts, and documentation are committed. Required Grok findings are closed and the approved snapshot is recorded above. `swift build -q` passed during direct closeout; the existing 24 Swift and 35 Python passing tests still apply because subsequent edits affect only this document. Work stops here. Start a fresh orchestrator session from this file; install the new skill only when the user identifies and requests it. Phase 1 remains unstarted, PR #1 remains open/unmerged, and no credentials are included in this handover.

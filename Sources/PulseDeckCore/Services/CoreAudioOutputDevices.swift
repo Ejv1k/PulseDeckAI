@@ -16,7 +16,9 @@ public enum CoreAudioOutputDevices {
     ///
     /// - Parameter hal: The underlying HAL abstraction interface (defaults to `SystemAudioHardware.shared`).
     /// - Returns: An array of `AudioDeviceDescriptor` representing output-capable hardware endpoints.
-    /// - Throws: `CoreAudioError` if HAL queries encounter an unrecoverable `OSStatus` failure.
+    /// - Throws: `CoreAudioError` if the device-list query fails.
+    ///   A device whose nominal sample rate query fails, or whose rate is non-finite or not positive, is omitted.
+    ///   This method never substitutes a fabricated sample rate.
     public static func enumerate(using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> [AudioDeviceDescriptor] {
         let deviceIDs = try hal.getDeviceIDs()
         var descriptors: [AudioDeviceDescriptor] = []
@@ -47,10 +49,16 @@ public enum CoreAudioOutputDevices {
             // Manufacturer with safe fallback
             let manufacturer = (try? hal.getDeviceManufacturer(deviceID: deviceID)) ?? "Generic"
 
-            // Sample rate query with finite guard
-            var sampleRate: Double = 44100.0
-            if let rate = try? hal.getNominalSampleRate(deviceID: deviceID), rate.isFinite && rate > 0.0 {
-                sampleRate = rate
+            // Skip the endpoint when the device does not report a usable rate.
+            // Never publish a stand-in such as 44.1 kHz.
+            let sampleRate: Double
+            do {
+                sampleRate = try hal.getNominalSampleRate(deviceID: deviceID)
+            } catch {
+                continue
+            }
+            guard sampleRate.isFinite && sampleRate > 0.0 else {
+                continue
             }
 
             // Transport type recognition (Bluetooth Classic A2DP or Bluetooth Low Energy)
@@ -133,11 +141,14 @@ public enum CoreAudioOutputDevices {
     /// - Parameters:
     ///   - uid: The persistent UID string (e.g. from `AudioDeviceDescriptor.id`).
     ///   - hal: The underlying HAL abstraction interface.
-    /// - Returns: The matching `AudioDeviceID` if currently online, or `nil` if disconnected.
+    /// - Returns: The matching `AudioDeviceID` if currently online, or `nil` if no device reports that UID.
+    /// - Throws: The underlying HAL error when the device list or a device UID cannot be read.
+    ///   A thrown error is not proof that the UID is absent.
     public static func deviceID(forUID uid: String, using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> AudioDeviceID? {
         let deviceIDs = try hal.getDeviceIDs()
         for deviceID in deviceIDs {
-            if let deviceUID = try? hal.getDeviceUID(deviceID: deviceID), deviceUID == uid {
+            let deviceUID = try hal.getDeviceUID(deviceID: deviceID)
+            if deviceUID == uid {
                 return deviceID
             }
         }
@@ -149,18 +160,26 @@ public enum CoreAudioOutputDevices {
     /// - Parameters:
     ///   - deviceID: The numeric CoreAudio device identifier.
     ///   - hal: The underlying HAL abstraction interface.
-    /// - Returns: An `AudioDeviceDescriptor` if the device has output channels, or `nil` if invalid.
+    /// - Returns: An `AudioDeviceDescriptor` when the device has output channels.
+    /// - Throws: The sample-rate error from the HAL, or `CoreAudioError.invalidSampleRate`
+    ///   when the reported rate is non-finite or not positive. A missing device returns `nil`.
     public static func descriptor(for deviceID: AudioDeviceID, using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> AudioDeviceDescriptor? {
-        guard let channelCount = try? hal.getOutputChannelCount(deviceID: deviceID), channelCount > 0 else {
+        let channelCount: Int
+        do {
+            channelCount = try hal.getOutputChannelCount(deviceID: deviceID)
+        } catch {
+            return nil
+        }
+        guard channelCount > 0 else {
             return nil
         }
 
         let uid = try hal.getDeviceUID(deviceID: deviceID)
         let name = (try? hal.getDeviceName(deviceID: deviceID)) ?? "Audio Device (\(deviceID))"
         let manufacturer = (try? hal.getDeviceManufacturer(deviceID: deviceID)) ?? "Generic"
-        var sampleRate: Double = 44100.0
-        if let rate = try? hal.getNominalSampleRate(deviceID: deviceID), rate.isFinite && rate > 0.0 {
-            sampleRate = rate
+        let sampleRate = try hal.getNominalSampleRate(deviceID: deviceID)
+        guard sampleRate.isFinite && sampleRate > 0.0 else {
+            throw CoreAudioError.invalidSampleRate(sampleRate)
         }
         var isBluetooth = false
         if let transport = try? hal.getTransportType(deviceID: deviceID) {

@@ -43,7 +43,7 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
 
     struct ListenerRecord: @unchecked Sendable {
         let queue: DispatchQueue
-        let block: AudioObjectPropertyListenerBlock
+        let block: OutputPropertyListenerBlock
     }
 
     private let lock = NSLock()
@@ -52,9 +52,21 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     var boundUnits: [AudioUnit: AudioDeviceID] = [:]
     var simulatedOSStatus: OSStatus?
     var failOnOperation: String?
+    var defaultOutputError: CoreAudioError?
+    var setOutputDeviceError: CoreAudioError?
+    var sampleRateErrors: [AudioDeviceID: CoreAudioError] = [:]
+    /// When set, the first N `getDeviceIDs` calls succeed and the next call throws.
+    var remainingSuccessfulDeviceIDQueries: Int?
+    private var setOutputDeviceAttempts: Int = 0
 
     var devicesListeners: [ListenerRecord] = []
     var defaultListeners: [ListenerRecord] = []
+
+    func outputDeviceAttemptCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return setOutputDeviceAttempts
+    }
 
     init() {}
 
@@ -99,7 +111,7 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         lock.unlock()
 
         for listener in listeners {
-            let block = listener.block
+            let box = SendableListenerBlock(listener.block)
             listener.queue.async {
                 var address = AudioObjectPropertyAddress(
                     mSelector: kAudioHardwarePropertyDevices,
@@ -107,7 +119,7 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
                     mElement: kAudioObjectPropertyElementMain
                 )
                 withUnsafePointer(to: &address) { addrPtr in
-                    block(1, addrPtr)
+                    box.block(1, addrPtr)
                 }
             }
         }
@@ -120,7 +132,7 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         lock.unlock()
 
         for listener in listeners {
-            let block = listener.block
+            let box = SendableListenerBlock(listener.block)
             listener.queue.async {
                 var address = AudioObjectPropertyAddress(
                     mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -128,7 +140,7 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
                     mElement: kAudioObjectPropertyElementMain
                 )
                 withUnsafePointer(to: &address) { addrPtr in
-                    block(1, addrPtr)
+                    box.block(1, addrPtr)
                 }
             }
         }
@@ -142,12 +154,22 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         if let err = simulatedOSStatus {
             throw CoreAudioError.osStatus(err, operation: "getDeviceIDs")
         }
+        if var remaining = remainingSuccessfulDeviceIDQueries {
+            if remaining <= 0 {
+                throw CoreAudioError.osStatus(-50, operation: "getDeviceIDs")
+            }
+            remaining -= 1
+            remainingSuccessfulDeviceIDQueries = remaining
+        }
         return devices.map { $0.id }
     }
 
     func getDefaultOutputDeviceID() throws -> AudioDeviceID? {
         lock.lock()
         defer { lock.unlock() }
+        if let defaultOutputError {
+            throw defaultOutputError
+        }
         if let err = simulatedOSStatus {
             throw CoreAudioError.osStatus(err, operation: "getDefaultOutputDeviceID")
         }
@@ -193,6 +215,9 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     func getNominalSampleRate(deviceID: AudioDeviceID) throws -> Double {
         lock.lock()
         defer { lock.unlock() }
+        if let error = sampleRateErrors[deviceID] {
+            throw error
+        }
         guard let dev = devices.first(where: { $0.id == deviceID }) else {
             throw CoreAudioError.osStatus(-50, operation: "getNominalSampleRate")
         }
@@ -211,13 +236,17 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
     func setOutputDevice(deviceID: AudioDeviceID, for audioUnit: AudioUnit) throws {
         lock.lock()
         defer { lock.unlock() }
+        setOutputDeviceAttempts += 1
+        if let setOutputDeviceError {
+            throw setOutputDeviceError
+        }
         if let err = simulatedOSStatus {
             throw CoreAudioError.osStatus(err, operation: "setOutputDevice")
         }
         boundUnits[audioUnit] = deviceID
     }
 
-    func addDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    func addDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         lock.lock()
         defer { lock.unlock() }
         if failOnOperation == "addDevicesListener" {
@@ -226,13 +255,21 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         devicesListeners.append(ListenerRecord(queue: queue, block: block))
     }
 
-    func removeDevicesListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    func removeDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         lock.lock()
         defer { lock.unlock() }
-        devicesListeners.removeAll()
+        if failOnOperation == "removeDevicesListener" {
+            throw CoreAudioError.listenerRemovalFailed(-50, property: "kAudioHardwarePropertyDevices")
+        }
+        guard let index = devicesListeners.firstIndex(where: {
+            $0.queue === queue && listenerBlocksAreIdentical($0.block, block)
+        }) else {
+            throw CoreAudioError.listenerRemovalFailed(-50, property: "kAudioHardwarePropertyDevices")
+        }
+        devicesListeners.remove(at: index)
     }
 
-    func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    func addDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         lock.lock()
         defer { lock.unlock() }
         if failOnOperation == "addDefaultOutputDeviceListener" {
@@ -241,11 +278,112 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         defaultListeners.append(ListenerRecord(queue: queue, block: block))
     }
 
-    func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping AudioObjectPropertyListenerBlock) throws {
+    func removeDefaultOutputDeviceListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {
         lock.lock()
         defer { lock.unlock() }
-        defaultListeners.removeAll()
+        if failOnOperation == "removeDefaultOutputDeviceListener" {
+            throw CoreAudioError.listenerRemovalFailed(-50, property: "kAudioHardwarePropertyDefaultOutputDevice")
+        }
+        guard let index = defaultListeners.firstIndex(where: {
+            $0.queue === queue && listenerBlocksAreIdentical($0.block, block)
+        }) else {
+            throw CoreAudioError.listenerRemovalFailed(-50, property: "kAudioHardwarePropertyDefaultOutputDevice")
+        }
+        defaultListeners.remove(at: index)
     }
+}
+
+/// Holds one listener block so a queue hop does not capture a non-Sendable block value.
+private final class SendableListenerBlock: @unchecked Sendable {
+    let block: OutputPropertyListenerBlock
+    init(_ block: @escaping OutputPropertyListenerBlock) {
+        self.block = block
+    }
+}
+
+/// `AudioObjectRemovePropertyListenerBlock` matches the Objective-C block object, not a Swift function value.
+private func listenerBlocksAreIdentical(
+    _ lhs: @escaping OutputPropertyListenerBlock,
+    _ rhs: @escaping OutputPropertyListenerBlock
+) -> Bool {
+    unsafeBitCast(lhs, to: AnyObject.self) === unsafeBitCast(rhs, to: AnyObject.self)
+}
+
+/// Engine double whose running state and start failures are scripted. Production recovery must not call `stop()`.
+private final class ScriptedAudioEngine: AVAudioEngine, @unchecked Sendable {
+    private let stateLock = NSLock()
+    private var scriptedRunning = false
+    private var startFailure: Error?
+    private var recordedStartCount = 0
+    private var recordedPauseCount = 0
+    private var recordedStopCount = 0
+
+    override var isRunning: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return scriptedRunning
+    }
+
+    var startCount: Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return recordedStartCount
+    }
+
+    var pauseCount: Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return recordedPauseCount
+    }
+
+    var stopCount: Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return recordedStopCount
+    }
+
+    func setRunning(_ value: Bool) {
+        stateLock.lock()
+        scriptedRunning = value
+        stateLock.unlock()
+    }
+
+    func failNextStarts(with error: Error?) {
+        stateLock.lock()
+        startFailure = error
+        stateLock.unlock()
+    }
+
+    override func start() throws {
+        stateLock.lock()
+        recordedStartCount += 1
+        let failure = startFailure
+        stateLock.unlock()
+        if let failure {
+            throw failure
+        }
+        stateLock.lock()
+        scriptedRunning = true
+        stateLock.unlock()
+    }
+
+    override func pause() {
+        stateLock.lock()
+        recordedPauseCount += 1
+        scriptedRunning = false
+        stateLock.unlock()
+    }
+
+    override func stop() {
+        stateLock.lock()
+        recordedStopCount += 1
+        scriptedRunning = false
+        stateLock.unlock()
+    }
+}
+
+private struct SentinelStartError: Error, CustomStringConvertible {
+    var description: String { "sentinel-start-failure" }
 }
 
 // MARK: - CoreAudioOutputDevices Tests
@@ -582,9 +720,19 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
     }
 
     func testLiveSystemCoreAudioEnumeration() throws {
-        // Live Mac smoke test to verify real HAL queries do not crash or access inputNode
+        // Hardware-free hosts have no default output. Skip instead of failing the suite.
+        let defaultID: AudioDeviceID?
+        do {
+            defaultID = try CoreAudioOutputDevices.defaultOutputDeviceID()
+        } catch {
+            throw XCTSkip("Skipping live CoreAudio enumeration. Default output query failed: \(error.localizedDescription)")
+        }
+        guard defaultID != nil else {
+            throw XCTSkip("Skipping live CoreAudio enumeration. Host has no default output device.")
+        }
+
         let descriptors = try CoreAudioOutputDevices.enumerate()
-        XCTAssertFalse(descriptors.isEmpty, "A physical Mac should have at least 1 output audio device.")
+        XCTAssertFalse(descriptors.isEmpty, "A host with a default output should enumerate at least one output device.")
 
         for desc in descriptors {
             XCTAssertFalse(desc.id.isEmpty, "Device UID must not be empty.")
@@ -592,8 +740,411 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
             XCTAssertGreaterThan(desc.outputChannelCount, 0, "Output channels must be > 0.")
             XCTAssertTrue(desc.sampleRate.isFinite && desc.sampleRate > 0.0, "Sample rate must be finite and positive.")
         }
-
-        let defaultID = try CoreAudioOutputDevices.defaultOutputDeviceID()
-        XCTAssertNotNil(defaultID, "Host Mac must report an active default output device.")
     }
+
+    func testEnumerateSkipsFailedOrNonFiniteSampleRate() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 410, uid: "good_speakers", name: "Good Speakers", outputChannels: 2, sampleRate: 48000.0)
+        mock.addDevice(id: 411, uid: "throws_rate", name: "Throws Rate", outputChannels: 2, sampleRate: 48000.0)
+        mock.addDevice(id: 412, uid: "nan_rate", name: "NaN Rate", outputChannels: 2, sampleRate: .nan)
+        mock.addDevice(id: 413, uid: "infinite_rate", name: "Infinite Rate", outputChannels: 2, sampleRate: .infinity)
+        mock.sampleRateErrors[411] = CoreAudioError.invalidSampleRate(.signalingNaN)
+
+        let descriptors = try CoreAudioOutputDevices.enumerate(using: mock)
+        XCTAssertEqual(descriptors.map(\.id), ["good_speakers"])
+        XCTAssertEqual(descriptors.first?.sampleRate, 48000.0)
+        XCTAssertFalse(descriptors.contains(where: { $0.sampleRate == 44100.0 }))
+
+        XCTAssertThrowsError(try CoreAudioOutputDevices.descriptor(for: 411, using: mock)) { error in
+            guard case CoreAudioError.invalidSampleRate = error else {
+                XCTFail("Expected invalidSampleRate, got \(error)")
+                return
+            }
+        }
+
+        XCTAssertThrowsError(try CoreAudioOutputDevices.descriptor(for: 412, using: mock)) { error in
+            guard case CoreAudioError.invalidSampleRate(let rate) = error else {
+                XCTFail("Expected invalidSampleRate, got \(error)")
+                return
+            }
+            XCTAssertTrue(rate.isNaN)
+        }
+    }
+
+    func testBoundUIDStaysSelectedUnderNewNumericIDWithoutDesiredUID() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 11, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 22, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(22)
+
+        let engine = AVAudioEngine()
+        try CoreAudioOutputDevices.bind(11, to: engine, using: mock)
+
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, desiredDeviceUID: nil, boundDeviceID: 11)
+
+        mock.removeDevice(id: 11)
+        mock.addDevice(id: 12, uid: "dac", name: "DAC", outputChannels: 2)
+        monitor.reconcileImmediately()
+
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 12, "Same bound UID under a new numeric ID stays selected when no preferred UID is set.")
+        monitor.stop()
+    }
+
+    func testTopologyQueryFailurePreservesRunningEngineAndBinding() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 31, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 32, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(32)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(31, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let changes = TestBox(0)
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: { changes.value += 1 },
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 31)
+
+        mock.simulatedOSStatus = 50
+        monitor.reconcileImmediately()
+
+        XCTAssertEqual(errors.value, [CoreAudioError.osStatus(50, operation: "getDeviceIDs")])
+        XCTAssertEqual(changes.value, 0, "A failed topology pass must not report onChange.")
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertEqual(engine.stopCount, 0)
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 31)
+
+        mock.simulatedOSStatus = nil
+        monitor.reconcileImmediately()
+        XCTAssertEqual(mock.boundUnits[audioUnit], 31, "The preserved UID must still beat the default after the query succeeds.")
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.stopCount, 0)
+        monitor.stop()
+    }
+
+    func testDefaultAndUIDLookupFailuresDoNotClearBinding() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 41, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 42, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(42)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(41, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let changes = TestBox(0)
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: { changes.value += 1 },
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 41)
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+
+        mock.defaultOutputError = CoreAudioError.osStatus(51, operation: "getDefaultOutputDeviceID")
+        monitor.reconcileImmediately()
+        XCTAssertEqual(errors.value, [CoreAudioError.osStatus(51, operation: "getDefaultOutputDeviceID")])
+        XCTAssertEqual(changes.value, 0)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 41)
+
+        mock.defaultOutputError = nil
+        errors.value = []
+        // enumerate consumes the one successful device-list read. The bound-UID lookup then throws.
+        mock.remainingSuccessfulDeviceIDQueries = 1
+        monitor.reconcileImmediately()
+        XCTAssertEqual(errors.value, [CoreAudioError.osStatus(-50, operation: "getDeviceIDs")])
+        XCTAssertEqual(changes.value, 0)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 41)
+
+        mock.remainingSuccessfulDeviceIDQueries = nil
+        monitor.reconcileImmediately()
+        XCTAssertEqual(mock.boundUnits[audioUnit], 41)
+        XCTAssertTrue(engine.isRunning)
+        monitor.stop()
+    }
+
+    func testFalseIntentDisconnectStaysStoppedAndTrueIntentRecovers() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 51, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 52, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(52)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(51, to: engine, using: mock)
+        engine.setRunning(true)
+
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 51)
+        monitor.setIntendedRunningState(for: engine, running: false)
+
+        mock.removeDevice(id: 51)
+        monitor.reconcileImmediately()
+
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 52)
+        XCTAssertEqual(engine.pauseCount, 1)
+        XCTAssertEqual(engine.stopCount, 0, "Rebind must pause. stop() drops the scheduled graph.")
+        XCTAssertEqual(engine.startCount, 0)
+        XCTAssertFalse(engine.isRunning)
+
+        monitor.setIntendedRunningState(for: engine, running: true)
+        monitor.reconcileImmediately()
+        XCTAssertEqual(engine.startCount, 1)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 52)
+        XCTAssertEqual(engine.stopCount, 0)
+        monitor.stop()
+    }
+
+    func testBindRetriesResetWhenCandidateSetChangesAndKeepTheRealError() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 61, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 62, uid: "speakers", name: "Speakers", outputChannels: 2)
+        mock.setDefaultOutputID(62)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(61, to: engine, using: mock)
+        let bindError = CoreAudioError.osStatus(99, operation: "AudioUnitSetProperty")
+        mock.setOutputDeviceError = bindError
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 61)
+        mock.removeDevice(id: 61)
+        let attemptsBeforeRecovery = mock.outputDeviceAttemptCount()
+
+        monitor.reconcileImmediately()
+        monitor.reconcileImmediately()
+        monitor.reconcileImmediately()
+
+        XCTAssertEqual(mock.outputDeviceAttemptCount(), attemptsBeforeRecovery + 3)
+        XCTAssertEqual(
+            errors.value.filter { $0 == bindError }.count,
+            3,
+            "Each failed bind must report the HAL error that was thrown."
+        )
+        XCTAssertEqual(errors.value.filter(isRetryLimit).count, 1)
+        XCTAssertFalse(errors.value.contains(where: isSyntheticStatus))
+
+        let attemptsAtCap = mock.outputDeviceAttemptCount()
+        let errorsAtCap = errors.value.count
+        monitor.reconcileImmediately()
+        XCTAssertEqual(mock.outputDeviceAttemptCount(), attemptsAtCap, "The fourth pass must not bind again.")
+        XCTAssertEqual(errors.value.count, errorsAtCap, "The retry-limit error is emitted once per exhausted epoch.")
+
+        mock.addDevice(id: 63, uid: "headphones", name: "Headphones", outputChannels: 2)
+        mock.setOutputDeviceError = nil
+        monitor.reconcileImmediately()
+
+        XCTAssertEqual(mock.outputDeviceAttemptCount(), attemptsAtCap + 1)
+        let audioUnit = try XCTUnwrap(engine.outputNode.audioUnit)
+        XCTAssertEqual(mock.boundUnits[audioUnit], 62, "A changed candidate set must allow recovery onto the default output.")
+        XCTAssertEqual(engine.stopCount, 0)
+        monitor.stop()
+    }
+
+    func testStartRetriesCapUntilTopologyChangesAndKeepTheThrownError() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 71, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.setDefaultOutputID(71)
+
+        let engine = ScriptedAudioEngine()
+        try CoreAudioOutputDevices.bind(71, to: engine, using: mock)
+        engine.failNextStarts(with: SentinelStartError())
+
+        let errors = TestBox<[CoreAudioError]>([])
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 71)
+        monitor.setIntendedRunningState(for: engine, running: true)
+
+        monitor.reconcileImmediately()
+        monitor.reconcileImmediately()
+        monitor.reconcileImmediately()
+
+        let expected = CoreAudioError.engineOperationFailed(
+            operation: "AVAudioEngine.start",
+            message: "sentinel-start-failure"
+        )
+        XCTAssertEqual(engine.startCount, 3)
+        XCTAssertEqual(errors.value.filter { $0 == expected }.count, 3)
+        XCTAssertEqual(errors.value.filter(isRetryLimit).count, 1)
+        XCTAssertFalse(errors.value.contains(where: isSyntheticStatus))
+        XCTAssertFalse(engine.isRunning)
+
+        let errorsAtCap = errors.value.count
+        monitor.reconcileImmediately()
+        XCTAssertEqual(engine.startCount, 3)
+        XCTAssertEqual(errors.value.count, errorsAtCap)
+
+        mock.addDevice(id: 72, uid: "speakers", name: "Speakers", outputChannels: 2)
+        engine.failNextStarts(with: nil)
+        monitor.reconcileImmediately()
+        XCTAssertEqual(engine.startCount, 4, "A topology change resets the start cap.")
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertEqual(engine.stopCount, 0)
+        monitor.stop()
+    }
+
+    func testCallbackReentryStopAndRegisterCompleteWithinTimeout() throws {
+        let mock = MockAudioHardware()
+        let finished = expectation(description: "callback reentry finished")
+        let reentered = TestBox(false)
+        let holder = TestBox<OutputDeviceMonitor?>(nil)
+
+        holder.value = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onChange: {
+                reentered.value = true
+                let engine = AVAudioEngine()
+                holder.value?.stop()
+                holder.value?.registerEngine(engine, role: .cue)
+                holder.value?.unregisterEngine(engine)
+                finished.fulfill()
+            }
+        )
+        try holder.value?.start()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            holder.value?.reconcileImmediately()
+        }
+
+        wait(for: [finished], timeout: 2.0)
+        XCTAssertTrue(reentered.value)
+        holder.value = nil
+    }
+
+    func testDeinitOnControlQueueCompletesWithinTimeout() throws {
+        let mock = MockAudioHardware()
+        let finished = expectation(description: "deinit on control queue finished")
+        let holder = TestBox<OutputDeviceMonitor?>(nil)
+        holder.value = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try holder.value?.start()
+
+        holder.value?.scheduleOnControlQueueForTesting {
+            holder.value = nil
+            finished.fulfill()
+        }
+
+        wait(for: [finished], timeout: 2.0)
+        XCTAssertNil(holder.value)
+    }
+
+    func testListenerRemovalUsesBlockIdentityAndKeepsBlockWhenRemovalFails() throws {
+        let mock = MockAudioHardware()
+        let errors = TestBox<[CoreAudioError]>([])
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        XCTAssertEqual(mock.devicesListeners.count, 1)
+        XCTAssertEqual(mock.defaultListeners.count, 1)
+
+        let unrelated: OutputPropertyListenerBlock = { _, _ in }
+        XCTAssertThrowsError(
+            try mock.removeDevicesListener(on: mock.devicesListeners[0].queue, block: unrelated)
+        )
+        XCTAssertEqual(mock.devicesListeners.count, 1, "A different listener block must not remove the registered one.")
+
+        mock.failOnOperation = "removeDevicesListener"
+        monitor.stop()
+        XCTAssertEqual(mock.devicesListeners.count, 1, "Failed removal must keep the installed devices listener.")
+        XCTAssertEqual(mock.defaultListeners.count, 0)
+        XCTAssertTrue(errors.value.contains { error in
+            if case CoreAudioError.listenerRemovalFailed(_, let property) = error {
+                return property == "kAudioHardwarePropertyDevices" || property == "removeDevicesListener"
+            }
+            return false
+        })
+
+        mock.failOnOperation = nil
+        try monitor.start()
+        XCTAssertEqual(mock.devicesListeners.count, 1, "start() must not install a second devices listener.")
+        XCTAssertEqual(mock.defaultListeners.count, 1)
+
+        monitor.stop()
+        XCTAssertEqual(mock.devicesListeners.count, 0)
+        XCTAssertEqual(mock.defaultListeners.count, 0)
+    }
+
+    func testConfigurationObserverDoesNotRetainEngine() throws {
+        let mock = MockAudioHardware()
+        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
+        try monitor.start()
+
+        weak var weakEngine: AVAudioEngine?
+        autoreleasepool {
+            let engine = AVAudioEngine()
+            weakEngine = engine
+            monitor.registerEngine(engine, role: .master)
+        }
+
+        XCTAssertNil(weakEngine, "The configuration observer must not keep the engine alive.")
+        monitor.stop()
+    }
+}
+
+private func isRetryLimit(_ error: CoreAudioError) -> Bool {
+    if case CoreAudioError.recoveryRetryLimitExceeded = error {
+        return true
+    }
+    return false
+}
+
+private func isSyntheticStatus(_ error: CoreAudioError) -> Bool {
+    if case CoreAudioError.osStatus(let status, _) = error {
+        return status == OSStatus(-1)
+    }
+    return false
 }

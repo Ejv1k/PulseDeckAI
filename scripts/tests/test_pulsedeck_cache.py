@@ -488,6 +488,40 @@ class TestMergePreservingOverrides(unittest.TestCase):
         self.assertEqual(merged.cueMarkers.mixOutCue, 160.0)
         self.assertEqual(merged.cueMarkers.endTrimCue, 175.0)
 
+    def test_reanalysis_with_infinity_automated_cues_and_manual_bpm_override(self):
+        # isManual is True, overriddenFields is ["bpm"]
+        existing_entry = create_sample_entry(
+            duration=180.0,
+            bpm=128.0,
+            cue_markers=CueMarkers(10.0, 20.0, 150.0, 170.0),
+            manual_overrides=ManualOverrides(
+                isManual=True,
+                overriddenFields=["bpm"],
+            ),
+        )
+
+        # New analysis contains infinite automated cue markers
+        new_cues_with_inf = CueMarkers(10.0, float("inf"), float("-inf"), 175.0)
+        new_analysis = create_sample_entry(
+            duration=200.0,
+            bpm=122.0,
+            cue_markers=new_cues_with_inf,
+            manual_overrides=ManualOverrides(isManual=False, overriddenFields=[]),
+        )
+
+        merged = existing_entry.merge_preserving_overrides(new_analysis)
+        self.assertEqual(merged.bpm, 128.0, "Must preserve manual bpm override")
+        self.assertEqual(merged.duration, 200.0)
+        self.assertTrue(
+            merged.cueMarkers.validate(merged.duration),
+            f"Merged cues must satisfy validate(duration): {merged.cueMarkers}",
+        )
+        # Infinite components substitute 0.0, then clamped into [0, duration] with monotonic ordering
+        self.assertEqual(merged.cueMarkers.startTrimCue, 10.0)
+        self.assertEqual(merged.cueMarkers.vocalEntryCue, 10.0)
+        self.assertEqual(merged.cueMarkers.mixOutCue, 10.0)
+        self.assertEqual(merged.cueMarkers.endTrimCue, 175.0)
+
 
 class TestSchemaValidation(unittest.TestCase):
     """Tests for strict schema validation, malformed JSON, and false success prevention."""

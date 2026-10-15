@@ -16,21 +16,22 @@
 * **PR Status:** PR #1 is **OPEN** and **UNMERGED** against `origin/main`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry).
 * **Final Code Lineage:**
-  * Last Reviewed SHA: `34b9454f22ae94a91fb63a41ea8fde93c0399213` (native Grok run `20b1b216-7f9f-4f6c-b21b-fa2fee351ac6` verdict: `CHANGES_REQUESTED`).
-  * Fix Commit 1: `164b5d60a9ba0e4ed5359b4b01d4793dd56cea22` (enforce `validate()` before temporary file creation in `CachePersistence.saveAtomic` and `PulseDeckLibraryCache.save_atomic`).
-  * Final Code SHA: `1c8c27b71055dc21544f9909e6a681cbcc0f05b0` (Python `merge_preserving_overrides` fallback on NaN/negative/infinite duration; Swift & Python `mergingPreservingOverrides` non-finite manual cue preservation via `.isNaN`/`isFinite`).
+  * Last Reviewed SHA: `5407c7e54f73aa8b88f6a9e1eec70425c2763f35` (native Grok run `7ad9b327` verdict: `CHANGES_REQUESTED` on `5407c7e`).
+  * Review Fix Commit 1: `c13a5e656d0290cae25076cf9d84bf402ee3cce8` (`scripts/pulsedeck_cache.py`: substitute 0.0 for non-finite automated cues before clamping in `merge_preserving_overrides`, matching Swift; unit tests in `test_pulsedeck_cache.py`; thread `PRRT_kwDOVJOZu86sy7ZZ` resolved).
+  * Review Fix Commit 2: `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a` (`Sources/PulseDeckCore/Models/AudioContracts.swift`: `LatencyCompensation.init` guards `offsetMs.isFinite`, defaulting non-finite to 0.0 before clamping into `[-300.0, 300.0]`; unit tests in `AudioContractsTests.swift`; thread `PRRT_kwDOVJOZu86sy7Ze` resolved).
+  * Code Head SHA: `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a`.
 * **Audit & Approval Status:**
-  * Commits `164b5d6` and `1c8c27b` are **NOT re-reviewed**.
-  * Next fresh session must obtain native Grok re-review of the updated head before merging.
+  * Commits `c13a5e6` and `f0784c8` are **NOT re-reviewed**.
+  * Native Grok re-review on updated head is pending.
   * There is **NO current approval**.
-  * Resolved review threads (all 13 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
+  * Resolved review threads (all 15 threads on PR #1 resolved) are an internal AO prerequisite, but do **NOT** constitute review approval. Native AO review checks do **NOT** constitute independent GitHub PR approval.
 * **Phase Boundary:** **Phase 1 has NOT been started.** PR #1 must not be merged to `main` until explicitly authorized in a fresh session.
 
 ### 1.2 Automated Verification Status
 > *Note: Build and test evidence belongs to the latest code commit with review fixes, not fresh execution on documentation-only edits.*
 
-* **Swift Test Suite:** 23/23 tests passing (0 failures).
-* **Python Test Suite:** 33/33 tests passing (0 failures) via `scripts/tests/test_pulsedeck_cache.py`.
+* **Swift Test Suite:** 24/24 tests passing (0 failures).
+* **Python Test Suite:** 35/35 tests passing (0 failures) via `scripts/tests/test_pulsedeck_cache.py`.
 * **Companion Cache Validator:** `python3 scripts/pulsedeck_cache.py` validates `PulseDeck_Library/.pulsedeck_ai_cache.json` with exit code 0.
 * **Release Executable Build:** `swift build -c release` succeeds; produces `.build/release/PulseDeckAI` (Mach-O 64-bit arm64, 925 KB).
 * **Physical Hardware Validation:** Zero physical audio device validation has been conducted in Phase 0. No physical DAC routing, Bluetooth A2DP latency calibration, or hardware audio output has run.
@@ -74,7 +75,7 @@ Every path and declaration kind listed below matches actual repository declarati
   * `public struct EQ3BandParameters`: 3-band EQ parameters (`lowGainDB`, `midGainDB`, `highGainDB`).
   * `public struct ResonantFilterParameters`: Resonant filter sweep parameters (`sweep`, `resonance`).
   * `public struct TimePitchParameters`: Playback rate, pitch shift, key lock (`rate`, `pitchCents`, `keyLockEnabled`).
-  * `public struct LatencyCompensation`: Bounded offset model `[-300.0, 300.0]` ms (`offsetMs`, `masterDelayMs`, `cueDelayMs`).
+  * `public struct LatencyCompensation`: Bounded offset model `[-300.0, 300.0]` ms (`offsetMs`, `masterDelayMs`, `cueDelayMs`), non-finite guard defaulting to 0.0.
   * `public enum BluetoothConstraints`: Latency limits and live performance advisory notice.
   * `public protocol AudioEngineContract`: Output-only engine lifecycle. Strictly forbids accessing `engine.inputNode`.
   * `public protocol DeckAudioGraphContract`: Single-deck playback graph protocol.
@@ -115,11 +116,11 @@ Every path and declaration kind listed below matches actual repository declarati
   * `public struct ArchitectureStatusView: View`: Output routing indicator for Master, Cue, and Latency compensation.
 
 ### 3.3 Test Suites & Companion Scripts
-* **`Tests/PulseDeckCoreTests/AudioContractsTests.swift`**: 3 tests verifying latency compensation model math and boundary clamping.
+* **`Tests/PulseDeckCoreTests/AudioContractsTests.swift`**: 4 tests verifying latency compensation model math, non-finite guard defaulting to zero, boundary clamping, EQ/filter/pitch defaults, and Gemini rate limiter backoff capping.
 * **`Tests/PulseDeckCoreTests/CacheSchemaTests.swift`**: 10 tests verifying cue ordering bounds, re-analysis override preservation, invalid duration fail-safes, and NaN manual cue preservation.
 * **`Tests/PulseDeckCoreTests/LibraryScannerTests.swift`**: 10 tests verifying hermetic temporary library scans, unreadable folder handling, corrupted cache reporting, atomic persistence, and rejected save destination preservation.
-* **`scripts/pulsedeck_cache.py`**: Python companion script performing handwritten subset validation (not full JSON Schema enforcement) for v1.0.0 cache files, deepcopy immutability, safe re-analysis merge fallback on invalid duration or non-finite cues, and pre-save validation.
-* **`scripts/tests/test_pulsedeck_cache.py`**: 33 Python unit tests validating Python cache engine parity, override preservation with invalid duration/cues, and rejected save file preservation.
+* **`scripts/pulsedeck_cache.py`**: Python companion script performing handwritten subset validation (not full JSON Schema enforcement) for v1.0.0 cache files, deepcopy immutability, safe re-analysis merge fallback on invalid duration or non-finite cues, automated cue non-finite sanitization, and pre-save validation.
+* **`scripts/tests/test_pulsedeck_cache.py`**: 35 Python unit tests validating Python cache engine parity, override preservation with invalid duration/cues, automated cue NaN/infinity clamping with bpm override, and rejected save file preservation.
 * **`docs/TECHNICAL_ARCHITECTURE.md`**: Architectural specification and system overview.
 * **`docs/USER_MANUAL.md`**: Operational manual and user guide.
 * **`docs/cache_schema_v1.json`**: JSON Schema definition for v1.0.0 cache files.
@@ -182,11 +183,11 @@ The following non-blocking observations from prior review audits are recorded as
 
 1. **Verify Worktree & Remote State:** Confirm HEAD commit on `phase-0-foundation` matches remote `origin/phase-0-foundation`.
 2. **Review Status Check:** Run `ao review ls pulsedeckai-2` (bare `ao review ls` defaults to the wrong session). Check for completed native Grok review verdict on PR #1.
-3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `1c8c27b71055dc21544f9909e6a681cbcc0f05b0`:
+3. **Optional Re-Review Trigger:** If resuming in a fresh session to request a Grok re-review on code commit `f0784c8a2ef044f5068697b0a7d5e4b29bb8607a`:
    ```bash
    ao review trigger pulsedeckai-2 --agent grok --model grok-4.7
    ```
-4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `34b9454` with verdict `CHANGES_REQUESTED`; code `1c8c27b` has not been re-reviewed.
+4. **Approval Requirement:** Merging PR #1 or starting Phase 1 requires explicit native review approval, human authorization, and orchestrator confirmation. Last reviewed SHA was `5407c7e` with verdict `CHANGES_REQUESTED`; code `f0784c8` is pending re-review.
 5. **Validation Commands:**
    ```bash
    swift build -c release

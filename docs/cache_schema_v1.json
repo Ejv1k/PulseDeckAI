@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PulseDeckLibraryCache",
+  "description": "Shared versioned cache schema for PulseDeck AI audio analysis and cue metadata",
+  "type": "object",
+  "required": ["schemaVersion", "libraryRoot", "tracks"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semantic version of the cache schema"
+    },
+    "generatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Timestamp of the last cache generation in ISO 8601"
+    },
+    "libraryRoot": {
+      "type": "string",
+      "description": "Relative path to library root directory"
+    },
+    "tracks": {
+      "type": "object",
+      "description": "Mapping from track relative path to TrackCacheEntry",
+      "additionalProperties": {
+        "$ref": "#/$defs/TrackCacheEntry"
+      }
+    }
+  },
+  "$defs": {
+    "TrackCacheEntry": {
+      "type": "object",
+      "required": [
+        "relativePath",
+        "fileFingerprint",
+        "fileSizeBytes",
+        "fileModificationTime",
+        "duration",
+        "sampleRate",
+        "channels",
+        "bitDepth",
+        "bpm",
+        "musicalKey",
+        "confidence",
+        "waveformMetadata",
+        "beatGrid",
+        "structure",
+        "cueMarkers",
+        "aiTrimBypass",
+        "manualOverrides",
+        "analyzerVersion",
+        "analysisTimestamp"
+      ],
+      "properties": {
+        "relativePath": {
+          "type": "string",
+          "description": "Relative path of the track within PulseDeck_Library"
+        },
+        "fileFingerprint": {
+          "type": "string",
+          "description": "Cryptographic or content-based fingerprint (e.g. SHA-256) of the audio file"
+        },
+        "fileSizeBytes": {
+          "type": "integer",
+          "description": "File size in bytes"
+        },
+        "fileModificationTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "File last modification timestamp"
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Track duration in seconds"
+        },
+        "sampleRate": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Audio sample rate in Hz (e.g. 44100 or 48000)"
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of audio channels (e.g. 2 for stereo)"
+        },
+        "bitDepth": {
+          "type": "integer",
+          "minimum": 8,
+          "description": "Audio bit depth (e.g. 16 or 24)"
+        },
+        "bpm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Detected Beats Per Minute"
+        },
+        "musicalKey": {
+          "type": "string",
+          "description": "Musical key in Camelot (e.g. 8A) or standard notation (e.g. Am)"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Detection confidence score between 0.0 and 1.0"
+        },
+        "waveformMetadata": {
+          "$ref": "#/$defs/WaveformMetadata"
+        },
+        "beatGrid": {
+          "$ref": "#/$defs/BeatGrid"
+        },
+        "structure": {
+          "$ref": "#/$defs/TrackStructure"
+        },
+        "cueMarkers": {
+          "$ref": "#/$defs/CueMarkers"
+        },
+        "aiTrimBypass": {
+          "type": "boolean",
+          "description": "When true, AI automatic trim cue points are ignored and original file bounds are played"
+        },
+        "manualOverrides": {
+          "$ref": "#/$defs/ManualOverrides"
+        },
+        "analyzerVersion": {
+          "type": "string",
+          "description": "Identifier and version of the analysis engine used (e.g. accelerate-dsp-v1.0)"
+        },
+        "analysisTimestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when analysis was performed"
+        }
+      }
+    },
+    "CueMarkers": {
+      "type": "object",
+      "required": ["startTrimCue", "vocalEntryCue", "mixOutCue", "endTrimCue"],
+      "description": "Four ordered, bounded cue markers: 0.0 <= startTrimCue <= vocalEntryCue <= mixOutCue <= endTrimCue <= duration",
+      "properties": {
+        "startTrimCue": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Timestamp in seconds where active audio starts (trims intro silence/clutter)"
+        },
+        "vocalEntryCue": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Timestamp in seconds where vocals first enter"
+        },
+        "mixOutCue": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Timestamp in seconds where outro mixing should commence"
+        },
+        "endTrimCue": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Timestamp in seconds where active audio ends (trims outro silence/fade)"
+        }
+      }
+    },
+    "ManualOverrides": {
+      "type": "object",
+      "required": ["isManual", "overriddenFields"],
+      "properties": {
+        "isManual": {
+          "type": "boolean",
+          "description": "Whether any field has been manually adjusted by the user"
+        },
+        "overriddenFields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of field names manually overridden (e.g. cueMarkers, bpm, musicalKey)"
+        },
+        "updatedAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp of the last manual modification"
+        },
+        "author": {
+          "type": ["string", "null"],
+          "description": "Identifier of the user or session making the override"
+        },
+        "notes": {
+          "type": ["string", "null"],
+          "description": "Optional notes regarding manual adjustment"
+        }
+      }
+    },
+    "WaveformMetadata": {
+      "type": "object",
+      "required": ["sampleCount", "downsampleFactor", "peakValues", "lowBandPeaks", "midBandPeaks", "highBandPeaks"],
+      "properties": {
+        "sampleCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "downsampleFactor": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "peakValues": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "lowBandPeaks": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "midBandPeaks": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "highBandPeaks": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "BeatGrid": {
+      "type": "object",
+      "required": ["firstBeatOffsetSeconds", "beatIntervalSeconds", "beatTimestamps"],
+      "properties": {
+        "firstBeatOffsetSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "beatIntervalSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "beatTimestamps": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "TrackStructure": {
+      "type": "object",
+      "required": ["sections", "vocalSegments"],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StructureSection" }
+        },
+        "vocalSegments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VocalSegment" }
+        }
+      }
+    },
+    "StructureSection": {
+      "type": "object",
+      "required": ["name", "startSeconds", "endSeconds", "energyLevel"],
+      "properties": {
+        "name": { "type": "string" },
+        "startSeconds": { "type": "number", "minimum": 0 },
+        "endSeconds": { "type": "number", "minimum": 0 },
+        "energyLevel": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "VocalSegment": {
+      "type": "object",
+      "required": ["startSeconds", "endSeconds", "confidence"],
+      "properties": {
+        "startSeconds": { "type": "number", "minimum": 0 },
+        "endSeconds": { "type": "number", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

@@ -16,9 +16,10 @@ public enum CoreAudioOutputDevices {
     ///
     /// - Parameter hal: The underlying HAL abstraction interface (defaults to `SystemAudioHardware.shared`).
     /// - Returns: An array of `AudioDeviceDescriptor` representing output-capable hardware endpoints.
-    /// - Throws: `CoreAudioError` if the device-list query fails.
-    ///   A device whose nominal sample rate query fails, or whose rate is non-finite or not positive, is omitted.
-    ///   This method never substitutes a fabricated sample rate.
+    /// - Throws: `CoreAudioError` if the device-list query fails, or if any output device's UID cannot be read.
+    ///   A thrown UID read fails the whole list. It is not treated as absence of that device.
+    ///   An empty UID is omitted. A device whose nominal sample rate query fails, or whose rate is
+    ///   non-finite or not positive, is omitted. This method never substitutes a fabricated sample rate.
     public static func enumerate(using hal: AudioHardwareInterface = SystemAudioHardware.shared) throws -> [AudioDeviceDescriptor] {
         let deviceIDs = try hal.getDeviceIDs()
         var descriptors: [AudioDeviceDescriptor] = []
@@ -38,8 +39,10 @@ public enum CoreAudioOutputDevices {
                 continue
             }
 
-            // Stable UID query (required for persistent identity)
-            guard let uid = try? hal.getDeviceUID(deviceID: deviceID), !uid.isEmpty else {
+            // A thrown UID read is not absence. Fail the list so recovery does not drop the bound device.
+            // An empty string is not a usable identity and is skipped.
+            let uid = try hal.getDeviceUID(deviceID: deviceID)
+            guard !uid.isEmpty else {
                 continue
             }
 

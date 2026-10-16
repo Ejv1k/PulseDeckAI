@@ -72,7 +72,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
         )
 
         // Initialize independent Cue Preview Player
-        self.cuePreview = CuePreviewPlayer(cueEngine: cue)
+        self.cuePreview = CuePreviewPlayer(cueEngine: cue, monitor: monitorInstance)
     }
 
     // MARK: - AudioEngineCoordinatorContract Conformance
@@ -123,9 +123,26 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
     /// Starts both audio engines and activates hardware monitoring.
     public func start() throws {
-        try monitor.start()
-        try masterAudioEngine.start()
-        try cueAudioEngine.start()
+        var monitorStarted = false
+        var masterStarted = false
+        do {
+            try monitor.start()
+            monitorStarted = true
+
+            try masterAudioEngine.start()
+            masterStarted = true
+
+            try cueAudioEngine.start()
+        } catch {
+            if masterStarted {
+                masterAudioEngine.stop()
+            }
+            cueAudioEngine.stop()
+            if monitorStarted {
+                monitor.stop()
+            }
+            throw error
+        }
     }
 
     /// Pauses audio output rendering on both engines without resetting graphs.

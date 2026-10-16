@@ -242,6 +242,14 @@ final class DualEngineGraphsTests: XCTestCase {
 
         try deck.loadTrack(url: testFile)
 
+        // Verify independent AVAudioFile handles per engine player (regression test for thread safety)
+        guard let masterFile = deck.masterAudioFileForTesting, let cueFile = deck.cueAudioFileForTesting else {
+            XCTFail("Expected both master and cue audio file handles to be initialized")
+            return
+        }
+        XCTAssertFalse(masterFile === cueFile, "Master and Cue player nodes must hold distinct AVAudioFile instances to prevent cross-engine thread races")
+        XCTAssertEqual(masterFile.length, cueFile.length)
+
         // Channel volume fader at zero on Master FOH
         deck.volume = 0.0
         XCTAssertEqual(deck.masterFaderNode.outputVolume, 0.0)
@@ -269,6 +277,33 @@ final class DualEngineGraphsTests: XCTestCase {
         preview.pause()
         preview.seek(to: 1.5)
         preview.stop()
+    }
+
+    func testDeckTrackLoadingOpensSeparateFileHandlesPerPlayer() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+        let deck = coordinator.deckAGraph
+
+        let testFile = try createTestWavFile(durationSeconds: 2.0)
+        defer { try? FileManager.default.removeItem(at: testFile) }
+
+        try deck.loadTrack(url: testFile)
+
+        guard let masterFile = deck.masterAudioFileForTesting,
+              let cueFile = deck.cueAudioFileForTesting else {
+            XCTFail("Both master and cue audio file handles must be loaded")
+            return
+        }
+
+        XCTAssertFalse(masterFile === cueFile, "AVAudioFile handles must not be identical across engines")
+        XCTAssertEqual(masterFile.url, cueFile.url)
+
+        // Seeking verifies separate file handles are used for restarting players
+        deck.seek(to: 1.0)
+        XCTAssertFalse(deck.masterAudioFileForTesting === deck.cueAudioFileForTesting)
+
+        deck.seekCue(to: 0.5)
+        XCTAssertFalse(deck.masterAudioFileForTesting === deck.cueAudioFileForTesting)
     }
 
     // MARK: - 8. Lifecycle, Coordination & Recovery
@@ -314,5 +349,252 @@ final class DualEngineGraphsTests: XCTestCase {
 
         // Safe immediate reconciliation without crashing
         coordinator.handleDeviceConfigurationChange()
+    }
+
+    // MARK: - 9. Review Regression Coverage (Threads 1-9)
+
+    func testDeckLoadTwiceWithoutStopAndPlayAfterSegmentConsumed() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+        try coordinator.start()
+        let deck = coordinator.deckAGraph
+
+        let testFile1 = try createTestWavFile(durationSeconds: 1.0)
+        let testFile2 = try createTestWavFile(durationSeconds: 2.0)
+        defer {
+            try? FileManager.default.removeItem(at: testFile1)
+            try? FileManager.default.removeItem(at: testFile2)
+        }
+
+        // Load first track and play
+        try deck.loadTrack(url: testFile1)
+        deck.play()
+        XCTAssertTrue(deck.masterPlayerNode.isPlaying)
+
+        // Load second track twice without stop: players must stop old schedule and reschedule cleanly
+        try deck.loadTrack(url: testFile2)
+        XCTAssertEqual(deck.masterScheduleStartSecondsForTesting, 0.0)
+
+        // Play after schedule reset
+        deck.play()
+        XCTAssertTrue(deck.masterPlayerNode.isPlaying)
+
+        // Also test CuePreviewPlayer load-twice-without-stop and play
+        let preview = coordinator.cuePreview
+        try preview.load(url: testFile1)
+        preview.play()
+        XCTAssertTrue(preview.playerNode.isPlaying)
+
+        try preview.load(url: testFile2)
+        XCTAssertEqual(preview.scheduleStartSecondsForTesting, 0.0)
+        preview.play()
+        XCTAssertTrue(preview.playerNode.isPlaying)
+    }
+
+    func testCueEngagementMatchesMasterPlayhead() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+        let deck = coordinator.deckAGraph
+
+        let testFile = try createTestWavFile(durationSeconds: 3.0)
+        defer { try? FileManager.default.removeItem(at: testFile) }
+
+        try deck.loadTrack(url: testFile)
+
+        // Seek master to 1.5s
+        deck.seek(to: 1.5)
+        XCTAssertEqual(deck.masterScheduleStartSecondsForTesting, 1.5)
+
+        // Move cue elsewhere to 0.4s
+        deck.seekCue(to: 0.4)
+        XCTAssertEqual(deck.cueScheduleStartSecondsForTesting, 0.4)
+
+        // Enable cue -> headphone copy must schedule at master playhead
+        deck.isCueActive = true
+        XCTAssertEqual(deck.cueScheduleStartSecondsForTesting, 1.5)
+
+        // Cue scrubbing independently must not affect master
+        deck.seekCue(to: 0.8)
+        XCTAssertEqual(deck.masterScheduleStartSecondsForTesting, 1.5)
+        XCTAssertEqual(deck.cueScheduleStartSecondsForTesting, 0.8)
+    }
+
+    func testDeckTransportCalledOffControlQueueExecutesOnControlQueue() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+        let deck = coordinator.deckAGraph
+
+        let testFile = try createTestWavFile(durationSeconds: 1.0)
+        defer { try? FileManager.default.removeItem(at: testFile) }
+
+        try deck.loadTrack(url: testFile)
+
+        let sema = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertFalse(coordinator.monitor.isOnControlQueue)
+
+            deck.play()
+            deck.seek(to: 0.5)
+            deck.pause()
+
+            sema.signal()
+        }
+
+        let result = sema.wait(timeout: .now() + 5.0)
+        XCTAssertEqual(result, .success)
+    }
+
+    func testCuePreviewTransportCalledOffControlQueueExecutesOnControlQueue() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+        let preview = coordinator.cuePreview
+
+        let testFile = try createTestWavFile(durationSeconds: 1.0)
+        defer { try? FileManager.default.removeItem(at: testFile) }
+
+        let sema = DispatchSemaphore(value: 0)
+        var caughtError: Error?
+        DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertFalse(coordinator.monitor.isOnControlQueue)
+
+            do {
+                try preview.load(url: testFile)
+                preview.play()
+                preview.seek(to: 0.3)
+                preview.pause()
+                preview.stop()
+            } catch {
+                caughtError = error
+            }
+            sema.signal()
+        }
+
+        let result = sema.wait(timeout: .now() + 5.0)
+        XCTAssertEqual(result, .success)
+        XCTAssertNil(caughtError)
+    }
+
+    func testSetOutputDeviceBindFailureRollsBackRunningEngine() throws {
+        let mockHAL = MockAudioHardware()
+        mockHAL.devices = [
+            MockAudioHardware.DeviceRecord(
+                id: 101,
+                uid: "device-1",
+                name: "Device 1",
+                manufacturer: "PulseDeck",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            ),
+            MockAudioHardware.DeviceRecord(
+                id: 102,
+                uid: "device-2",
+                name: "Device 2",
+                manufacturer: "PulseDeck",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+        ]
+        let monitor = OutputDeviceMonitor(hal: mockHAL)
+        let engine = OutputAudioEngine(role: .master, monitor: monitor, hal: mockHAL)
+        monitor.registerEngine(engine.rawEngine, role: .master)
+
+        // Bind first device and start engine
+        try engine.setOutputDevice(id: "device-1")
+        try engine.start()
+        XCTAssertTrue(engine.rawEngine.isRunning)
+
+        // Inject bind failure on mock HAL
+        mockHAL.setOutputDeviceError = CoreAudioError.osStatus(-50, operation: "setOutputDevice")
+
+        // Attempt to bind second device; bind throws
+        XCTAssertThrowsError(try engine.setOutputDevice(id: "device-2"))
+
+        // Engine must be running again on previous device or intended running state matches
+        XCTAssertTrue(engine.rawEngine.isRunning)
+        XCTAssertEqual(engine.currentDevice?.id, "device-1")
+    }
+
+    func testSetOutputDeviceStoresDescriptorUIDAsCurrentDeviceAndMonitorDesiredUID() throws {
+        let mockHAL = MockAudioHardware()
+        mockHAL.devices = [
+            MockAudioHardware.DeviceRecord(
+                id: 205,
+                uid: "dac-pro-uid",
+                name: "DAC Pro",
+                manufacturer: "PulseDeck",
+                outputChannels: 2,
+                sampleRate: 96000.0,
+                transportType: kAudioDeviceTransportTypeUSB
+            )
+        ]
+        let monitor = OutputDeviceMonitor(hal: mockHAL)
+        let engine = OutputAudioEngine(role: .master, monitor: monitor, hal: mockHAL)
+        monitor.registerEngine(engine.rawEngine, role: .master)
+
+        // Bind device via descriptor.id (UID)
+        try engine.setOutputDevice(id: "dac-pro-uid")
+
+        XCTAssertEqual(engine.currentDevice?.id, "dac-pro-uid")
+        XCTAssertEqual(monitor.desiredDeviceUIDForTesting(of: engine.rawEngine), "dac-pro-uid")
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine.rawEngine), "dac-pro-uid")
+        XCTAssertEqual(monitor.boundDeviceIDForTesting(of: engine.rawEngine), 205)
+
+        // Trigger enumerate failure in mock HAL
+        mockHAL.remainingSuccessfulDeviceIDQueries = 0
+
+        // Current device descriptor must remain retained and not wiped by failed enumeration
+        XCTAssertEqual(engine.currentDevice?.id, "dac-pro-uid")
+    }
+
+    func testHardwareLatencyMsReportsPresentationLatencyAndPreservesLastValueOnFailure() throws {
+        let mockHAL = MockAudioHardware()
+        mockHAL.devices = [
+            MockAudioHardware.DeviceRecord(
+                id: 301,
+                uid: "headphone-jack",
+                name: "Headphone Jack",
+                manufacturer: "PulseDeck",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+        ]
+        let monitor = OutputDeviceMonitor(hal: mockHAL)
+        let engine = OutputAudioEngine(role: .cue, monitor: monitor, hal: mockHAL)
+
+        // No device bound -> latency returns 0.0
+        XCTAssertEqual(engine.hardwareLatencyMs, 0.0)
+
+        // Bind device
+        try engine.setOutputDevice(id: "headphone-jack")
+
+        // Simulated non-zero latency (e.g. 35 ms)
+        engine.presentationLatencyProviderForTesting = {
+            0.035
+        }
+        XCTAssertEqual(engine.hardwareLatencyMs, 35.0)
+
+        // Simulated failure -> keeps last reported value and does not substitute 0
+        engine.presentationLatencyProviderForTesting = {
+            throw CoreAudioError.osStatus(-50, operation: "presentationLatency")
+        }
+        XCTAssertEqual(engine.hardwareLatencyMs, 35.0)
+    }
+
+    func testCoordinatorStartCueFailureRollsBackMasterAndStopsMonitor() throws {
+        let mockHAL = MockAudioHardware()
+        let coordinator = AudioEngineCoordinator(hal: mockHAL)
+
+        // Force cue engine start() to throw
+        coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueStart")
+
+        XCTAssertThrowsError(try coordinator.start())
+
+        // Both engines stopped and monitor stopped
+        XCTAssertFalse(coordinator.masterAudioEngine.rawEngine.isRunning)
+        XCTAssertFalse(coordinator.cueAudioEngine.rawEngine.isRunning)
+        XCTAssertFalse(coordinator.monitor.isMonitoringActive)
     }
 }

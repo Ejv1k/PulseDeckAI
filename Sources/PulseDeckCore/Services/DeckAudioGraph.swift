@@ -11,6 +11,8 @@ import AVFoundation
 /// - Pre-Fader Listen (PFL): `masterFaderNode.outputVolume` is governed by channel `volume` and `crossfaderWeight`.
 ///   `cueFaderNode.outputVolume` is governed solely by `isCueActive`, completely unaffected by master faders.
 /// - Independent Scrubbing: Headphone cue scrubbing controls `cuePlayerNode` with zero effect on live FOH playback.
+/// - Serialized Control Plane: All player transport operations hop onto `OutputDeviceMonitor.controlQueue`
+///   to prevent concurrent mutation during hotplug recovery.
 public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
     public let deckId: DeckIdentifier
@@ -43,13 +45,46 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private var _filterParameters = ResonantFilterParameters()
     private var _timePitchParameters = TimePitchParameters()
 
-    private var _currentAudioFile: AVAudioFile?
+    private var _masterAudioFile: AVAudioFile?
+    private var _cueAudioFile: AVAudioFile?
     private var _trackDurationSeconds: Double = 0.0
     private var _currentSeekPositionSeconds: Double = 0.0
     private var _cueSeekPositionSeconds: Double = 0.0
+    private var _masterScheduleStartSeconds: Double = 0.0
+    private var _cueScheduleStartSeconds: Double = 0.0
+    private var _masterSegmentQueued: Bool = false
+    private var _cueSegmentQueued: Bool = false
 
     private var _isMasterPlaying: Bool = false
     private var _isCuePlaying: Bool = false
+
+    /// Independent audio file instance scheduled on the Master player.
+    public var masterAudioFileForTesting: AVAudioFile? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _masterAudioFile
+    }
+
+    /// Independent audio file instance scheduled on the Cue player.
+    public var cueAudioFileForTesting: AVAudioFile? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _cueAudioFile
+    }
+
+    /// Starting playback time of the currently scheduled Master segment for testing verification.
+    public var masterScheduleStartSecondsForTesting: Double {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _masterScheduleStartSeconds
+    }
+
+    /// Starting playback time of the currently scheduled Cue segment for testing verification.
+    public var cueScheduleStartSecondsForTesting: Double {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _cueScheduleStartSeconds
+    }
 
     /// Initializes a new dual-engine deck audio graph.
     ///
@@ -185,16 +220,29 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             return _isCueActive
         }
         set {
-            stateLock.lock()
-            _isCueActive = newValue
-            let shouldPlayCue = newValue && _isMasterPlaying
-            stateLock.unlock()
+            executeOnControlQueue {
+                self.stateLock.lock()
+                self._isCueActive = newValue
+                let isMasterPlaying = self._isMasterPlaying
+                let cueFile = self._cueAudioFile
+                self.stateLock.unlock()
 
-            // Pre-fader listen toggle on cue engine
-            cueFaderNode.outputVolume = newValue ? 1.0 : 0.0
+                // Pre-fader listen toggle on cue engine
+                self.cueFaderNode.outputVolume = newValue ? 1.0 : 0.0
 
-            if shouldPlayCue && !cuePlayerNode.isPlaying {
-                cuePlayerNode.play()
+                if newValue {
+                    // Tap master playhead when engaging cue
+                    let tapSeconds = self.currentMasterPlayheadSeconds()
+                    if let cueFile {
+                        self.cuePlayerNode.stop()
+                        self.scheduleCueSegment(file: cueFile, startSeconds: tapSeconds)
+                    }
+                    if isMasterPlaying {
+                        self.cuePlayerNode.play()
+                    }
+                } else {
+                    self.cuePlayerNode.pause()
+                }
             }
         }
     }
@@ -263,68 +311,110 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     // MARK: - Playback Operations
 
     public func loadTrack(url: URL) throws {
-        let file = try AVAudioFile(forReading: url)
-        let sampleRate = file.processingFormat.sampleRate
-        let lengthFrames = file.length
-        let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0
+        try executeOnControlQueue {
+            // Open two distinct AVAudioFile handles from the URL to prevent cross-engine thread races.
+            let masterFile = try AVAudioFile(forReading: url)
+            let cueFile = try AVAudioFile(forReading: url)
+            let sampleRate = masterFile.processingFormat.sampleRate
+            let lengthFrames = masterFile.length
+            let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0
 
-        stateLock.lock()
-        _currentAudioFile = file
-        _trackDurationSeconds = duration
-        _currentSeekPositionSeconds = 0.0
-        _cueSeekPositionSeconds = 0.0
-        stateLock.unlock()
+            // Stop players to clear queued segments from prior loads
+            self.masterPlayerNode.stop()
+            self.cuePlayerNode.stop()
 
-        scheduleSegment(for: masterPlayerNode, file: file, startSeconds: 0.0)
-        scheduleSegment(for: cuePlayerNode, file: file, startSeconds: 0.0)
+            self.stateLock.lock()
+            self._masterAudioFile = masterFile
+            self._cueAudioFile = cueFile
+            self._trackDurationSeconds = duration
+            self._currentSeekPositionSeconds = 0.0
+            self._cueSeekPositionSeconds = 0.0
+            self._masterScheduleStartSeconds = 0.0
+            self._cueScheduleStartSeconds = 0.0
+            self._masterSegmentQueued = false
+            self._cueSegmentQueued = false
+            self._isMasterPlaying = false
+            self._isCuePlaying = false
+            self.stateLock.unlock()
+
+            self.scheduleMasterSegment(file: masterFile, startSeconds: 0.0)
+            self.scheduleCueSegment(file: cueFile, startSeconds: 0.0)
+        }
     }
 
     public func play() {
-        stateLock.lock()
-        _isMasterPlaying = true
-        let cueActive = _isCueActive
-        stateLock.unlock()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._isMasterPlaying = true
+            let cueActive = self._isCueActive
+            let masterQueued = self._masterSegmentQueued
+            let cueQueued = self._cueSegmentQueued
+            let masterFile = self._masterAudioFile
+            let cueFile = self._cueAudioFile
+            let duration = self._trackDurationSeconds
+            self.stateLock.unlock()
 
-        masterPlayerNode.play()
-        if cueActive {
-            cuePlayerNode.play()
+            // If segment completed/nothing queued, reschedule from playhead (or 0.0 if at end)
+            if !masterQueued, let masterFile {
+                var playhead = self.currentMasterPlayheadSeconds()
+                if playhead >= duration {
+                    playhead = 0.0
+                }
+                self.scheduleMasterSegment(file: masterFile, startSeconds: playhead)
+            }
+            self.masterPlayerNode.play()
+
+            if cueActive {
+                if !cueQueued, let cueFile {
+                    var playhead = self.currentCuePlayheadSeconds()
+                    if playhead >= duration {
+                        playhead = 0.0
+                    }
+                    self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
+                }
+                self.cuePlayerNode.play()
+            }
         }
     }
 
     public func pause() {
-        stateLock.lock()
-        _isMasterPlaying = false
-        stateLock.unlock()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._isMasterPlaying = false
+            self.stateLock.unlock()
 
-        masterPlayerNode.pause()
-        cuePlayerNode.pause()
+            self.masterPlayerNode.pause()
+            self.cuePlayerNode.pause()
+        }
     }
 
     public func seek(to seconds: Double) {
         guard seconds.isFinite else { return }
 
-        stateLock.lock()
-        guard let file = _currentAudioFile else {
-            stateLock.unlock()
-            return
-        }
-        let clampedSeconds = min(max(seconds, 0.0), _trackDurationSeconds)
-        _currentSeekPositionSeconds = clampedSeconds
-        _cueSeekPositionSeconds = clampedSeconds
-        let wasMasterPlaying = _isMasterPlaying
-        let cueActive = _isCueActive
-        stateLock.unlock()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            guard let masterFile = self._masterAudioFile, let cueFile = self._cueAudioFile else {
+                self.stateLock.unlock()
+                return
+            }
+            let clampedSeconds = min(max(seconds, 0.0), self._trackDurationSeconds)
+            self._currentSeekPositionSeconds = clampedSeconds
+            self._cueSeekPositionSeconds = clampedSeconds
+            let wasMasterPlaying = self._isMasterPlaying
+            let cueActive = self._isCueActive
+            self.stateLock.unlock()
 
-        masterPlayerNode.stop()
-        scheduleSegment(for: masterPlayerNode, file: file, startSeconds: clampedSeconds)
-        if wasMasterPlaying {
-            masterPlayerNode.play()
-        }
+            self.masterPlayerNode.stop()
+            self.scheduleMasterSegment(file: masterFile, startSeconds: clampedSeconds)
+            if wasMasterPlaying {
+                self.masterPlayerNode.play()
+            }
 
-        cuePlayerNode.stop()
-        scheduleSegment(for: cuePlayerNode, file: file, startSeconds: clampedSeconds)
-        if wasMasterPlaying && cueActive {
-            cuePlayerNode.play()
+            self.cuePlayerNode.stop()
+            self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
+            if wasMasterPlaying && cueActive {
+                self.cuePlayerNode.play()
+            }
         }
     }
 
@@ -334,40 +424,94 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     public func seekCue(to seconds: Double) {
         guard seconds.isFinite else { return }
 
-        stateLock.lock()
-        guard let file = _currentAudioFile else {
-            stateLock.unlock()
-            return
-        }
-        let clampedSeconds = min(max(seconds, 0.0), _trackDurationSeconds)
-        _cueSeekPositionSeconds = clampedSeconds
-        let wasCuePlaying = _isCuePlaying || (_isMasterPlaying && _isCueActive)
-        stateLock.unlock()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            guard let cueFile = self._cueAudioFile else {
+                self.stateLock.unlock()
+                return
+            }
+            let clampedSeconds = min(max(seconds, 0.0), self._trackDurationSeconds)
+            self._cueSeekPositionSeconds = clampedSeconds
+            let wasCuePlaying = self._isCuePlaying || (self._isMasterPlaying && self._isCueActive)
+            self.stateLock.unlock()
 
-        cuePlayerNode.stop()
-        scheduleSegment(for: cuePlayerNode, file: file, startSeconds: clampedSeconds)
-        if wasCuePlaying {
-            cuePlayerNode.play()
+            self.cuePlayerNode.stop()
+            self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
+            if wasCuePlaying {
+                self.cuePlayerNode.play()
+            }
         }
     }
 
     /// Plays cue preview independently in headphones.
     public func playCue() {
-        stateLock.lock()
-        _isCuePlaying = true
-        stateLock.unlock()
-        cuePlayerNode.play()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._isCuePlaying = true
+            let cueQueued = self._cueSegmentQueued
+            let cueFile = self._cueAudioFile
+            let duration = self._trackDurationSeconds
+            self.stateLock.unlock()
+
+            if !cueQueued, let cueFile {
+                var playhead = self.currentCuePlayheadSeconds()
+                if playhead >= duration {
+                    playhead = 0.0
+                }
+                self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
+            }
+            self.cuePlayerNode.play()
+        }
     }
 
     /// Pauses cue preview independently in headphones.
     public func pauseCue() {
-        stateLock.lock()
-        _isCuePlaying = false
-        stateLock.unlock()
-        cuePlayerNode.pause()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._isCuePlaying = false
+            self.stateLock.unlock()
+
+            self.cuePlayerNode.pause()
+        }
     }
 
     // MARK: - Private DSP & Routing Helpers
+
+    private func currentMasterPlayheadSeconds() -> Double {
+        stateLock.lock()
+        let scheduledStart = _masterScheduleStartSeconds
+        let duration = _trackDurationSeconds
+        stateLock.unlock()
+
+        if let nodeTime = masterPlayerNode.lastRenderTime,
+           let playerTime = masterPlayerNode.playerTime(forNodeTime: nodeTime) {
+            let sampleRate = playerTime.sampleRate
+            if sampleRate > 0.0 {
+                let elapsed = Double(playerTime.sampleTime) / sampleRate
+                let current = scheduledStart + elapsed
+                return duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+            }
+        }
+        return scheduledStart
+    }
+
+    private func currentCuePlayheadSeconds() -> Double {
+        stateLock.lock()
+        let scheduledStart = _cueScheduleStartSeconds
+        let duration = _trackDurationSeconds
+        stateLock.unlock()
+
+        if let nodeTime = cuePlayerNode.lastRenderTime,
+           let playerTime = cuePlayerNode.playerTime(forNodeTime: nodeTime) {
+            let sampleRate = playerTime.sampleRate
+            if sampleRate > 0.0 {
+                let elapsed = Double(playerTime.sampleTime) / sampleRate
+                let current = scheduledStart + elapsed
+                return duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+            }
+        }
+        return scheduledStart
+    }
 
     private func updateMasterFaderVolume() {
         stateLock.lock()
@@ -417,7 +561,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         timePitch.pitch = params.keyLockEnabled ? 0.0 : params.pitchCents
     }
 
-    private func scheduleSegment(for player: AVAudioPlayerNode, file: AVAudioFile, startSeconds: Double) {
+    private func scheduleMasterSegment(file: AVAudioFile, startSeconds: Double) {
         let sampleRate = file.processingFormat.sampleRate
         guard sampleRate > 0.0 else { return }
 
@@ -425,12 +569,55 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         guard startFrame < file.length else { return }
 
         let frameCount = AVAudioFrameCount(file.length - startFrame)
-        player.scheduleSegment(
+
+        stateLock.lock()
+        _masterScheduleStartSeconds = startSeconds
+        _masterSegmentQueued = true
+        stateLock.unlock()
+
+        masterPlayerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
-            at: nil,
-            completionHandler: nil
-        )
+            at: nil
+        ) { [weak self] in
+            self?.stateLock.lock()
+            self?._masterSegmentQueued = false
+            self?.stateLock.unlock()
+        }
+    }
+
+    private func scheduleCueSegment(file: AVAudioFile, startSeconds: Double) {
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0.0 else { return }
+
+        let startFrame = AVAudioFramePosition(startSeconds * sampleRate)
+        guard startFrame < file.length else { return }
+
+        let frameCount = AVAudioFrameCount(file.length - startFrame)
+
+        stateLock.lock()
+        _cueScheduleStartSeconds = startSeconds
+        _cueSegmentQueued = true
+        stateLock.unlock()
+
+        cuePlayerNode.scheduleSegment(
+            file,
+            startingFrame: startFrame,
+            frameCount: frameCount,
+            at: nil
+        ) { [weak self] in
+            self?.stateLock.lock()
+            self?._cueSegmentQueued = false
+            self?.stateLock.unlock()
+        }
+    }
+
+    private func executeOnControlQueue<T: Sendable>(_ block: @Sendable () throws -> T) rethrows -> T {
+        if let monitor {
+            return try monitor.performOnControlQueue(block)
+        } else {
+            return try block()
+        }
     }
 }

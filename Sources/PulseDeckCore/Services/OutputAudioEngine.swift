@@ -25,6 +25,13 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
 
     private var _currentDevice: AudioDeviceDescriptor?
     private var _currentPathDelayMs: Double = 0.0
+    private var _lastReportedHardwareLatencyMs: Double = 0.0
+
+    /// Presentation latency query closure used by tests to simulate non-zero output node latency.
+    public var presentationLatencyProviderForTesting: (@Sendable () throws -> Double)?
+
+    /// Hook for simulating engine start failure during unit testing.
+    public var startErrorForTesting: (any Error)?
 
     /// Initializes a new output-only audio engine with an isolated audio graph.
     ///
@@ -75,7 +82,37 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
     public var hardwareLatencyMs: Double {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return 0.0
+
+        // Return 0 only when no device is bound.
+        guard _currentDevice != nil else {
+            return 0.0
+        }
+
+        if let provider = presentationLatencyProviderForTesting {
+            do {
+                let seconds = try provider()
+                let ms = seconds * 1000.0
+                _lastReportedHardwareLatencyMs = ms
+                return ms
+            } catch {
+                // If query fails after a device is bound, keep the last reported value and surface the error.
+                if let coreError = error as? CoreAudioError {
+                    monitor?.reportError(coreError)
+                } else {
+                    monitor?.reportError(CoreAudioError.osStatus(OSStatus(-1), operation: "presentationLatency"))
+                }
+                return _lastReportedHardwareLatencyMs
+            }
+        }
+
+        let latencySeconds = rawEngine.outputNode.presentationLatency
+        if latencySeconds.isFinite && latencySeconds >= 0.0 {
+            let ms = latencySeconds * 1000.0
+            _lastReportedHardwareLatencyMs = ms
+            return ms
+        } else {
+            return _lastReportedHardwareLatencyMs
+        }
     }
 
     /// Current real positive path delay in milliseconds injected into this engine graph.
@@ -121,6 +158,9 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
 
     public func start() throws {
         try executeOnControlQueue {
+            if let error = self.startErrorForTesting {
+                throw error
+            }
             guard !self.rawEngine.isRunning else { return }
             try self.rawEngine.start()
             self.monitor?.setIntendedRunningState(for: self.rawEngine, running: true)
@@ -146,13 +186,12 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
 
     public func setOutputDevice(id: String) throws {
         try executeOnControlQueue {
-            let targetID: AudioDeviceID
-            if let numericID = AudioDeviceID(id) {
-                targetID = numericID
-            } else if let resolvedID = try CoreAudioOutputDevices.deviceID(forUID: id, using: self.hal) {
-                targetID = resolvedID
-            } else {
+            guard let targetID = try CoreAudioOutputDevices.deviceID(forUID: id, using: self.hal) else {
                 throw CoreAudioError.deviceNotFound(id)
+            }
+
+            guard let descriptor = try CoreAudioOutputDevices.descriptor(for: targetID, using: self.hal) else {
+                throw CoreAudioError.notAnOutputDevice(targetID)
             }
 
             let wasRunning = self.rawEngine.isRunning
@@ -160,22 +199,29 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
                 self.rawEngine.pause()
             }
 
-            try CoreAudioOutputDevices.bind(targetID, to: self.rawEngine, using: self.hal)
+            do {
+                try CoreAudioOutputDevices.bind(targetID, to: self.rawEngine, using: self.hal)
 
-            // Update cached device descriptor
-            let descriptors = (try? CoreAudioOutputDevices.enumerate(using: self.hal)) ?? []
-            let matchedDescriptor = descriptors.first { $0.id == id || $0.id == String(targetID) }
+                self.stateLock.lock()
+                self._currentDevice = descriptor
+                self.stateLock.unlock()
 
-            self.stateLock.lock()
-            self._currentDevice = matchedDescriptor
-            self.stateLock.unlock()
+                if let monitor = self.monitor {
+                    monitor.setBoundDevice(for: self.rawEngine, deviceID: targetID, uid: descriptor.id, desiredUID: descriptor.id)
+                }
 
-            if let monitor = self.monitor {
-                monitor.setBoundDeviceID(for: self.rawEngine, deviceID: targetID, desiredUID: id)
-            }
-
-            if wasRunning {
-                try self.rawEngine.start()
+                if wasRunning {
+                    try self.rawEngine.start()
+                }
+            } catch {
+                if wasRunning {
+                    do {
+                        try self.rawEngine.start()
+                    } catch {
+                        self.monitor?.setIntendedRunningState(for: self.rawEngine, running: false)
+                    }
+                }
+                throw error
             }
         }
     }

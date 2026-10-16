@@ -60,7 +60,6 @@ public struct LocalTrackAnalyzer: Sendable {
         var high = [Float](repeating: 0, count: binCount)
         let featureRate = 100.0
         let featureCount = min(2_160_000, max(1, Int(ceil(duration * featureRate))))
-        let featureStride = max(1, Int(ceil(Double(frameCount) / Double(featureCount))))
         var envelope = [Float](repeating: 0, count: featureCount)
         var envelopeCounts = [Int](repeating: 0, count: featureCount)
         var mono = [Float](repeating: 0, count: Int(chunkFrames))
@@ -69,6 +68,8 @@ public struct LocalTrackAnalyzer: Sendable {
             throw LocalAnalysisError.invalidAudioFormat
         }
         var frameOffset: Int64 = 0
+        var envelopeFeatureIndex = 0
+        var nextFeatureBoundary = Int64(ceil(sampleRate / featureRate))
         var lowState = 0.0
         var upperState = 0.0
         let lowAlpha = Float(min(1, 2 * Double.pi * 250 / sampleRate))
@@ -88,6 +89,10 @@ public struct LocalTrackAnalyzer: Sendable {
 
             for i in 0..<count {
                 let absoluteFrame = Int(frameOffset) + i
+                while envelopeFeatureIndex + 1 < featureCount && Int64(absoluteFrame) >= nextFeatureBoundary {
+                    envelopeFeatureIndex += 1
+                    nextFeatureBoundary = Int64(ceil(Double(envelopeFeatureIndex + 1) * sampleRate / featureRate))
+                }
                 let bin = min(binCount - 1, absoluteFrame * binCount / Int(frameCount))
                 let value = Double(mono[i])
                 guard value.isFinite else { throw LocalAnalysisError.invalidMetadata }
@@ -101,9 +106,8 @@ public struct LocalTrackAnalyzer: Sendable {
                 low[bin] = max(low[bin], lowValue)
                 mid[bin] = max(mid[bin], midValue)
                 high[bin] = max(high[bin], highValue)
-                let featureIndex = min(featureCount - 1, absoluteFrame / featureStride)
-                envelope[featureIndex] += magnitude * magnitude
-                envelopeCounts[featureIndex] += 1
+                envelope[envelopeFeatureIndex] += magnitude * magnitude
+                envelopeCounts[envelopeFeatureIndex] += 1
             }
             frameOffset += Int64(count)
         }
@@ -112,8 +116,8 @@ public struct LocalTrackAnalyzer: Sendable {
         }
 
         let onset = onsetStrength(from: envelope)
-        let tempo = estimateTempo(onsets: onset)
-        let activeRange = activeBounds(envelope)
+        let tempo = estimateTempo(onsets: onset, featureRate: featureRate)
+        let activeRange = activeBounds(envelope, featureRate: featureRate)
         let cues = estimateCues(duration: duration, active: activeRange)
         let timestamps = tempo.beatIntervalSeconds > 0
             ? makeBeatTimestamps(duration: duration, offset: tempo.offset, interval: tempo.beatIntervalSeconds)
@@ -158,12 +162,12 @@ public struct LocalTrackAnalyzer: Sendable {
         return result
     }
 
-    private func estimateTempo(onsets: [Float]) -> (bpm: Double, confidence: Double, offset: Double, beatIntervalSeconds: Double) {
+    private func estimateTempo(onsets: [Float], featureRate: Double) -> (bpm: Double, confidence: Double, offset: Double, beatIntervalSeconds: Double) {
         guard onsets.count >= 300, (onsets.max() ?? 0) > 0 else { return (0, 0, 0, 0) }
-        let rate = 100.0
+        guard featureRate.isFinite, featureRate > 0 else { return (0, 0, 0, 0) }
         var candidates: [(Double, Double, Int)] = []
         for bpm in stride(from: 200.0, through: 60.0, by: -1.0) {
-            let lag = Int((60.0 / bpm * rate).rounded())
+            let lag = Int((60.0 / bpm * featureRate).rounded())
             guard lag > 0, lag < onsets.count / 2 else { continue }
             var score = 0.0
             var norm = 0.0
@@ -173,26 +177,48 @@ public struct LocalTrackAnalyzer: Sendable {
         guard let best = candidates.max(by: { $0.1 < $1.1 }), best.1 > 0.03 else { return (0, 0, 0, 0) }
         let next = candidates.filter { abs($0.0 - best.0) > 3 }.map(\.1).max() ?? 0
         let confidence = min(0.6, max(0.05, (best.1 - next) / max(0.001, best.1) * 0.6))
-        let period = best.2
-        let beatIntervalSeconds = Double(period) / rate
-        var bestPhase = 0
+        let previousScore = autocorrelationScore(lag: best.2 - 1, onsets: onsets)
+        let nextScore = autocorrelationScore(lag: best.2 + 1, onsets: onsets)
+        let curvature = previousScore - 2 * best.1 + nextScore
+        let fractionalOffset = curvature < -0.000_001
+            ? min(0.5, max(-0.5, 0.5 * (previousScore - nextScore) / curvature))
+            : 0
+        let period = Double(best.2) + fractionalOffset
+        let beatIntervalSeconds = period / featureRate
+        var bestPhase = 0.0
         var phaseScore = -Double.infinity
-        for phase in 0..<min(period, onsets.count) {
+        for phase in 0..<min(Int(ceil(period)), onsets.count) {
             var score = 0.0
-            var i = phase
-            while i < onsets.count { score += Double(onsets[i]); i += period }
-            if score > phaseScore { phaseScore = score; bestPhase = phase }
+            var position = Double(phase)
+            while position < Double(onsets.count) {
+                let index = min(onsets.count - 1, Int(position.rounded()))
+                score += Double(onsets[index])
+                position += period
+            }
+            if score > phaseScore { phaseScore = score; bestPhase = Double(phase) }
         }
-        return (60.0 / beatIntervalSeconds, confidence, Double(bestPhase) / rate, beatIntervalSeconds)
+        return (60.0 / beatIntervalSeconds, confidence, Double(bestPhase) / featureRate, beatIntervalSeconds)
     }
 
-    private func activeBounds(_ envelope: [Float]) -> (Double, Double) {
+    private func autocorrelationScore(lag: Int, onsets: [Float]) -> Double {
+        guard lag > 0, lag < onsets.count else { return 0 }
+        var score = 0.0
+        var norm = 0.0
+        for index in lag..<onsets.count {
+            score += Double(onsets[index] * onsets[index - lag])
+            norm += Double(onsets[index] * onsets[index])
+        }
+        return norm > 0 ? score / norm : 0
+    }
+
+    private func activeBounds(_ envelope: [Float], featureRate: Double) -> (Double, Double) {
+        guard featureRate.isFinite, featureRate > 0 else { return (0, 0) }
         guard let maximum = envelope.max(), maximum > 0 else { return (0, 0) }
         let threshold = max(0.000_001, maximum * 0.08)
         guard let first = envelope.firstIndex(where: { $0 >= threshold }), let last = envelope.lastIndex(where: { $0 >= threshold }) else {
             return (0, 0)
         }
-        return (Double(first) / 100, Double(last + 1) / 100)
+        return (Double(first) / featureRate, Double(last + 1) / featureRate)
     }
 
     private func estimateCues(duration: Double, active: (Double, Double)) -> (start: Double, vocal: Double, mixOut: Double, end: Double) {

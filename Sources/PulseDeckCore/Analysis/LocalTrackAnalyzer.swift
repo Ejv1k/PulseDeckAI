@@ -115,7 +115,9 @@ public struct LocalTrackAnalyzer: Sendable {
         let tempo = estimateTempo(onsets: onset)
         let activeRange = activeBounds(envelope)
         let cues = estimateCues(duration: duration, active: activeRange)
-        let timestamps = tempo.bpm > 0 ? makeBeatTimestamps(duration: duration, offset: tempo.offset, interval: 60.0 / tempo.bpm) : []
+        let timestamps = tempo.beatIntervalSeconds > 0
+            ? makeBeatTimestamps(duration: duration, offset: tempo.offset, interval: tempo.beatIntervalSeconds)
+            : []
         let attributes = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         guard let fileSize = attributes.fileSize, fileSize >= 0, let modified = attributes.contentModificationDate else {
             throw LocalAnalysisError.invalidMetadata
@@ -137,7 +139,7 @@ public struct LocalTrackAnalyzer: Sendable {
             musicalKey: "Unknown",
             confidence: confidence,
             waveformMetadata: WaveformMetadata(sampleCount: Int(frameCount), downsampleFactor: max(1, Int(frameCount) / binCount), peakValues: waveform, lowBandPeaks: low, midBandPeaks: mid, highBandPeaks: high),
-            beatGrid: BeatGrid(firstBeatOffsetSeconds: tempo.offset, beatIntervalSeconds: tempo.bpm > 0 ? 60.0 / tempo.bpm : 0, beatTimestamps: timestamps),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: tempo.offset, beatIntervalSeconds: tempo.beatIntervalSeconds, beatTimestamps: timestamps),
             structure: TrackStructure(sections: [], vocalSegments: []),
             cueMarkers: cuesMarkers,
             analyzerVersion: Self.analyzerVersion,
@@ -156,8 +158,8 @@ public struct LocalTrackAnalyzer: Sendable {
         return result
     }
 
-    private func estimateTempo(onsets: [Float]) -> (bpm: Double, confidence: Double, offset: Double) {
-        guard onsets.count >= 300, (onsets.max() ?? 0) > 0 else { return (0, 0, 0) }
+    private func estimateTempo(onsets: [Float]) -> (bpm: Double, confidence: Double, offset: Double, beatIntervalSeconds: Double) {
+        guard onsets.count >= 300, (onsets.max() ?? 0) > 0 else { return (0, 0, 0, 0) }
         let rate = 100.0
         var candidates: [(Double, Double, Int)] = []
         for bpm in stride(from: 200.0, through: 60.0, by: -1.0) {
@@ -168,10 +170,11 @@ public struct LocalTrackAnalyzer: Sendable {
             for index in lag..<onsets.count { score += Double(onsets[index] * onsets[index - lag]); norm += Double(onsets[index] * onsets[index]) }
             candidates.append((bpm, norm > 0 ? score / norm : 0, lag))
         }
-        guard let best = candidates.max(by: { $0.1 < $1.1 }), best.1 > 0.03 else { return (0, 0, 0) }
+        guard let best = candidates.max(by: { $0.1 < $1.1 }), best.1 > 0.03 else { return (0, 0, 0, 0) }
         let next = candidates.filter { abs($0.0 - best.0) > 3 }.map(\.1).max() ?? 0
         let confidence = min(0.6, max(0.05, (best.1 - next) / max(0.001, best.1) * 0.6))
         let period = best.2
+        let beatIntervalSeconds = Double(period) / rate
         var bestPhase = 0
         var phaseScore = -Double.infinity
         for phase in 0..<min(period, onsets.count) {
@@ -180,7 +183,7 @@ public struct LocalTrackAnalyzer: Sendable {
             while i < onsets.count { score += Double(onsets[i]); i += period }
             if score > phaseScore { phaseScore = score; bestPhase = phase }
         }
-        return (best.0, confidence, Double(bestPhase) / rate)
+        return (60.0 / beatIntervalSeconds, confidence, Double(bestPhase) / rate, beatIntervalSeconds)
     }
 
     private func activeBounds(_ envelope: [Float]) -> (Double, Double) {

@@ -28,15 +28,16 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let track = fixture.root.appendingPathComponent("01_House/clicks.wav")
         try FileManager.default.createDirectory(at: track.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try writeAudio(track, duration: 12) { time in
+        try writeAudio(track, duration: 120) { time in
             let beatPosition = (time * 2).truncatingRemainder(dividingBy: 1)
             return beatPosition < 0.008 ? 0.9 : 0
         }
 
         let entry = try LocalTrackAnalyzer().analyze(url: track, libraryRoot: fixture.root)
-        XCTAssertEqual(entry.bpm, 120, accuracy: 2)
+        XCTAssertEqual(entry.bpm, 120, accuracy: 1e-9)
         XCTAssertFalse(entry.beatGrid.beatTimestamps.isEmpty)
-        XCTAssertEqual(entry.beatGrid.beatIntervalSeconds, 0.5, accuracy: 0.02)
+        XCTAssertEqual(entry.beatGrid.beatIntervalSeconds, 0.5, accuracy: 1e-12)
+        XCTAssertEqual(try XCTUnwrap(entry.beatGrid.beatTimestamps.last), 119.5, accuracy: 0.01)
         XCTAssertTrue(entry.confidence.isFinite && (0...1).contains(entry.confidence))
     }
 

@@ -22,6 +22,8 @@ public enum LocalAnalysisError: Error, LocalizedError, Equatable {
 
 /// Offline signal analysis. Vocal-entry cue is a low-confidence structural estimate, not voice recognition.
 /// The cache confidence field reports heuristic tempo evidence only and is capped at 0.6.
+/// Unknown tempo uses BPM 0, confidence 0 and no beat timestamps. Schema 1.0.0 requires a
+/// positive interval, so an empty grid carries a neutral 1-second interval with no rhythmic meaning.
 public struct LocalTrackAnalyzer: Sendable {
     public static let analyzerVersion = "local-dsp-1"
     private let waveformBinLimit = 4_096
@@ -122,6 +124,7 @@ public struct LocalTrackAnalyzer: Sendable {
         let timestamps = tempo.beatIntervalSeconds > 0
             ? makeBeatTimestamps(duration: duration, offset: tempo.offset, interval: tempo.beatIntervalSeconds)
             : []
+        let persistedBeatInterval = tempo.bpm > 0 ? tempo.beatIntervalSeconds : 1.0
         let attributes = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         guard let fileSize = attributes.fileSize, fileSize >= 0, let modified = attributes.contentModificationDate else {
             throw LocalAnalysisError.invalidMetadata
@@ -150,7 +153,7 @@ public struct LocalTrackAnalyzer: Sendable {
             musicalKey: "Unknown",
             confidence: confidence,
             waveformMetadata: WaveformMetadata(sampleCount: Int(frameCount), downsampleFactor: max(1, Int(frameCount) / binCount), peakValues: waveform, lowBandPeaks: low, midBandPeaks: mid, highBandPeaks: high),
-            beatGrid: BeatGrid(firstBeatOffsetSeconds: tempo.offset, beatIntervalSeconds: tempo.beatIntervalSeconds, beatTimestamps: timestamps),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: tempo.offset, beatIntervalSeconds: persistedBeatInterval, beatTimestamps: timestamps),
             structure: TrackStructure(sections: [], vocalSegments: []),
             cueMarkers: cuesMarkers,
             analyzerVersion: Self.analyzerVersion,

@@ -6,13 +6,13 @@ import XCTest
 final class LocalTrackAnalyzerTests: XCTestCase {
     private let sampleRate = 8_000.0
 
-    func testSilenceProducesValidBoundedCuesAndNoTempo() throws {
+    func testSilenceProducesValidBoundedCuesAndNoTempo() async throws {
         let fixture = try makeLibrary()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let track = fixture.root.appendingPathComponent("00_Test_Tracks_Dev/silence.wav")
         try writeAudio(track, duration: 4) { _ in 0 }
 
-        let entry = try LocalTrackAnalyzer().analyze(url: track, libraryRoot: fixture.root)
+        let entry = try await LibraryAnalysisService(libraryRoot: fixture.root).analyzeTrack(at: track)
         XCTAssertEqual(entry.bpm, 0)
         XCTAssertEqual(entry.duration, 4, accuracy: 0.001)
         XCTAssertEqual(entry.sampleRate, sampleRate)
@@ -21,6 +21,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertTrue(entry.cueMarkers.isValid(forDuration: entry.duration))
         XCTAssertEqual(entry.waveformMetadata.peakValues.count, 80)
         XCTAssertEqual(entry.confidence, 0)
+        try assertUnknownTempoContract(entry, libraryRoot: fixture.root)
     }
 
     func testClickTrackEstimatesTempoAndBeatGrid() throws {
@@ -39,6 +40,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertEqual(entry.beatGrid.beatIntervalSeconds, 0.5, accuracy: 1e-12)
         XCTAssertEqual(try XCTUnwrap(entry.beatGrid.beatTimestamps.last), 119.5, accuracy: 0.01)
         XCTAssertTrue(entry.confidence.isFinite && (0...1).contains(entry.confidence))
+        try SharedCacheContract().validate(entry: entry)
     }
 
     func testNonIntegralFeatureRateKeepsBeatGridAndActiveEndAligned() throws {
@@ -56,6 +58,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertEqual(entry.beatGrid.beatIntervalSeconds, 0.5, accuracy: 0.0005)
         XCTAssertEqual(try XCTUnwrap(entry.beatGrid.beatTimestamps.last), 299.5, accuracy: 0.02)
         XCTAssertEqual(entry.cueMarkers.endTrimCue, 299.508, accuracy: 0.02)
+        try SharedCacheContract().validate(entry: entry)
     }
 
     func testCompressedAACUsesDecodedBitDepthAndPersistsValidCache() async throws {
@@ -69,6 +72,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
         let cache = try XCTUnwrap(CachePersistence.load(from: cacheURL))
         XCTAssertNoThrow(try cache.validate())
+        try SharedCacheContract().validate(data: Data(contentsOf: cacheURL))
     }
 
     func testRejectsOutsideLibraryAndCorruptInput() throws {
@@ -91,15 +95,16 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertThrowsError(try LocalTrackAnalyzer().analyze(url: track, libraryRoot: fixture.root))
     }
 
-    func testShortToneHasNoTempoEstimate() throws {
+    func testShortToneHasNoTempoEstimate() async throws {
         let fixture = try makeLibrary()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let track = fixture.root.appendingPathComponent("00_Test_Tracks_Dev/short.wav")
         try writeAudio(track, duration: 1) { time in Float(sin(2 * .pi * 440 * time) * 0.3) }
-        let entry = try LocalTrackAnalyzer().analyze(url: track, libraryRoot: fixture.root)
+        let entry = try await LibraryAnalysisService(libraryRoot: fixture.root).analyzeTrack(at: track)
         XCTAssertEqual(entry.bpm, 0)
         XCTAssertEqual(entry.confidence, 0)
         XCTAssertTrue(entry.cueMarkers.isValid(forDuration: entry.duration))
+        try assertUnknownTempoContract(entry, libraryRoot: fixture.root)
     }
 
     func testCategoryParserUsesCrateConventionAndRejectsEscape() throws {
@@ -116,6 +121,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         try writeAudio(track, duration: 6) { time in Float(sin(2 * .pi * 440 * time) * 0.3) }
         let service = LibraryAnalysisService(libraryRoot: fixture.root)
         let first = try await service.analyzeTrack(at: track)
+        try SharedCacheContract().validate(entry: first)
         var cache = try XCTUnwrap(CachePersistence.load(from: fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)))
         XCTAssertNoThrow(try cache.validate())
         cache.tracks[first.relativePath]?.cueMarkers = CueMarkers(startTrimCue: 0.2, vocalEntryCue: 1, mixOutCue: 4, endTrimCue: 5.8)
@@ -128,6 +134,7 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertEqual(second.cueMarkers.startTrimCue, 0.2)
         XCTAssertTrue(second.manualOverrides.isManual)
         XCTAssertNoThrow(try XCTUnwrap(CachePersistence.load(from: fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))).validate())
+        try SharedCacheContract().validate(data: Data(contentsOf: fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)))
     }
 
     func testServiceDoesNotOverwriteInvalidExistingCache() async throws {
@@ -147,6 +154,33 @@ final class LocalTrackAnalyzerTests: XCTestCase {
             XCTAssertEqual(error, .invalidExistingCache)
         }
         XCTAssertEqual(try Data(contentsOf: cacheURL), invalidData)
+    }
+
+    private func assertUnknownTempoContract(_ entry: TrackCacheEntry, libraryRoot: URL) throws {
+        XCTAssertEqual(entry.bpm, 0)
+        XCTAssertEqual(entry.confidence, 0)
+        XCTAssertEqual(entry.beatGrid.firstBeatOffsetSeconds, 0)
+        XCTAssertTrue(entry.beatGrid.beatTimestamps.isEmpty)
+        // Schema 1.0.0 reserves a positive interval even when this empty grid has no detected rhythm.
+        XCTAssertEqual(entry.beatGrid.beatIntervalSeconds, 1)
+        let cacheURL = libraryRoot.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let cache = try XCTUnwrap(CachePersistence.load(from: cacheURL))
+        XCTAssertEqual(cache.schemaVersion, "1.0.0")
+        XCTAssertEqual(cache.tracks[entry.relativePath], entry)
+        let contract = try SharedCacheContract()
+        let saved = try Data(contentsOf: cacheURL)
+        try contract.validate(data: saved)
+
+        // Prove the actual schema rejects the old representation, beyond Swift's looser validator.
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        var tracks = try XCTUnwrap(document["tracks"] as? [String: [String: Any]])
+        var track = try XCTUnwrap(tracks[entry.relativePath])
+        var grid = try XCTUnwrap(track["beatGrid"] as? [String: Any])
+        grid["beatIntervalSeconds"] = 0
+        track["beatGrid"] = grid
+        tracks[entry.relativePath] = track
+        document["tracks"] = tracks
+        XCTAssertThrowsError(try contract.validate(data: JSONSerialization.data(withJSONObject: document)))
     }
 
     private func makeLibrary() throws -> (root: URL, crate: URL) {

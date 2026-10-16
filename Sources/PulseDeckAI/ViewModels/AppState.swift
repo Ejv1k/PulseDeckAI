@@ -10,11 +10,24 @@ public final class AppState: ObservableObject {
     @Published public var selectedCrate: LibraryCrateInfo?
     @Published public var isScanning: Bool = false
     @Published public var statusMessage: String = "Phase 0 Operational Shell Initialized"
+    @Published public private(set) var meteringErrorMessage: String?
+    private let audioCoordinator: AudioEngineCoordinator
+    private let audioMetering: AudioMeteringService
 
     private let scanner = LibraryScanner()
     private var scanGeneration: UInt64 = 0
 
     public init() {
+        let coordinator = AudioEngineCoordinator()
+        self.audioCoordinator = coordinator
+        let metering = AudioMeteringService(coordinator: coordinator)
+        self.audioMetering = metering
+        do {
+            try metering.start()
+        } catch {
+            meteringErrorMessage = "Audio meters unavailable: \(error)"
+        }
+
         // Resolve library folder relative to current working directory or bundle
         let cwd = FileManager.default.currentDirectoryPath
         let defaultURL = URL(fileURLWithPath: cwd).appendingPathComponent(PulseDeckCoreConfig.defaultLibraryFolderName)
@@ -68,5 +81,10 @@ public final class AppState: ObservableObject {
     /// Selects a crate for viewing.
     public func selectCrate(_ crate: LibraryCrateInfo) {
         self.selectedCrate = crate
+    }
+
+    /// Reads the newest output meter on the control queue; callers stay on MainActor.
+    public func meterSnapshot(for role: AudioEngineRole) -> AudioMeterSnapshot? {
+        audioMetering.drainLatest(for: role)
     }
 }

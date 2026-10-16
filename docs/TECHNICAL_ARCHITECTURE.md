@@ -198,12 +198,17 @@ The CoreAudio real-time render thread operates under strict hard-deadline schedu
 | **Direct UI or Actor Messaging** | Hopping to `@MainActor` or posting Combine notifications blocks real-time execution. |
 
 ### 5.2 Lock-Free Inter-Thread Communication
-1. **Single-Producer Single-Consumer (SPSC) Ring Buffers:**
-   Metering peak/RMS levels and playhead position timestamps are pushed from the render thread into pre-allocated, power-of-two bounded circular buffers using memory fences (`acquire`/`release` semantics).
+1. **Meter SPSC Ring Buffers:**
+   Master and Cue output taps each write to a separate, fixed 32-record C11 SPSC ring. Each record carries RMS, peak, a 512-bin spectrum, sample rate, host time, frame count, and FFT size. Release/acquire cursors publish complete records; when full, the producer drops the newest record and increments a dropped-record counter. Startup refuses the ring if its cursor atomics are not lock-free.
 2. **Atomic Scalar Transfers:**
    Volume coefficients, crossfader positions, filter cutoff frequencies, and transport commands are read atomically using Swift `Atomic` / C++ `std::atomic` values without locking.
 3. **Meter Dequeuing:**
-   The `@MainActor` UI polls or drains the SPSC buffer on display frame refreshes ($60\text{--}120\,\text{Hz}$ ProMotion), bounding UI consumption overhead.
+   The UI drains each role on the control queue at 30 Hz and receives an immutable `Sendable` snapshot. Swift spectrum-array allocation happens after dequeue, off the render thread.
+
+### 5.3 Output Meter Format, DSP, and Lifetime
+Meter taps attach only to the master and cue output submixers. They never read `inputNode`, start an engine, or start track playback. Startup validates Float32, mono/stereo output at 8–192 kHz, then allocates each ring, vDSP FFT setup, window, and scratch buffer before installing taps. The 1024-point FFT zero-pads shorter callbacks; its Hann-windowed mono input averages stereo channels, while RMS is normalized across all frames and channels and peak is the greatest absolute channel sample. Spectrum values are linear amplitudes, normalized by FFT size without Hann coherent-gain correction; bin `i` is `i × sampleRate / 1024` Hz, for bins 0–511.
+
+Every callback uses the buffer's current sample rate and frame count. Unsupported channel layouts, non-finite rates, and callbacks larger than 4096 frames are dropped without changing storage; non-finite samples become zero. Tap removal runs on the audio control queue after pausing engines that were running. Rings and FFT setup remain alive until taps are removed, then engines resume only if they were running before the removal. Existing output-engine configuration recovery retains taps and processes the recovered graph's reported format on its next callback. Offline DSP and ring behavior are tested without audible playback; physical device and Bluetooth timing are not verified by those tests.
 
 ---
 

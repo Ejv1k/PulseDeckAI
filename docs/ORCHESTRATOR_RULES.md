@@ -65,6 +65,29 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 
 9. **Always-Approve / Unattended:** Enable always-approve / unattended mode where possible so you do not stop for routine confirmations.
 
+### D. WAKEUP, IMMEDIATE CALLBACKS & BOUNDED REARM PROTOCOL
+
+1. **Target Session Identification:**
+   - Active Orchestrator session for this run is `pulsedeckai-7`.
+   - Future sessions must dynamically discover their active orchestrator session ID via `ao orchestrator ls` rather than hardcoding stale session identifiers.
+   - Every worker/reviewer task prompt must explicitly include reporting on every milestone/completion with the target orchestrator session ID.
+
+2. **Immediate Wakeup Delivery (`ao report` + `ao send` Pair):**
+   - Ordinary information in `ao report` batches up to 1 hour; completion notifications (`--done`) batch up to 5 minutes. Merely mentioning a session in an ordinary `ao report` does **NOT** force immediate routing.
+   - For every meaningful milestone, run `ao report "<status>; orchestrator=<orchestrator-id>"` **AND** immediately send direct notification: `ao send --session <orchestrator-id> --message "<status>; required next action; PR/head/verdict"`.
+   - Before ANY blocked state, clarification, or input request: execute `ao report --needs-input --note "<exact question/blocker + options + recommended action>; orchestrator=<orchestrator-id>"` **AND** `ao send --session <orchestrator-id> --message "<exact question/blocker + recommended action + PR/head>"`. Do both BEFORE yielding turn.
+   - If work is stuck, run `ao report --stuck --note "<blocker>; orchestrator=<orchestrator-id>"` **AND** direct `ao send`.
+   - On completion of a phase or sub-block, run `ao report --done "<status>; orchestrator=<orchestrator-id>"` **AND** direct `ao send`.
+
+3. **Reviewer & Subagent Continuity:**
+   - Include these reporting instructions in every native reviewer / worker prompt context. If external reviewers cannot execute direct callbacks, the worker session must notify the orchestrator immediately when the verdict is observed.
+   - Keep `autoReview` enabled project-wide without overwriting global project configurations.
+
+4. **Bounded Fallback & Zero Polling Invariant:**
+   - Never run polling loops or sleep commands.
+   - Orchestrator rearms a single self-disabling 10-minute fallback automation only while active pending work remains. The fallback runs once, takes a status snapshot, sends direct `ao send` to the orchestrator, and disables itself. Workers must not alter this automation.
+   - Routine permissions (commit, push, PR, verified merge within authorized scope) are pre-authorized; never pause for routine permission confirmations. Genuine policy or branch-protection failures must be reported immediately with the exact rejection.
+
 ---
 
 ## 1. TARGET HARDWARE & TECH STACK (REFERENCE)

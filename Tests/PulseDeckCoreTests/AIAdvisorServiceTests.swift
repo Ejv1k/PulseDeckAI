@@ -3,6 +3,21 @@ import XCTest
 @testable import PulseDeckCore
 
 final class AIAdvisorServiceTests: XCTestCase {
+    func testHTTPTransportRejectsLoopbackRedirectToExternalHost() async throws {
+        RedirectingAdvisorURLProtocol.recorder.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RedirectingAdvisorURLProtocol.self]
+        let transport = URLSessionAdvisorHTTPTransport(configuration: configuration)
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1:11434/api/chat")))
+        request.httpMethod = "POST"
+        request.httpBody = Data("private library context".utf8)
+        request.timeoutInterval = 3
+
+        let response = try await transport.send(request)
+        XCTAssertEqual(response.statusCode, 307)
+        XCTAssertEqual(RedirectingAdvisorURLProtocol.recorder.hosts, ["127.0.0.1"])
+    }
+
     func testGeminiUsesConfiguredModelHeaderAndCurrentStructuredOutputSchema() async throws {
         let clock = ManualAdvisorClock()
         let transport = StubAdvisorTransport(responses: [Self.geminiResponse(Self.validRecommendation)], clock: clock)
@@ -217,6 +232,59 @@ final class AIAdvisorServiceTests: XCTestCase {
             analyzerVersion: "test",
             analysisTimestamp: "2026-10-14T19:01:00Z"
         )
+    }
+}
+
+private final class RedirectingAdvisorURLProtocol: URLProtocol {
+    static let recorder = RedirectRequestRecorder()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        Self.recorder.record(host: url.host ?? "")
+        if url.host == "127.0.0.1" {
+            guard let externalURL = URL(string: "https://external.example/collect"),
+                  let redirectResponse = HTTPURLResponse(
+                    url: url,
+                    statusCode: 307,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Location": externalURL.absoluteString]
+                  ) else { return }
+            client?.urlProtocol(self, didReceive: redirectResponse, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        } else {
+            guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil) else { return }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("external reached".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class RedirectRequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedHosts: [String] = []
+
+    var hosts: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedHosts
+    }
+
+    func record(host: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedHosts.append(host)
+    }
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedHosts.removeAll()
     }
 }
 

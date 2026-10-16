@@ -13,9 +13,16 @@ protocol AdvisorHTTPTransport: Sendable {
 
 struct URLSessionAdvisorHTTPTransport: AdvisorHTTPTransport {
     let session: URLSession
+    private let redirectDelegate: RedirectRejectingURLSessionDelegate
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    init(configuration: URLSessionConfiguration = .ephemeral) {
+        let redirectDelegate = RedirectRejectingURLSessionDelegate()
+        self.redirectDelegate = redirectDelegate
+        self.session = URLSession(
+            configuration: configuration,
+            delegate: redirectDelegate,
+            delegateQueue: nil
+        )
     }
 
     func send(_ request: URLRequest) async throws -> AdvisorHTTPResponse {
@@ -29,6 +36,18 @@ struct URLSessionAdvisorHTTPTransport: AdvisorHTTPTransport {
             headers[key.lowercased()] = String(describing: value)
         }
         return AdvisorHTTPResponse(statusCode: response.statusCode, headers: headers, body: body)
+    }
+}
+
+private final class RedirectRejectingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 

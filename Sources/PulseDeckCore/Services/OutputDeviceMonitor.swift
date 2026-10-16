@@ -380,6 +380,13 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         DispatchQueue.getSpecific(key: controlQueueKey) == Self.controlQueueToken
     }
 
+    /// Executes a synchronous operation on the monitor's private serialized control queue.
+    ///
+    /// If the calling context is already executing on the control queue, `body` is invoked directly inline.
+    public func performOnControlQueue<T: Sendable>(_ body: () throws -> T) rethrows -> T {
+        try syncControl(body)
+    }
+
     private func syncControl<T: Sendable>(_ body: () throws -> T) rethrows -> T {
         if isOnControlQueue {
             return try body()

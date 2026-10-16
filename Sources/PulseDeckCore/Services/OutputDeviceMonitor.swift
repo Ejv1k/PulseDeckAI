@@ -173,6 +173,9 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     ///   - desiredDeviceUID: Optional preferred device UID string.
     ///   - boundDeviceID: Optional initial bound `AudioDeviceID`.
     ///   - boundDeviceUID: Optional initial bound device UID string. When omitted, the UID is read from `boundDeviceID`.
+    ///     A thrown read on an engine that is already registered leaves the previous ID and UID unchanged and
+    ///     reports the error. The new ID is stored only together with a resolved UID. Both are cleared only
+    ///     when the caller passes nil for both. A first registration still stores the numeric ID with a nil UID.
     public func registerEngine(
         _ engine: AVAudioEngine,
         role: AudioEngineRole,
@@ -190,13 +193,17 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
 
             if let existing = self.registeredEngines.first(where: { $0.engine === engine }) {
                 existing.desiredDeviceUID = desiredDeviceUID
-                existing.boundDeviceID = boundDeviceID
-                if let uid = resolvedBoundUID.uid {
-                    existing.boundDeviceUID = uid
-                } else if boundDeviceUID == nil && boundDeviceID == nil {
-                    existing.boundDeviceUID = nil
-                }
                 existing.intendedRunningState = engine.isRunning
+                // A thrown UID read must not pair the new numeric ID with the previous UID.
+                // Apply the new ID only together with the resolved UID. Clear both only when
+                // the caller passes nil for both. Otherwise keep the binding recovery already has.
+                if boundDeviceUID == nil && boundDeviceID == nil {
+                    existing.boundDeviceID = nil
+                    existing.boundDeviceUID = nil
+                } else if let uid = resolvedBoundUID.uid {
+                    existing.boundDeviceID = boundDeviceID
+                    existing.boundDeviceUID = uid
+                }
                 return resolvedBoundUID.events
             }
 
@@ -357,6 +364,13 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     func boundDeviceUIDForTesting(of engine: AVAudioEngine) -> String? {
         syncControl {
             self.registeredEngines.first { $0.engine === engine }?.boundDeviceUID
+        }
+    }
+
+    /// Returns the numeric ID stored for `engine`, or `nil` when that engine is not registered or unbound.
+    func boundDeviceIDForTesting(of engine: AVAudioEngine) -> AudioDeviceID? {
+        syncControl {
+            self.registeredEngines.first { $0.engine === engine }?.boundDeviceID
         }
     }
 

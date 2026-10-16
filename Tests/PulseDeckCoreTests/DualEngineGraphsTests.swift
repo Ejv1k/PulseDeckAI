@@ -5,6 +5,62 @@ import CoreAudio
 
 final class DualEngineGraphsTests: XCTestCase {
 
+    func testStaleDeckCompletionsCannotClearReplacementSchedules() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let deck = coordinator.deckAGraph
+        let masterCallbacks = TestBox<[@Sendable () -> Void]>([])
+        let cueCallbacks = TestBox<[@Sendable () -> Void]>([])
+        deck.segmentCompletionObserverForTesting = { role, completion in
+            switch role {
+            case .master: masterCallbacks.value = masterCallbacks.value + [completion]
+            case .cue: cueCallbacks.value = cueCallbacks.value + [completion]
+            }
+        }
+        let url = try createTestWavFile(durationSeconds: 3)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try deck.loadTrack(url: url)
+        let originalMaster = try XCTUnwrap(masterCallbacks.value.first)
+        let originalCue = try XCTUnwrap(cueCallbacks.value.first)
+        deck.seek(to: 0.5)
+
+        // Deliver callbacks captured from the actual old schedules after seek has queued replacements.
+        originalMaster()
+        originalCue()
+        deck.isCueActive = true
+        originalCue()
+        let masterCount = masterCallbacks.value.count
+        let cueCount = cueCallbacks.value.count
+        deck.play()
+        XCTAssertEqual(masterCallbacks.value.count, masterCount, "Stale master completion must not cause duplicate scheduling")
+        XCTAssertEqual(cueCallbacks.value.count, cueCount, "Stale cue completion must not cause duplicate scheduling")
+
+        let previousCue = try XCTUnwrap(cueCallbacks.value.last)
+        deck.seekCue(to: 0.25)
+        previousCue()
+        let scrubCount = cueCallbacks.value.count
+        deck.playCue()
+        XCTAssertEqual(cueCallbacks.value.count, scrubCount)
+        XCTAssertEqual(masterCallbacks.value.count, masterCount, "Cue scrub must not reschedule master")
+
+        let previousMaster = try XCTUnwrap(masterCallbacks.value.last)
+        let scrubbedCue = try XCTUnwrap(cueCallbacks.value.last)
+        try deck.loadTrack(url: url)
+        previousMaster()
+        scrubbedCue()
+        let loadedMasterCount = masterCallbacks.value.count
+        let loadedCueCount = cueCallbacks.value.count
+        deck.play()
+        XCTAssertEqual(masterCallbacks.value.count, loadedMasterCount)
+        XCTAssertEqual(cueCallbacks.value.count, loadedCueCount)
+
+        // Current completions still release their schedules, allowing a subsequent play to schedule once.
+        try XCTUnwrap(masterCallbacks.value.last)()
+        try XCTUnwrap(cueCallbacks.value.last)()
+        deck.play()
+        XCTAssertEqual(masterCallbacks.value.count, loadedMasterCount + 1)
+        XCTAssertEqual(cueCallbacks.value.count, loadedCueCount + 1)
+    }
+
     private func render(_ engine: AVAudioEngine, frames: AVAudioFrameCount = 4096) throws {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(
             pcmFormat: engine.manualRenderingFormat,

@@ -99,7 +99,7 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
   1. *Beat-Synced Bass Swap* (tempo difference <= 6.0%): match incoming tempo via `AVAudioUnitTimePitch` and align beat-grids; on the target downbeat (beat 1), cut outgoing low shelf to -24 dB and restore incoming low shelf to 0 dB instantly; crossfade mid and high over 8, 16, or 32 bars, ramping outgoing volume fader to 0.0 at phrase end.
   2. *Filter Echo Wash*: high-pass sweep + equal-power S-curve crossfade from `mixOutCue` to `startTrimCue`.
   3. *Hard Cut on Drop*: bar-aligned instant cut.
-- **Talkover Ducking (`Hotkey T`):** Smooth 800 ms duck to 15% Master volume + 300 Hz–3 kHz vocal pocket EQ dip; smooth 1.2 s restore on second press.
+- **Talkover Ducking (`Hotkey T`):** Smooth 800 ms duck to 15% Master volume (0.15 linear gain) + broad -4.0 dB vocal pocket EQ dip across 300 Hz–3 kHz; smooth 800 ms restore to unity on second press.
 - **Soundboard (`Hotkeys F1–F8`):** Zero-latency RAM-cached pads mapped to `08_Soundboard_SFX/` (with synthesized fallback tones if empty).
 - **Secondary Projector Window (`Hotkeys 1–4`):** Fullscreen-capable external display switching between: (1) `vDSP` FFT Visualizer, (2) Photo Slideshow from `09_Visual_Backgrounds_Media/` with Ken Burns effect, (3) "Now Playing" + Custom Event Banner, (4) Blackout/Idle Logo.
 

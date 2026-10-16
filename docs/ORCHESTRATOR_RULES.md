@@ -126,7 +126,7 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
   2. `vocalEntryCue` (start of vocals or primary drop)
   3. `mixOutCue` (ideal outro/last-chorus downbeat to trigger next track)
   4. `endTrimCue` (cuts trailing dead air/applause)
-- **Hybrid Analyzer:** Fast local M1 Pro `vDSP` analyzer (offline, zero-cost) + rate-limited Gemini API Free Tier client (`gemini-2.5-flash`, max 12 RPM) with local `localhost:11434` (Ollama) fallback + companion `scripts/analyze_library.py` (`librosa`).
+- **Hybrid Analyzer:** Local `vDSP` analysis + optional Gemini `gemini-2.5-flash` advisor capped at 12 cloud attempts per rolling 60 seconds (retries count) + local Ollama fallback + `scripts/analyze_library.py` (`librosa`). The batch script is read-only by default and preserves manual overrides through the existing schema-v1 companion.
 - **Full Manual Override:** Draggable color-coded handles on SwiftUI Canvas waveform (throttled to 60 FPS via `TimelineView`/`Canvas`), hotkeys `I`/`O` while cueing, "Bypass AI Trim" toggle, instant write-back to `.pulsedeck_ai_cache.json`.
 
 ### C. Smart Transitions, Event Controls & Projector Window
@@ -151,7 +151,7 @@ Execute sequentially (or in parallel where sub-blocks have zero file overlap) us
   - *Block 1C:* Real-time `vDSP` RMS/Peak/FFT metering taps (lock-free ring buffer to UI) + Phase 1 build/test verification & `docs/TECHNICAL_ARCHITECTURE.md` update.
 - **Phase 2: Hybrid AI Auto-Trimmer & Library Analyzer**
   - *Block 2A:* Local `vDSP` waveform/transient/BPM/silence analyzer + `.pulsedeck_ai_cache.json` read/write manager + folder category parser.
-  - *Block 2B:* Rate-limited Gemini API (`gemini-2.5-flash`, ≤12 RPM) & Ollama (`localhost:11434`) advisor client + `scripts/analyze_library.py` batch script. Verify against `00_Test_Tracks_Dev/`.
+  - *Block 2B:* Gemini (`gemini-2.5-flash`, ≤12 attempts in any rolling 60 seconds) and loopback-only Ollama advisor with bounded retries/timeouts, structured-response validation, and offline failure behavior; optional `librosa` batch analyzer with dry-run and separate schema-v1 output verification. Keep unknown-tempo sentinel behavior aligned with 2A, preserve manual fields, and never claim semantic vocal detection. Test with stubbed HTTP and temporary cache/library paths; use `00_Test_Tracks_Dev/` read-only only when media exists.
 - **Phase 3: Interactive Waveform UI & Studio Deck Layout**
   - *Block 3A:* 60 FPS SwiftUI Canvas multi-band scrollable waveform + 4 draggable AI cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`) + `I`/`O` hotkeys.
   - *Block 3B:* Full Dark Mode Dual-Deck studio UI, device routing selectors, folder browser with BPM/Key compatibility badges, and Headphone Cue scrubbing.

@@ -341,9 +341,7 @@ Acoustic feature extraction executes locally without network access:
 * **Silence & Noise Floor:** Detects threshold transitions below $-60\,\text{dBFS}$ to calculate `startTrimCue` and `endTrimCue`.
 * **Spectral Analysis:** vDSP Fast Fourier Transform (FFT) generates multi-band peak arrays (Low: $20\text{--}250\,\text{Hz}$, Mid: $250\text{--}3500\,\text{Hz}$, High: $3500\text{--}20000\,\text{Hz}$).
 * **Beat Grid & BPM Detection:** Autocorrelation and spectral flux peak detection calculate `beatIntervalSeconds` and `firstBeatOffsetSeconds`.
-* **Heuristic Vocal Entry Estimation:** Evaluates spectral roll-off, harmonic-to-noise ratio, and midrange energy flux.
-  > [!IMPORTANT]
-  > Heuristic analysis **never asserts 100% vocal isolation certainty**. Vocal entry points are tagged with a probabilistic confidence score ($0.0\text{--}1.0$) and flagged for DJ review.
+* **Vocal Detection:** The current offline batch analyzer does not claim semantic vocal detection and writes an empty `vocalSegments` array. Cue points remain estimates and require DJ review.
 
 ### 8.2 Hybrid AI Advisor (Google Gemini & Local Ollama)
 The AI Advisor provides real-time track selection recommendations based on harmonic compatibility, energy curves, and transition points:
@@ -352,27 +350,33 @@ The AI Advisor provides real-time track selection recommendations based on harmo
 graph TD
     DJQuery[Next Track Query Request] --> CacheCheck{Cache Lookup via<br/>Track Fingerprints}
     CacheCheck -->|Cache Hit| ReturnCached[Return Cached Recommendation]
-    CacheCheck -->|Cache Miss| RateLimit{Token Bucket Rate Limiter<br/>Max 12 RPM / 5s Interval}
+    CacheCheck -->|Cache Miss| RateLimit{Rolling Window Limiter<br/>Max 12 attempts / 60s}
     
     RateLimit -->|Token Available| CheckNetwork{Cloud Key Configured &<br/>Network Available?}
-    RateLimit -->|Exceeded| DeferOrLocal[Fallback to Local Ollama]
+    RateLimit -->|Wait Slot| RateLimit
 
     CheckNetwork -->|Yes| GeminiCall[Google Gemini API<br/>Model: gemini-2.5-flash]
     CheckNetwork -->|No / Offline| OllamaCall[Local Ollama API<br/>localhost:11434 / llama3]
 
-    GeminiCall -->|HTTP 200| ParseSave[Parse JSON -> Cache Result]
-    GeminiCall -->|HTTP 429 / Error| BackoffRetry[Exponential Backoff + Jitter<br/>1s..30s, Max 3 Retries]
+    GeminiCall -->|HTTP 200| Validate[Validate response shape, track, numbers and cue bounds]
+    GeminiCall -->|HTTP 429 / transient error| BackoffRetry[Bounded backoff; honor Retry-After<br/>Max 30s, Max 3 Retries]
     BackoffRetry -->|Retries Exhausted| OllamaCall
-    OllamaCall --> ParseSave
-    ParseSave --> ReturnResult[Deliver to MainActor UI]
+    Validate -->|Valid| Cache[Bounded in-memory cache]
+    Validate -->|Invalid| OllamaCall
+    OllamaCall -->|Local service unavailable| OfflineError[Bounded advisor error; offline playback and analysis continue]
+    OllamaCall --> ValidateLocal[Validate local response]
+    ValidateLocal --> Cache
+    Cache --> ReturnResult[Return advisory result]
 ```
 
 * **Cloud Advisor:** Google Gemini `gemini-2.5-flash`.
-  * Hard Rate Limit: $\le 12$ Requests Per Minute ($\ge 5.0\,\text{s}$ minimum interval).
-  * Resiliency: Exponential backoff with random jitter ($\pm 20\%$) from $1.0\,\text{s}$ base up to $30.0\,\text{s}$ ceiling, maximum 3 retries on transient errors or HTTP 429 rate limit responses.
-  * Security: API keys loaded strictly from `GEMINI_API_KEY` environment variable. Never stored in git, source files, or `.pulsedeck_ai_cache.json`.
-  * Provider Terms Disclaimer: Cloud quotas, rate limits, and free tier availability are subject to Google AI Studio policy changes. PulseDeck AI operates completely offline when disconnected.
-* **Offline Local Fallback:** Ollama running at `http://localhost:11434` with configurable models (default `llama3:latest`).
+  * Hard Rate Limit: at most 12 HTTP attempts in any rolling 60-second window, including retries and concurrent calls.
+  * Resiliency: Maximum 3 retries. Retryable status/network errors use bounded exponential backoff; `Retry-After` is honored up to 30 seconds. Each provider request has a bounded timeout.
+  * Security: API keys load from the configured environment variable (default `GEMINI_API_KEY`) and travel in the `x-goog-api-key` header. Keys never enter URLs, logs, git, or `.pulsedeck_ai_cache.json`.
+  * Model: Default ID remains `gemini-2.5-flash`; the endpoint and model are configurable. Google says this model is not deprecated but limits access to users who used it before, and recommends newer model IDs for new projects. The client does not silently substitute a model. See [official model availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash) and [Generate Content structured output](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
+* **Offline Local Fallback:** Ollama's local `POST /api/chat` endpoint uses schema-constrained JSON (default `llama3:latest`, `http://localhost:11434`). If Ollama is missing, offline playback and analysis continue; advisor requests return a bounded error. See [Ollama chat API](https://docs.ollama.com/api/chat).
+* **Response Safety:** Both providers must return the existing `AdvisorRecommendation` contract. A recommendation must identify a valid non-current track, finite in-range mix-in time, bounded transition bars, and bounded non-empty text. Results remain advisory and do not write cache or manual data.
+* **Python Batch Companion:** `scripts/analyze_library.py` uses optional `librosa`/`soundfile`, reads library media and cache only, and defaults to dry run. `--output-cache` writes a separate schema-v1 JSON outside the library, then reloads and validates it using `scripts/pulsedeck_cache.py`. Manual overrides use the companion's existing merge implementation. Unknown tempo is BPM/confidence `0`, empty beat timestamps, and a `1.0` second schema sentinel that creates no beat-derived cue. The batch tool writes no semantic vocal guesses.
 
 ---
 

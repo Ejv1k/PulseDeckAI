@@ -13,7 +13,7 @@
 ## 1. Project & Review Gate Status
 
 ### 1.1 Review State & Commit Lineage
-* **PR Status:** PR #1 is **MERGED** into `origin/main` via merge commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`.
+* **PR Status:** PR #1 is **MERGED** into `origin/main` via merge commit `d50e5c8e37cc5f58bce96a9f5336e13543e19872`.
 * **Remote Baseline:** `origin/main` commit `5aa14b44c8cfa65276342abd9408fbef5fbdf7ea` (empty root commit, 0 tracked files, zero media ancestry) consolidated with Phase 0 foundation.
 * **Final Code Lineage:**
   * Approved SHA: `9a6158305149cc04915591b072c1c198aef5a90f` (native Grok 4.7 run `b3930dcf-106b-4c25-ac00-06772db7d06d`, completed with verdict **APPROVED**). [Published review](https://github.com/Ejv1k/PulseDeckAI/pull/1#pullrequestreview-5538504679). The reviewer confirmed the code, lineage, model/view descriptions, and header correction; no further changes are required. Section 4 observations remain non-blocking.
@@ -23,7 +23,7 @@
   * Documentation-Only Fix: `130bfc36f31bb037520cd949e603df0de9a84ad1` updated `README.md` lines 238-239 to replace absolute worktree URLs with relative paths `docs/TECHNICAL_ARCHITECTURE.md` and `docs/USER_MANUAL.md` (thread `PRRT_kwDOVJOZu86szlyc` resolved).
   * Lineage Correction: `ba331f74c2a736828cafe0b5451f9bee9c0010aa` distinguished unchanged product sources from the additional Python regression test. The subsequent documentation correction aligns the inventory below with the actual Swift declarations.
   * Phase 0 Stop Checkpoint: `18e2a026fc3cd7840bd5cb6676eb22dc7e399b31` recorded completed audit and stop state before consolidation.
-  * Consolidation Merge SHA: `d50e5c85d70f0340798e1f5707bb8a8ce799f972` (merged PR #1 into `origin/main`).
+  * Consolidation Merge SHA: `d50e5c8e37cc5f58bce96a9f5336e13543e19872` (merged PR #1 into `origin/main`).
 * **Audit & Approval Status:**
   * Product sources under `Sources/` are unchanged since `f0784c8`; the Python test file (`scripts/tests/test_pulsedeck_cache.py`) received an additional regression test in `d34f8a8`. Both are included in the approved SHA above.
   * **Phase 0 implementation and required corrections are approved at the SHA above.** Commit `18e2a02` recorded that completed audit and the pre-consolidation stop state; the distinction between the approved snapshot (`9a61583`), the audit record (`18e2a02`), and the merge commit (`d50e5c8`) is strictly preserved.
@@ -45,7 +45,7 @@
 ## 2. Git Hygiene & Worktree Source-of-Truth
 
 ### 2.1 Worktree Directory Structure & Legacy Caution
-* **Consolidated Main:** `main` tracking `origin/main` (commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`).
+* **Consolidated Main:** `main` tracking `origin/main` (tip `80387a5110affe1f25eaee45f78e3cf2ebff07ba`).
 * **Desktop Worktree Realigned:** `/Users/tomaselagin/Desktop/PulseDeckAI` realigned to clean `origin/main` with legacy commit `fe2a499` safely preserved under backup ref `refs/backups/desktop-main-fe2a499` and branch `backup/legacy-main-fe2a499`. Local media files remain intact and git-ignored.
 * **Legacy Checkout Caution:** Preserve media and local history; never publish `fe2a499` ancestry to remote. Use clean worktree branches tracking `origin/main` for subsequent phases.
 
@@ -183,7 +183,7 @@ The following non-blocking observations from prior review audits are recorded as
 
 > **USER DIRECTIVE (SUPERSEDED):** Phase 0 consolidation was authorized and completed via PR #1 merge onto `origin/main`. Fresh user authorization supersedes historical STOP AFTER PHASE 0 to begin Phase 1 Block 1A.
 
-1. **Remote State & Consolidated Main:** `origin/main` commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972` contains consolidated Phase 0 code, tests, and contracts.
+1. **Remote State & Consolidated Main:** `origin/main` tip `80387a5110affe1f25eaee45f78e3cf2ebff07ba` contains consolidated Phase 0 code, tests, and contracts.
 2. **Review & Approval Lineage:** PR #1 was reviewed and approved under native Grok review (approved snapshot `9a6158305149cc04915591b072c1c198aef5a90f`), with stop checkpoint recorded at `18e2a026fc3cd7840bd5cb6676eb22dc7e399b31` and merged cleanly via PR #1 without force-push or protection bypass.
 3. **Validation Commands:**
    ```bash

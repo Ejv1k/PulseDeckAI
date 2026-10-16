@@ -374,10 +374,35 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         }
     }
 
+    /// Returns the desired device UID stored for `engine`, or `nil` when that engine is not registered.
+    func desiredDeviceUIDForTesting(of engine: AVAudioEngine) -> String? {
+        syncControl {
+            self.registeredEngines.first { $0.engine === engine }?.desiredDeviceUID
+        }
+    }
+
     // MARK: - Queue ownership
 
-    private var isOnControlQueue: Bool {
+    /// Whether execution is currently on the monitor's control queue.
+    public var isOnControlQueue: Bool {
         DispatchQueue.getSpecific(key: controlQueueKey) == Self.controlQueueToken
+    }
+
+    /// Whether the monitor is currently listening for HAL events.
+    public var isMonitoringActive: Bool {
+        syncControl { isMonitoring }
+    }
+
+    /// Surfaces an error through the monitor's error delivery channel.
+    public func reportError(_ error: CoreAudioError) {
+        deliver([.failure(error)])
+    }
+
+    /// Executes a synchronous operation on the monitor's private serialized control queue.
+    ///
+    /// If the calling context is already executing on the control queue, `body` is invoked directly inline.
+    public func performOnControlQueue<T: Sendable>(_ body: () throws -> T) rethrows -> T {
+        try syncControl(body)
     }
 
     private func syncControl<T: Sendable>(_ body: () throws -> T) rethrows -> T {

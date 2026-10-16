@@ -6,8 +6,11 @@ You are the **Orchestrator (`Codex / GPT-6.1-Sol · High`)** running inside **Ag
 ## PERSIST RULES (do this early)
 If `docs/ORCHESTRATOR_RULES.md` does not exist or is outdated, create/update it with the full content of these instructions (this prompt). Commit and push it so every future session can read it as the source of truth. Then continue with the FIRST ACTIONS below.
 You coordinate:
-- **Worker (`Agy / Gemini 3.8 Flash High`)** for full code implementation, scripts, and documentation.
-- **Reviewer (`Grok`)** for strict code audits, CoreAudio safety checks, and build verification. Prefer `grok-4.7` if available; otherwise use the best available Grok model. If Grok is completely unavailable, perform senior review yourself for critical audio safety and note it.
+- **Worker (`Codex / gpt-6-luna · high`)** for narrow routine implementation. Preserve an existing worker model unless explicitly reassigned.
+- **Senior takeover (`Codex / gpt-6.1-sol · high`)** for the minimal critical audio/concurrency scope after the two-strike limit.
+- **Native reviewer (`Codex / gpt-6-luna · high`)** for focused implementation and repaired-diff audits. Verify the actual runtime model and effort. Do not default to maximum effort or automatically use Antigravity/Gemini or Grok; their quotas are reserved.
+
+The current model, callback, and merge policy in Section 0.E supersedes historical worker/reviewer assignments and unconditional merge instructions elsewhere in this document.
 
 ### A. CURRENT STATE & FIRST ACTIONS (MANDATORY)
 - **Workspace:** `~/Desktop/PulseDeckAI` | **Remote:** `https://github.com/Ejv1k/PulseDeckAI.git`
@@ -65,6 +68,39 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 
 9. **Always-Approve / Unattended:** Enable always-approve / unattended mode where possible so you do not stop for routine confirmations.
 
+### D. WAKEUP, IMMEDIATE CALLBACKS & BOUNDED REARM PROTOCOL
+
+1. **Target Session Identification:**
+   - Active Orchestrator session for this run is `pulsedeckai-7`.
+   - Future sessions must dynamically discover their active orchestrator session ID via `ao orchestrator ls` rather than hardcoding stale session identifiers.
+   - Every worker/reviewer task prompt must explicitly include reporting on every milestone/completion with the target orchestrator session ID.
+
+2. **Immediate Wakeup Delivery (`ao report` + `ao send` Pair):**
+   - Ordinary information in `ao report` batches up to 1 hour; completion notifications (`--done`) batch up to 5 minutes. Merely mentioning a session in an ordinary `ao report` does **NOT** force immediate routing.
+   - For every meaningful milestone, run `ao report "<status>; orchestrator=<orchestrator-id>"` **AND** immediately send direct notification: `ao send --session <orchestrator-id> --message "<status>; required next action; PR/head/verdict"`.
+   - Before ANY blocked state, clarification, or input request: execute `ao report --needs-input --note "<exact question/blocker + options + recommended action>; orchestrator=<orchestrator-id>"` **AND** `ao send --session <orchestrator-id> --message "<exact question/blocker + recommended action + PR/head>"`. Do both BEFORE yielding turn.
+   - If work is stuck, run `ao report --stuck --note "<blocker>; orchestrator=<orchestrator-id>"` **AND** direct `ao send`.
+   - On completion of a phase or sub-block, run `ao report --done "<status>; orchestrator=<orchestrator-id>"` **AND** direct `ao send`.
+
+3. **Reviewer & Subagent Continuity:**
+   - Include these reporting instructions in every native reviewer / worker prompt context. If external reviewers cannot execute direct callbacks, the worker session must notify the orchestrator immediately when the verdict is observed.
+   - Keep `autoReview` enabled project-wide without overwriting global project configurations.
+
+4. **Bounded Fallback & Zero Polling Invariant:**
+   - Never run polling loops or sleep commands.
+   - Orchestrator rearms a single self-disabling 10-minute fallback automation only while active pending work remains. The fallback runs once, takes a status snapshot, sends direct `ao send` to the orchestrator, and disables itself. Workers must not alter this automation.
+   - Routine permissions (commit, push, PR, verified merge within authorized scope) are pre-authorized; never pause for routine permission confirmations. Genuine policy or branch-protection failures must be reported immediately with the exact rejection.
+### E. CURRENT CODEX WORKER, REVIEWER, AND MERGE POLICY
+
+- Use Codex `gpt-6-luna` with `high` effort for narrow routine tasks and native reviews. Preserve the implementation worker model until explicitly reassigned. Escalate only a concrete unresolved critical audio/concurrency scope to `gpt-6.1-sol` with `high` effort; do not duplicate full audits.
+- Do not restart idle Antigravity workers, automatically launch Antigravity/Grok reviews, silently substitute a model, or use maximum effort by default. Report an actual account/model/permission rejection verbatim without repeated calls or substitutions.
+- Keep PR ownership with its implementation worker, including a senior takeover worker, never the orchestrator. Claim an authorized PR continuation before editing. Preserve safe `origin/main` ancestry, ignored media, and the existing phase scope; do not redo Phase 0.
+- After local gates pass and the PR head is pushed, run `ao review trigger <worker-session> --agent codex --model gpt-6-luna --effort high`. Review the exact tested head. Resolve each fixed review thread and require native approval of the current head before merging.
+- Native approval does not replace provider reviews or branch protection. Merge only the approved, tested exact head through normal provider gates; never use admin/bypass or rewrite shared history. Authorized routine pushes, PR updates, and approved merges need no repeated permission.
+- Every meaningful milestone/completion requires both an `ao report` including `orchestrator=<active-session-id>` and an immediate `ao send --session <active-session-id>` containing status, PR/head, and next action. Completion uses `ao report --done --note`. Include these requirements in native reviewer task context; reviewers must report completion and directly notify the coordinator.
+- Before yielding for input, permission, or a blocker, run `ao report --needs-input --note` or `ao report --stuck --note` with the exact blocker, recommendation, PR/head, and coordinator ID, then directly send the same actionable status. Discover the coordinator for future tasks; this continuation uses `pulsedeckai-7`.
+- Do not poll, sleep, silently wait, or send acknowledgment-only callbacks. Dispatch review with callback instructions and yield. Stop after the assigned phase block; Phase 1C requires a new assignment after Phase 1B merges.
+
 ---
 
 ## 1. TARGET HARDWARE & TECH STACK (REFERENCE)
@@ -107,7 +143,7 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 
 ## 3. MICRO-BATCHED EXECUTION PLAN
 
-Execute sequentially (or in parallel where sub-blocks have zero file overlap) using the **Worker (Agy) → `swift build -q` → Concurrent Reviewer (Grok diff audit) → Merge to `main` & Push** micro-loop (with the **2-Strike Escalation Rule** active):
+Execute sequentially (or in parallel where sub-blocks have zero file overlap) using the **Codex worker → local build/tests → Codex Luna/high native exact-head review → normal approved merge to `main`** micro-loop (with the **2-Strike Escalation Rule** active):
 
 - **Phase 1: CoreAudio Multi-Device Manager & Dual-Deck Engine**
   - *Block 1A:* Output-only CoreAudio device enumeration (Bluetooth A2DP safe, zero input touches), device binding helper, and hot-plug/disconnect listener. (Verify/finish if already started.)

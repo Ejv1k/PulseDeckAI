@@ -75,6 +75,24 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         try SharedCacheContract().validate(data: Data(contentsOf: cacheURL))
     }
 
+    func testBipolarTransientSaturatesVisualizationPeaksWithoutCreatingTempo() async throws {
+        let fixture = try makeLibrary()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let track = fixture.root.appendingPathComponent("00_Test_Tracks_Dev/bipolar.wav")
+        try writeAudioStreaming(track, duration: 4, sampleRate: 44_100) { frame in
+            (frame / 4_410) % 2 == 0 ? 0.9 : -0.9
+        }
+
+        let entry = try await LibraryAnalysisService(libraryRoot: fixture.root).analyzeTrack(at: track)
+        XCTAssertEqual(try XCTUnwrap(entry.waveformMetadata.highBandPeaks.max()), 1)
+        XCTAssertEqual(try XCTUnwrap(entry.waveformMetadata.peakValues.max()), 0.9, accuracy: 0.000_001)
+        XCTAssertEqual(entry.bpm, 0)
+        XCTAssertEqual(entry.confidence, 0)
+        XCTAssertTrue(entry.beatGrid.beatTimestamps.isEmpty)
+        let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        try SharedCacheContract().validate(data: Data(contentsOf: cacheURL))
+    }
+
     func testRejectsOutsideLibraryAndCorruptInput() throws {
         let fixture = try makeLibrary()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

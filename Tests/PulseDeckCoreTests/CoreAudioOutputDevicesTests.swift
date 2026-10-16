@@ -1054,6 +1054,38 @@ final class CoreAudioOutputDevicesTests: XCTestCase {
         monitor.stop()
     }
 
+    func testReregisterWhileUIDReadFailsKeepsStoredDacBinding() throws {
+        let mock = MockAudioHardware()
+        mock.addDevice(id: 81, uid: "dac", name: "DAC", outputChannels: 2)
+        mock.addDevice(id: 91, uid: "interface", name: "Interface", outputChannels: 2)
+
+        let engine = ScriptedAudioEngine()
+        let errors = TestBox<[CoreAudioError]>([])
+        let monitor = OutputDeviceMonitor(
+            hal: mock,
+            coalescingDelayMs: 0,
+            onError: { error in
+                var current = errors.value
+                current.append(error)
+                errors.value = current
+            }
+        )
+        try monitor.start()
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 81, boundDeviceUID: "dac")
+        XCTAssertEqual(monitor.boundDeviceIDForTesting(of: engine), 81)
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+
+        let uidError = CoreAudioError.osStatus(-50, operation: "getDeviceUID")
+        mock.oneShotUIDErrors[91] = uidError
+        monitor.registerEngine(engine, role: .master, boundDeviceID: 91)
+
+        XCTAssertEqual(errors.value, [uidError])
+        XCTAssertEqual(monitor.boundDeviceIDForTesting(of: engine), 81)
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: engine), "dac")
+        XCTAssertNotEqual(monitor.boundDeviceIDForTesting(of: engine), 91)
+        monitor.stop()
+    }
+
     func testTopologyQueryFailurePreservesRunningEngineAndBinding() throws {
         let mock = MockAudioHardware()
         mock.addDevice(id: 31, uid: "dac", name: "DAC", outputChannels: 2)

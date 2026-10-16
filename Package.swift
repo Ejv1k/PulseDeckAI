@@ -21,8 +21,20 @@ let package = Package(
     dependencies: [],
     targets: [
         .target(
+            name: "PulseDeckAtomics",
+            path: "Sources/PulseDeckAtomics",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+                .define("PULSEDECK_USE_ACCELERATE", to: "1", .when(platforms: [.macOS]))
+            ],
+            linkerSettings: [
+                .linkedFramework("Accelerate")
+            ]
+        ),
+        .target(
             name: "PulseDeckCore",
-            dependencies: [],
+            dependencies: ["PulseDeckAtomics"],
             path: "Sources/PulseDeckCore",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
@@ -41,7 +53,8 @@ let package = Package(
         .testTarget(
             name: "PulseDeckCoreTests",
             dependencies: [
-                "PulseDeckCore"
+                "PulseDeckCore",
+                "PulseDeckAtomics"
             ],
             path: "Tests/PulseDeckCoreTests",
             swiftSettings: [

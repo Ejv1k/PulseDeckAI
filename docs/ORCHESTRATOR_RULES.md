@@ -11,7 +11,7 @@ You coordinate:
 
 ### A. CURRENT STATE & FIRST ACTIONS (MANDATORY)
 - **Workspace:** `~/Desktop/PulseDeckAI` | **Remote:** `https://github.com/Ejv1k/PulseDeckAI.git`
-- **Confirmed:** Phase 0 is fully consolidated on `origin/main` (PR #1 merge commit `d50e5c8e37cc5f58bce96a9f5336e13543e19872`, current `origin/main` tip `80387a5110affe1f25eaee45f78e3cf2ebff07ba`, Grok approved at `9a6158305149cc04915591b072c1c198aef5a90f`). See `docs/PHASE0_SUMMARY.md`.
+- **Confirmed:** Phase 0 is fully consolidated on `origin/main` (PR #1 merge commit `d50e5c8e37cc5f58bce96a9f5336e13543e19872`, current `origin/main` tip `80387a5110affe1f25eaee45f78e3cf2ebff07ba`, Grok approved at `9a6158305149cc04915591b072c1c198aef5a90f`). See `docs/PHASE0_SUMMARY.md`. These two SHAs stay authoritative if `PHASE0_SUMMARY.md` still disagrees.
 - **FIRST ACTIONS:**
   1. Inspect real state: `git status -s`, `git branch -a`, `git log --oneline -10`, `git worktree list`, `gh pr list --state open`.
   2. Read `docs/PHASE0_SUMMARY.md`, `docs/TECHNICAL_ARCHITECTURE.md`, `README.md`. Do NOT redo Phase 0.
@@ -80,8 +80,8 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 - Two independent `AVAudioEngine` instances:
   - `masterAudioEngine` → bound via CoreAudio `AudioUnitSetProperty(kAudioOutputUnitProperty_CurrentDevice)` to Output Device A (main speakers).
   - `cueAudioEngine` → bound independently to Output Device B (DJ headphones for preview/scrubbing).
-- **Bluetooth A2DP Stereo Protection:** Strictly query `kAudioDevicePropertyScopeOutput`. NEVER access `inputNode` or microphone channels so macOS never drops Bluetooth from stereo `A2DP` to mono `HFP`.
-- **Hardware Disconnect / Hot-Plug Recovery:** Observe `AVAudioEngineConfigurationChange` and CoreAudio `kAudioHardwarePropertyDevices`. If a device disconnects mid-song, gracefully fall back to the default system output and auto-restart the engine without crashing.
+- **Bluetooth A2DP Stereo Protection:** Query `kAudioDevicePropertyScopeOutput` strictly for direction-sensitive stream configuration reads (`getOutputChannelCount`), while device list, UID, name, manufacturer, transport, and nominal sample rate use `kAudioObjectPropertyScopeGlobal`. Input scope and `AVAudioEngine.inputNode` / microphone channels stay strictly forbidden so macOS never drops Bluetooth from stereo `A2DP` to mono `HFP`.
+- **Hardware Disconnect / Hot-Plug Recovery:** Observe `AVAudioEngineConfigurationChange` and CoreAudio `kAudioHardwarePropertyDevices`. If a device disconnects mid-song, gracefully pause a running engine before rebind without calling `AVAudioEngine.stop()`, fall back to the default output, keep the graph intact, restart only if `intendedRunningState` is true (do not restart an engine the caller left stopped), and stop recovery after three bounded attempts without crashing.
 - **Latency Offset Slider:** Real-time compensation (`-300 ms` to `+300 ms`) to align wired and Bluetooth outputs.
 
 ### B. Hybrid AI Auto-Trimmer & Non-Destructive 4-Cue System

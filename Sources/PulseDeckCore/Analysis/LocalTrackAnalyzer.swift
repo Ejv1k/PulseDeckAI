@@ -127,7 +127,14 @@ public struct LocalTrackAnalyzer: Sendable {
             throw LocalAnalysisError.invalidMetadata
         }
         let fingerprint = "\(fileSize)-\(Int64(modified.timeIntervalSince1970 * 1_000))"
-        let bitDepth = (file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int) ?? 0
+        let bitDepth: Int
+        switch format.commonFormat {
+        case .pcmFormatFloat32, .pcmFormatInt32: bitDepth = 32
+        case .pcmFormatFloat64: bitDepth = 64
+        case .pcmFormatInt16: bitDepth = 16
+        case .otherFormat: throw LocalAnalysisError.invalidAudioFormat
+        @unknown default: throw LocalAnalysisError.invalidAudioFormat
+        }
         let confidence = tempo.confidence
         let cuesMarkers = CueMarkers(startTrimCue: cues.start, vocalEntryCue: cues.vocal, mixOutCue: cues.mixOut, endTrimCue: cues.end)
         let entry = TrackCacheEntry(

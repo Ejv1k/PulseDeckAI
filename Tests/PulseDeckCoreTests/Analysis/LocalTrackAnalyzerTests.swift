@@ -58,6 +58,19 @@ final class LocalTrackAnalyzerTests: XCTestCase {
         XCTAssertEqual(entry.cueMarkers.endTrimCue, 299.508, accuracy: 0.02)
     }
 
+    func testCompressedAACUsesDecodedBitDepthAndPersistsValidCache() async throws {
+        let fixture = try makeLibrary()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let track = fixture.root.appendingPathComponent("00_Test_Tracks_Dev/compressed.m4a")
+        try writeCompressedAAC(track, duration: 4)
+
+        let entry = try await LibraryAnalysisService(libraryRoot: fixture.root).analyzeTrack(at: track)
+        XCTAssertGreaterThanOrEqual(entry.bitDepth, 8)
+        let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let cache = try XCTUnwrap(CachePersistence.load(from: cacheURL))
+        XCTAssertNoThrow(try cache.validate())
+    }
+
     func testRejectsOutsideLibraryAndCorruptInput() throws {
         let fixture = try makeLibrary()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -170,6 +183,31 @@ final class LocalTrackAnalyzerTests: XCTestCase {
             buffer.frameLength = AVAudioFrameCount(count)
             let channel = buffer.floatChannelData![0]
             for index in 0..<count { channel[index] = sample(offset + index) }
+            try file.write(from: buffer)
+            offset += count
+        }
+    }
+
+    private func writeCompressedAAC(_ url: URL, duration: Double) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        let chunkSize = 8_192
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(chunkSize))!
+        let frameCount = Int(duration * sampleRate)
+        var offset = 0
+        while offset < frameCount {
+            let count = min(chunkSize, frameCount - offset)
+            buffer.frameLength = AVAudioFrameCount(count)
+            let channel = buffer.floatChannelData![0]
+            for index in 0..<count {
+                let time = Double(offset + index) / sampleRate
+                channel[index] = Float(sin(2 * .pi * 440 * time) * 0.3)
+            }
             try file.write(from: buffer)
             offset += count
         }

@@ -135,6 +135,35 @@ final class AudioMeteringTests: XCTestCase {
         XCTAssertNil(pop(ring))
     }
 
+    func testCueRingAllocationFailureDestroysMasterResourcesAndAllowsRetry() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let allocationCount = TestBox(0)
+        let destructionCount = TestBox(0)
+        let service = AudioMeteringService(
+            coordinator: coordinator,
+            allocateRingForTesting: {
+                allocationCount.value += 1
+                guard allocationCount.value != 2 else { return nil }
+                return pd_meter_ring_create()
+            },
+            destroyRingForTesting: { ring in
+                destructionCount.value += 1
+                pd_meter_ring_destroy(ring)
+            }
+        )
+
+        XCTAssertThrowsError(try service.start()) { error in
+            guard case AudioMeteringError.processingResourcesUnavailable = error else {
+                return XCTFail("Unexpected allocation error: \(error)")
+            }
+        }
+        XCTAssertEqual(destructionCount.value, 1, "Failed cue allocation must destroy the already-created master ring and FFT setup")
+
+        try service.start()
+        service.stop()
+        XCTAssertEqual(destructionCount.value, 3, "Retry must install and then destroy both role rings")
+    }
+
     func testServiceOfflineLifecycleRestartAndIndependentOutputQueues() throws {
         let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2))

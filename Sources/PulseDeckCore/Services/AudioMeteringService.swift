@@ -41,6 +41,8 @@ public enum AudioMeteringError: Error, Sendable {
 /// queue before removing taps and freeing their storage, then restores their prior running state.
 public final class AudioMeteringService: @unchecked Sendable {
     private let coordinator: AudioEngineCoordinator
+    private let allocateRing: () -> OpaquePointer?
+    private let destroyRing: (OpaquePointer) -> Void
     private var masterRing: OpaquePointer?
     private var cueRing: OpaquePointer?
     private var masterTapInstalled = false
@@ -48,6 +50,18 @@ public final class AudioMeteringService: @unchecked Sendable {
 
     public init(coordinator: AudioEngineCoordinator) {
         self.coordinator = coordinator
+        self.allocateRing = { pd_meter_ring_create() }
+        self.destroyRing = { pd_meter_ring_destroy($0) }
+    }
+
+    init(
+        coordinator: AudioEngineCoordinator,
+        allocateRingForTesting: @escaping () -> OpaquePointer?,
+        destroyRingForTesting: @escaping (OpaquePointer) -> Void
+    ) {
+        self.coordinator = coordinator
+        self.allocateRing = allocateRingForTesting
+        self.destroyRing = destroyRingForTesting
     }
 
     deinit {
@@ -66,13 +80,16 @@ public final class AudioMeteringService: @unchecked Sendable {
             try Self.validate(masterFormat, role: .master)
             try Self.validate(cueFormat, role: .cue)
 
-            guard let masterRing = pd_meter_ring_create(), let cueRing = pd_meter_ring_create() else {
-                if let masterRing { pd_meter_ring_destroy(masterRing) }
+            guard let masterRing = self.allocateRing() else {
+                throw AudioMeteringError.processingResourcesUnavailable
+            }
+            guard let cueRing = self.allocateRing() else {
+                self.destroyRing(masterRing)
                 throw AudioMeteringError.processingResourcesUnavailable
             }
             guard pd_meter_ring_is_lock_free(masterRing), pd_meter_ring_is_lock_free(cueRing) else {
-                pd_meter_ring_destroy(masterRing)
-                pd_meter_ring_destroy(cueRing)
+                self.destroyRing(masterRing)
+                self.destroyRing(cueRing)
                 throw AudioMeteringError.lockFreeAtomicsUnavailable
             }
 
@@ -104,8 +121,8 @@ public final class AudioMeteringService: @unchecked Sendable {
                 self.cueTapInstalled = false
             }
 
-            if let ring = self.masterRing { pd_meter_ring_destroy(ring) }
-            if let ring = self.cueRing { pd_meter_ring_destroy(ring) }
+            if let ring = self.masterRing { self.destroyRing(ring) }
+            if let ring = self.cueRing { self.destroyRing(ring) }
             self.masterRing = nil
             self.cueRing = nil
 

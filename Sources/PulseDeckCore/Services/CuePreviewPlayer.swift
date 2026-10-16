@@ -19,6 +19,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     private var _currentPositionSeconds: Double = 0.0
     private var _scheduleStartSeconds: Double = 0.0
     private var _segmentQueued: Bool = false
+    private var _scheduleGeneration: UInt64 = 0
     private var _isPlaying: Bool = false
     private var _volume: Float = 1.0
 
@@ -69,9 +70,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     }
 
     public var currentPositionSeconds: Double {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return _currentPositionSeconds
+        executeOnControlQueue { self.currentPlayheadSeconds() }
     }
 
     public var volume: Float {
@@ -99,6 +98,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             let lengthFrames = file.length
             let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0
 
+            self.invalidateSchedule()
             self.playerNode.stop()
 
             self.stateLock.lock()
@@ -117,20 +117,26 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     public func play() {
         executeOnControlQueue {
             self.stateLock.lock()
-            self._isPlaying = true
+            let playhead = self.currentPlayheadSecondsLocked()
+            guard let file = self._currentAudioFile else {
+                self.stateLock.unlock()
+                return
+            }
             let queued = self._segmentQueued
-            let file = self._currentAudioFile
             let duration = self._trackDurationSeconds
             self.stateLock.unlock()
 
             // Reschedule from current playhead if previously scheduled segment was consumed
-            if !queued, let file {
-                var playhead = self.currentPlayheadSeconds()
-                if playhead >= duration {
-                    playhead = 0.0
-                }
-                self.scheduleSegment(file: file, startSeconds: playhead)
+            if !queued || playhead >= duration {
+                self.invalidateSchedule()
+                self.playerNode.stop()
+                self.scheduleSegment(file: file, startSeconds: playhead >= duration ? 0.0 : playhead)
             }
+            self.stateLock.lock()
+            self._isPlaying = self._segmentQueued
+            let shouldPlay = self._isPlaying
+            self.stateLock.unlock()
+            guard shouldPlay else { return }
             self.playerNode.play()
         }
     }
@@ -138,6 +144,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     public func pause() {
         executeOnControlQueue {
             self.stateLock.lock()
+            self._currentPositionSeconds = self.currentPlayheadSecondsLocked()
             self._isPlaying = false
             self.stateLock.unlock()
 
@@ -147,6 +154,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
 
     public func stop() {
         executeOnControlQueue {
+            self.invalidateSchedule()
             self.stateLock.lock()
             self._isPlaying = false
             self._currentPositionSeconds = 0.0
@@ -172,9 +180,14 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             let wasPlaying = self._isPlaying
             self.stateLock.unlock()
 
+            self.invalidateSchedule()
             self.playerNode.stop()
             self.scheduleSegment(file: file, startSeconds: clampedSeconds)
-            if wasPlaying {
+            self.stateLock.lock()
+            self._isPlaying = wasPlaying && self._segmentQueued
+            let shouldPlay = self._isPlaying
+            self.stateLock.unlock()
+            if shouldPlay {
                 self.playerNode.play()
             }
         }
@@ -184,17 +197,23 @@ public final class CuePreviewPlayer: @unchecked Sendable {
 
     private func currentPlayheadSeconds() -> Double {
         stateLock.lock()
+        defer { stateLock.unlock() }
+        return currentPlayheadSecondsLocked()
+    }
+
+    /// Reads the segment state and player clock together while `stateLock` is held.
+    private func currentPlayheadSecondsLocked() -> Double {
+        guard _isPlaying, _segmentQueued else { return _currentPositionSeconds }
         let scheduledStart = _scheduleStartSeconds
         let duration = _trackDurationSeconds
-        stateLock.unlock()
 
         if let nodeTime = playerNode.lastRenderTime,
            let playerTime = playerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
-            if sampleRate > 0.0 {
+            if sampleRate.isFinite && sampleRate > 0.0 {
                 let elapsed = Double(playerTime.sampleTime) / sampleRate
                 let current = scheduledStart + elapsed
-                return duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+                return min(max(current, scheduledStart), duration)
             }
         }
         return scheduledStart
@@ -204,26 +223,40 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         let sampleRate = file.processingFormat.sampleRate
         guard sampleRate > 0.0 else { return }
 
-        let startFrame = AVAudioFramePosition(startSeconds * sampleRate)
-        guard startFrame < file.length else { return }
-
-        let frameCount = AVAudioFrameCount(file.length - startFrame)
-
         stateLock.lock()
         _scheduleStartSeconds = startSeconds
-        _segmentQueued = true
+        _currentPositionSeconds = startSeconds
+        let generation = _scheduleGeneration
+        let startFrame = min(AVAudioFramePosition(startSeconds * sampleRate), file.length)
+        _segmentQueued = startFrame < file.length
         stateLock.unlock()
+
+        guard startFrame < file.length else { return }
+        let frameCount = AVAudioFrameCount(file.length - startFrame)
 
         playerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
-            at: nil
-        ) { [weak self] in
-            self?.stateLock.lock()
-            self?._segmentQueued = false
-            self?.stateLock.unlock()
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            // stop()/seek()/load() can deliver an old completion after a new segment was queued.
+            guard self._scheduleGeneration == generation else { return }
+            self._segmentQueued = false
+            self._isPlaying = false
+            self._currentPositionSeconds = self._trackDurationSeconds
         }
+    }
+
+    private func invalidateSchedule() {
+        stateLock.lock()
+        _scheduleGeneration &+= 1
+        _segmentQueued = false
+        stateLock.unlock()
     }
 
     private func executeOnControlQueue<T: Sendable>(_ block: @Sendable () throws -> T) rethrows -> T {

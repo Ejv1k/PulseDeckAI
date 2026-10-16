@@ -169,9 +169,9 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
 
     public func pause() {
         executeOnControlQueue {
+            self.monitor?.setIntendedRunningState(for: self.rawEngine, running: false)
             guard self.rawEngine.isRunning else { return }
             self.rawEngine.pause()
-            self.monitor?.setIntendedRunningState(for: self.rawEngine, running: false)
         }
     }
 

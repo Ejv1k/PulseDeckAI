@@ -5,6 +5,135 @@ import CoreAudio
 
 final class DualEngineGraphsTests: XCTestCase {
 
+    private func render(_ engine: AVAudioEngine, frames: AVAudioFrameCount = 4096) throws {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: engine.manualRenderingFormat,
+            frameCapacity: frames
+        ))
+        XCTAssertEqual(try engine.renderOffline(frames, to: buffer), .success)
+    }
+
+    func testPauseAfterConfigurationStopPreventsRecoveryRestart() throws {
+        let hal = MockAudioHardware()
+        hal.addDevice(id: 901, uid: "old", name: "Old", outputChannels: 2)
+        hal.addDevice(id: 902, uid: "fallback", name: "Fallback", outputChannels: 2)
+        hal.setDefaultOutputID(902)
+        let monitor = OutputDeviceMonitor(hal: hal, coalescingDelayMs: 0)
+        let output = OutputAudioEngine(role: .cue, monitor: monitor, hal: hal)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try output.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        monitor.registerEngine(output.rawEngine, role: .cue, boundDeviceID: 901)
+        try monitor.start()
+        defer { output.stop(); monitor.stop() }
+        try output.start()
+
+        // Model the engine having stopped itself before its configuration event is reconciled.
+        monitor.performOnControlQueue {
+            output.rawEngine.pause()
+            XCTAssertFalse(output.rawEngine.isRunning)
+            output.pause()
+        }
+        hal.removeDevice(id: 901)
+        monitor.reconcileImmediately()
+        XCTAssertEqual(monitor.boundDeviceUIDForTesting(of: output.rawEngine), "fallback")
+        XCTAssertFalse(output.rawEngine.isRunning, "Caller pause must cancel recovery's prior running intent")
+    }
+
+    func testCuePreviewLivePositionPauseResumeSeekStopAndReplayOffline() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let cue = coordinator.cueAudioEngine.rawEngine
+        let master = coordinator.masterAudioEngine.rawEngine
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try cue.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try cue.start()
+        try master.start()
+        defer { cue.stop(); master.stop() }
+        let url = try createTestWavFile(durationSeconds: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let preview = coordinator.cuePreview
+        try coordinator.deckAGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        try preview.load(url: url)
+        preview.seek(to: 0.25)
+        preview.play()
+        try render(cue)
+        let firstPosition = preview.currentPositionSeconds
+        XCTAssertEqual(firstPosition, 0.25 + 4096.0 / 44100, accuracy: 2.0 / 44100)
+
+        preview.pause()
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, firstPosition, accuracy: 2.0 / 44100)
+        preview.play()
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, firstPosition + 4096.0 / 44100, accuracy: 2.0 / 44100)
+
+        preview.seek(to: 0.6)
+        XCTAssertEqual(preview.currentPositionSeconds, 0.6, accuracy: 2.0 / 44100)
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, 0.6 + 4096.0 / 44100, accuracy: 2.0 / 44100)
+        preview.pause()
+        preview.seek(to: 0.1)
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, 0.1, accuracy: 2.0 / 44100)
+        preview.play()
+        try render(cue)
+        XCTAssertGreaterThan(preview.currentPositionSeconds, 0.1)
+
+        preview.stop()
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, 0)
+        preview.play()
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, 4096.0 / 44100, accuracy: 2.0 / 44100)
+
+        preview.seek(to: 1)
+        XCTAssertEqual(preview.currentPositionSeconds, 1)
+        preview.play()
+        try render(cue)
+        XCTAssertEqual(preview.currentPositionSeconds, 4096.0 / 44100, accuracy: 2.0 / 44100)
+
+        // Master playback and schedule stay untouched throughout all preview transport changes.
+        XCTAssertTrue(coordinator.deckAGraph.masterPlayerNode.isPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.masterScheduleStartSecondsForTesting, 0)
+        XCTAssertEqual(master.manualRenderingSampleTime, 0)
+        try render(master)
+        XCTAssertEqual(master.manualRenderingSampleTime, 4096)
+    }
+
+    func testCuePreviewNaturalEndAndReplacementResetPlayerTimelineOffline() throws {
+        let output = OutputAudioEngine(role: .cue, hal: MockAudioHardware())
+        let preview = CuePreviewPlayer(cueEngine: output)
+        let engine = output.rawEngine
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        defer { engine.stop() }
+        let url = try createTestWavFile(durationSeconds: 0.25)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try preview.load(url: url)
+        preview.play()
+        for _ in 0..<5 { try render(engine) }
+        XCTAssertEqual(preview.currentPositionSeconds, 0.25, accuracy: 1.0 / 44100)
+        preview.pause()
+        try render(engine)
+        XCTAssertEqual(preview.currentPositionSeconds, 0.25, accuracy: 1.0 / 44100)
+        preview.play()
+        try render(engine)
+        XCTAssertEqual(preview.currentPositionSeconds, 4096.0 / 44100, accuracy: 2.0 / 44100)
+        // Repeated play while running must neither reset nor add the elapsed time twice.
+        preview.play()
+        try render(engine)
+        XCTAssertEqual(preview.currentPositionSeconds, 8192.0 / 44100, accuracy: 2.0 / 44100)
+
+        try preview.load(url: url)
+        XCTAssertEqual(preview.currentPositionSeconds, 0)
+        preview.seek(to: 0.1)
+        preview.play()
+        try render(engine)
+        XCTAssertEqual(preview.currentPositionSeconds, 0.1 + 4096.0 / 44100, accuracy: 2.0 / 44100)
+    }
+
     private func createTestWavFile(durationSeconds: Double = 1.0) throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
         let fileURL = tempDir.appendingPathComponent("test_track_\(UUID().uuidString).wav")

@@ -10,6 +10,8 @@ public struct ContentView: View {
         VStack(spacing: 10) {
             StatusHeaderView(appState: appState)
 
+            AudioMeterStatusView(appState: appState)
+
             LibraryBrowserView(appState: appState)
                 .frame(maxHeight: .infinity)
 

@@ -96,7 +96,7 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 ### C. Smart Transitions, Event Controls & Projector Window
 - **Decks A & B:** Pitch-locked time-stretch (`AVAudioUnitTimePitch`), 3-band EQ (kill/crossover), resonant high/low-pass filter.
 - **1-Click Macro Transitions (`Spacebar` or Auto-Pilot at `mixOutCue`):**
-  1. *Beat-Synced Bass Swap* (BPM delta < 6%): sync tempo, align beat-grids, ramp volume, swap bass on midpoint downbeat.
+  1. *Beat-Synced Bass Swap* (tempo difference <= 6.0%): match incoming tempo via `AVAudioUnitTimePitch` and align beat-grids; on the target downbeat (beat 1), cut outgoing low shelf to -24 dB and restore incoming low shelf to 0 dB instantly; crossfade mid and high over 8, 16, or 32 bars, ramping outgoing volume fader to 0.0 at phrase end.
   2. *Filter Echo Wash*: high-pass sweep + equal-power S-curve crossfade from `mixOutCue` to `startTrimCue`.
   3. *Hard Cut on Drop*: bar-aligned instant cut.
 - **Talkover Ducking (`Hotkey T`):** Smooth 800 ms duck to 15% Master volume + 300 Hz–3 kHz vocal pocket EQ dip; smooth 1.2 s restore on second press.

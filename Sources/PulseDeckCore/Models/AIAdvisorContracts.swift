@@ -42,10 +42,13 @@ public struct GeminiAdvisorConfig: Sendable, Equatable {
     /// Default advisor model: gemini-2.5-flash.
     public static let defaultModel = "gemini-2.5-flash"
 
+    /// Base URL for the Gemini v1beta generateContent API.
+    public static let defaultEndpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta")!
+
     /// Strict rate limit ceiling: 12 Requests Per Minute.
     public static let maxRequestsPerMinute: Int = 12
 
-    /// Minimum interval between subsequent API calls in seconds (60.0 / 12 = 5.0 seconds).
+    /// Average spacing at a sustained 12 RPM; the rolling limiter allows short bursts.
     public static let minRequestIntervalSeconds: Double = 5.0
 
     /// Maximum retry attempts on transient network or 429 errors.
@@ -58,21 +61,36 @@ public struct GeminiAdvisorConfig: Sendable, Equatable {
     public static let maxBackoffSeconds: Double = 30.0
 
     public let model: String
+    public let endpoint: URL
     public let requestsPerMinute: Int
+    public let apiKeyEnvironmentVariable: String
+    public let requestTimeoutSeconds: Double
+    public let maxRetries: Int
 
-    public init(model: String = defaultModel, requestsPerMinute: Int = maxRequestsPerMinute) {
+    public init(
+        model: String = defaultModel,
+        requestsPerMinute: Int = maxRequestsPerMinute,
+        endpoint: URL = defaultEndpoint,
+        apiKeyEnvironmentVariable: String = "GEMINI_API_KEY",
+        requestTimeoutSeconds: Double = 30,
+        maxRetries: Int = Self.maxRetries
+    ) {
         self.model = model
-        self.requestsPerMinute = min(requestsPerMinute, Self.maxRequestsPerMinute)
+        self.endpoint = endpoint
+        self.requestsPerMinute = min(max(requestsPerMinute, 1), Self.maxRequestsPerMinute)
+        self.apiKeyEnvironmentVariable = apiKeyEnvironmentVariable
+        self.requestTimeoutSeconds = requestTimeoutSeconds.isFinite
+            ? min(max(requestTimeoutSeconds, 1), 120)
+            : 30
+        self.maxRetries = min(max(maxRetries, 0), Self.maxRetries)
     }
 
-    /// Calculates exponential backoff with pseudo-random jitter for a given retry attempt.
-    /// Exponential delay with +/- 20% jitter is strictly capped at `maxBackoffSeconds` (30.0s)
-    /// AFTER jitter is applied to guarantee the wait duration never exceeds the ceiling.
+    /// Calculates deterministic exponential backoff for a given retry attempt.
     public func backoffDelaySeconds(forAttempt attempt: Int) -> Double {
-        let exponential = Self.baseBackoffSeconds * pow(2.0, Double(attempt))
-        let jittered = exponential * Double.random(in: 0.8...1.2)
-        // Strictly cap after jitter at maxBackoffSeconds (30.0s)
-        return min(jittered, Self.maxBackoffSeconds)
+        guard attempt >= 0 else { return Self.baseBackoffSeconds }
+        let exponent = min(attempt, 30)
+        let exponential = Self.baseBackoffSeconds * pow(2.0, Double(exponent))
+        return min(exponential, Self.maxBackoffSeconds)
     }
 }
 
@@ -87,15 +105,20 @@ public struct OllamaFallbackConfig: Sendable, Equatable {
     public let endpoint: URL
     public let model: String
     public let isEnabled: Bool
+    public let requestTimeoutSeconds: Double
 
     public init(
         endpoint: URL = defaultEndpoint,
         model: String = defaultModel,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        requestTimeoutSeconds: Double = 15
     ) {
         self.endpoint = endpoint
         self.model = model
         self.isEnabled = isEnabled
+        self.requestTimeoutSeconds = requestTimeoutSeconds.isFinite
+            ? min(max(requestTimeoutSeconds, 1), 120)
+            : 15
     }
 }
 
@@ -104,8 +127,8 @@ public struct OllamaFallbackConfig: Sendable, Equatable {
 /// Security & Privacy Guarantees:
 /// 1. No API keys stored in repo, code, or cache files. Keys are loaded from user environment only.
 /// 2. Offline-First: Local Accelerate DSP always performs core analysis; AI Advisor is purely advisory.
-/// 3. Rate-Limiting: Capped at <= 12 RPM with client-side token bucket.
-/// 4. Local Caching: Results are keyed by track fingerprint; duplicate queries are served locally from cache.
+/// 3. Rate-Limiting: All cloud attempts, including retries, stay within 12 per rolling 60 seconds.
+/// 4. Local Caching: Recommendations stay in a bounded in-memory cache keyed by track fingerprints.
 public protocol AIAdvisorServiceContract: AnyObject, Sendable {
     /// Current Gemini advisor configuration.
     var geminiConfig: GeminiAdvisorConfig { get }
@@ -114,7 +137,7 @@ public protocol AIAdvisorServiceContract: AnyObject, Sendable {
     var ollamaConfig: OllamaFallbackConfig { get }
 
     /// Queries advisor for next track transition recommendation.
-    /// Implementation must enforce 12 RPM rate limit and track fingerprint caching.
+    /// Implementation must enforce the rolling request limit and bounded local recommendation caching.
     func recommendNextTrack(
         currentTrack: TrackCacheEntry,
         availableTracks: [TrackCacheEntry]

@@ -259,22 +259,22 @@ PulseDeck AI includes a dedicated secondary video presentation window designed f
 PulseDeck AI features a hybrid recommendation engine that suggests harmonious track transitions based on Camelot key compatibility, energy progression, and song structure.
 
 ### 7.1 Cloud Advisor Configuration (Google Gemini 2.5 Flash)
-The cloud advisor uses Google's `gemini-2.5-flash` model:
+The cloud advisor defaults to Google's `gemini-2.5-flash` model. Model and HTTPS endpoint are configurable; the client does not silently substitute another model. Google currently documents restricted access for new projects, so access may require an existing eligible project. See [Gemini 2.5 Flash availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash).
 1. **Get an API Key:** Sign in to [Google AI Studio](https://aistudio.google.com/) and create a free or paid API key.
 2. **Configure Your Environment:** Set your API key in your terminal shell profile (`~/.zshrc`):
    ```bash
    export GEMINI_API_KEY="your-actual-api-key-here"
    ```
-3. **Security Guarantee:** PulseDeck AI **never** commits your API key to git repositories or stores it in `.pulsedeck_ai_cache.json`. The key is read directly from process environment variables at runtime.
+3. **Security Guarantee:** PulseDeck AI **never** commits your API key to git repositories or stores it in `.pulsedeck_ai_cache.json`. The key is read from the configured process environment variable at runtime and sent only in Google's `x-goog-api-key` header, never in the URL.
 
 ### 7.2 Rate Limits & Provider Quota Disclaimer
-* **Rate Limit Ceiling:** PulseDeck AI strictly enforces a client-side rate limit of **12 Requests Per Minute** (minimum $5.0\,\text{s}$ between calls).
-* **Automatic Backoff:** In the event of network turbulence or HTTP 429 quota exhaustion, the engine automatically applies exponential backoff with random jitter ($1.0\,\text{s}$ up to $30.0\,\text{s}$, maximum 3 retries).
-* **Local Fingerprint Caching:** Results are cached by track audio fingerprints; previously analyzed song pairs are loaded instantly without making new network calls.
+* **Rate Limit Ceiling:** PulseDeck AI strictly enforces **12 cloud HTTP attempts in any rolling 60 seconds**, including retries and concurrent callers.
+* **Automatic Backoff:** Transient network errors and retryable HTTP statuses use at most 3 retries. The client honors `Retry-After`, capped at 30 seconds, and bounds each request timeout.
+* **Local Recommendation Cache:** Valid recommendations use a bounded in-memory cache. No recommendation or API key is written to the analysis cache.
 
 > [!NOTE]
 > **API Availability & Free Tier Disclaimer:**  
-> Free tier quotas, model availability, and pricing terms are determined exclusively by Google AI Studio and may vary over time. PulseDeck AI does **not** rely on cloud availability to perform: local Accelerate vDSP acoustic analysis and all playback capabilities function 100% offline.
+> Free tier quotas, model availability, and pricing terms are determined exclusively by Google AI Studio and may vary over time. Core playback and local analysis do **not** require cloud access. Advisor requests need a running local Ollama instance when Gemini is unavailable.
 
 ### 7.3 Offline Local Advisor Fallback (Ollama)
 For venues with zero cellular or Wi-Fi coverage:
@@ -284,7 +284,19 @@ For venues with zero cellular or Wi-Fi coverage:
    ollama pull llama3
    ```
 3. Ensure the Ollama daemon is running at `http://localhost:11434`.
-4. If no Gemini API key is configured or network drops occur, PulseDeck AI automatically routes transition queries to your local Ollama daemon without interruption.
+4. If no Gemini API key is configured or a cloud request fails, PulseDeck AI tries the local Ollama daemon. If Ollama is unavailable, the advisor returns a bounded error; playback and offline analysis continue.
+
+### 7.4 Offline Batch Library Analysis
+Install the optional dependencies and preview analysis first. Preview mode is the default and does not write audio or cache files:
+```bash
+python3 -m pip install -r requirements-analysis.txt
+python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --dry-run
+```
+Write a validated schema v1 cache copy only with an explicit output path outside the library:
+```bash
+python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --output-cache /tmp/pulsedeck-analysis.json
+```
+Manual overrides remain intact. Unknown tempo uses BPM/confidence `0`, no beat timestamps, and a positive `1.0` second interval sentinel; the analyzer does not use that sentinel to invent beats or cues. `vocalSegments` stays empty because this batch tool does not claim semantic vocal detection.
 
 ---
 

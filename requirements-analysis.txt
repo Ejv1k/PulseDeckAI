@@ -1,0 +1,4 @@
+# Optional dependencies for scripts/analyze_library.py. Core app and cache
+# validation remain usable without these packages.
+librosa>=0.10,<1.0
+soundfile>=0.12,<1.0

@@ -26,7 +26,7 @@ Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI
 | **Operating System** | macOS Sonoma 14.0 or newer | macOS 14+ required for Swift 6 structured concurrency |
 | **Language & Toolchain** | Swift 6.0 (`swift-tools-version: 6.0`) | Strict concurrency checks (`.swiftLanguageMode(.v6)`) |
 | **Frameworks** | AVFAudio, CoreAudio HAL, Accelerate (vDSP), SwiftUI | Native Apple frameworks only (zero third-party binary blobs) |
-| **Python Companion** | Python 3.10+ (standard library only for Phase 0) | Used for cross-language cache schema validation |
+| **Python Companion** | Python 3.10+; standard library for validation, optional `librosa`/`soundfile` for batch analysis | Analyzer dependencies live in `requirements-analysis.txt` |
 
 ---
 
@@ -110,9 +110,10 @@ When a human DJ manually adjusts cues, BPM, or musical key, the track entry reco
 ### 5. Hybrid Advisor Safety & Rate Limiting
 The AI DJ Advisor evaluates harmonic compatibility (Camelot wheel), energy progression, and transition bar counts:
 * **Primary Provider:** Google Gemini API configured for `gemini-2.5-flash`.
-* **Rate Limiting:** Enforces a hard ceiling of $\le 12$ Requests Per Minute ($\ge 5.0\,\text{s}$ interval) with exponential backoff and jitter on HTTP 429 errors.
-* **Local Fallback:** Configurable local Ollama endpoint (`http://localhost:11434`, e.g. `llama3:latest`) for 100% offline gig reliability.
-* **Provider Terms Advisory:** Cloud API quotas and free tier availability are controlled by Google AI Studio and may change over time; PulseDeck AI guarantees full offline autonomy using Accelerate DSP when cloud access is unavailable. API keys are never stored in repository or cache files.
+* **Rate Limiting:** A rolling window limits all cloud attempts, including retries, to 12 requests in any 60 seconds. Retry count and delay are bounded; `Retry-After` is honored up to 30 seconds.
+* **Local Fallback:** Optional local Ollama runs at `http://localhost:11434` by default. If it is unavailable, advisor requests fail with bounded errors; library analysis and playback remain offline.
+* **Privacy:** Gemini keys come from `GEMINI_API_KEY` or the configured environment variable and travel only in the `x-goog-api-key` header. Keys never enter URLs, logs, repository, or cache files.
+* **Model availability:** `gemini-2.5-flash` remains the default model ID. Google currently limits new-project access; endpoint and model are configurable. See [Google model availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash).
 
 ---
 
@@ -127,6 +128,7 @@ pulsedeckai/
 │   ├── USER_MANUAL.md                        # Event DJ operating manual, setup, keyboard map
 │   └── cache_schema_v1.json                  # JSON Schema (Draft 2020-12) for library cache
 ├── scripts/
+│   ├── analyze_library.py                    # Offline librosa batch estimates; dry run by default
 │   └── pulsedeck_cache.py                    # Python companion cache validator & dataclasses
 ├── Sources/
 │   ├── PulseDeckCore/                        # Headless DJ Engine Core Library
@@ -195,6 +197,14 @@ swift run PulseDeckAI
 # Verify the Python companion script against the library cache
 python3 scripts/pulsedeck_cache.py PulseDeck_Library/.pulsedeck_ai_cache.json
 ```
+
+### 5. Run Offline Batch Estimates Safely
+Install optional analyzer dependencies, then preview estimates without writing files:
+```bash
+python3 -m pip install -r requirements-analysis.txt
+python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --dry-run
+```
+To write a validated schema v1 copy, pass `--output-cache /tmp/pulsedeck-analysis.json`. The tool reads audio and the input cache only; output must be a separate JSON file outside the library. Unknown tempo keeps BPM/confidence at `0`, beat timestamps empty, and the schema's `1.0` second interval sentinel. It does not infer vocal segments or create beat-based cues.
 
 ---
 

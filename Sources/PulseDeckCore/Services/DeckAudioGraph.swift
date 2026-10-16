@@ -54,9 +54,15 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private var _cueScheduleStartSeconds: Double = 0.0
     private var _masterSegmentQueued: Bool = false
     private var _cueSegmentQueued: Bool = false
+    private var _masterScheduleGeneration: UInt64 = 0
+    private var _cueScheduleGeneration: UInt64 = 0
 
     private var _isMasterPlaying: Bool = false
     private var _isCuePlaying: Bool = false
+
+    /// Observes the actual scheduled completion closures for deterministic delayed-callback tests.
+    /// Install before transport calls; invoked only on the control queue when a monitor is present.
+    var segmentCompletionObserverForTesting: (@Sendable (AudioEngineRole, @escaping @Sendable () -> Void) -> Void)?
 
     /// Independent audio file instance scheduled on the Master player.
     public var masterAudioFileForTesting: AVAudioFile? {
@@ -234,6 +240,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
                     // Tap master playhead when engaging cue
                     let tapSeconds = self.currentMasterPlayheadSeconds()
                     if let cueFile {
+                        self.invalidateSchedule(for: .cue)
                         self.cuePlayerNode.stop()
                         self.scheduleCueSegment(file: cueFile, startSeconds: tapSeconds)
                     }
@@ -320,6 +327,8 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0
 
             // Stop players to clear queued segments from prior loads
+            self.invalidateSchedule(for: .master)
+            self.invalidateSchedule(for: .cue)
             self.masterPlayerNode.stop()
             self.cuePlayerNode.stop()
 
@@ -404,12 +413,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             let cueActive = self._isCueActive
             self.stateLock.unlock()
 
+            self.invalidateSchedule(for: .master)
             self.masterPlayerNode.stop()
             self.scheduleMasterSegment(file: masterFile, startSeconds: clampedSeconds)
             if wasMasterPlaying {
                 self.masterPlayerNode.play()
             }
 
+            self.invalidateSchedule(for: .cue)
             self.cuePlayerNode.stop()
             self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
             if wasMasterPlaying && cueActive {
@@ -435,6 +446,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             let wasCuePlaying = self._isCuePlaying || (self._isMasterPlaying && self._isCueActive)
             self.stateLock.unlock()
 
+            self.invalidateSchedule(for: .cue)
             self.cuePlayerNode.stop()
             self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
             if wasCuePlaying {
@@ -571,20 +583,27 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         let frameCount = AVAudioFrameCount(file.length - startFrame)
 
         stateLock.lock()
+        _masterScheduleGeneration &+= 1
+        let generation = _masterScheduleGeneration
         _masterScheduleStartSeconds = startSeconds
         _masterSegmentQueued = true
         stateLock.unlock()
 
+        let completion: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            guard self._masterScheduleGeneration == generation else { return }
+            self._masterSegmentQueued = false
+        }
         masterPlayerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
-            at: nil
-        ) { [weak self] in
-            self?.stateLock.lock()
-            self?._masterSegmentQueued = false
-            self?.stateLock.unlock()
-        }
+            at: nil,
+            completionHandler: completion
+        )
+        segmentCompletionObserverForTesting?(.master, completion)
     }
 
     private func scheduleCueSegment(file: AVAudioFile, startSeconds: Double) {
@@ -597,19 +616,40 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         let frameCount = AVAudioFrameCount(file.length - startFrame)
 
         stateLock.lock()
+        _cueScheduleGeneration &+= 1
+        let generation = _cueScheduleGeneration
         _cueScheduleStartSeconds = startSeconds
         _cueSegmentQueued = true
         stateLock.unlock()
 
+        let completion: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            guard self._cueScheduleGeneration == generation else { return }
+            self._cueSegmentQueued = false
+        }
         cuePlayerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
-            at: nil
-        ) { [weak self] in
-            self?.stateLock.lock()
-            self?._cueSegmentQueued = false
-            self?.stateLock.unlock()
+            at: nil,
+            completionHandler: completion
+        )
+        segmentCompletionObserverForTesting?(.cue, completion)
+    }
+
+    /// Invalidate before stopping: AVAudioPlayerNode may deliver a stopped segment's completion later.
+    private func invalidateSchedule(for role: AudioEngineRole) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        switch role {
+        case .master:
+            _masterScheduleGeneration &+= 1
+            _masterSegmentQueued = false
+        case .cue:
+            _cueScheduleGeneration &+= 1
+            _cueSegmentQueued = false
         }
     }
 

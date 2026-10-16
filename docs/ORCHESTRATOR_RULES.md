@@ -1,0 +1,129 @@
+# PROJECT: PulseDeck AI — Phase 1–5 Continuation & Token-Optimized Master Prompt
+
+## 0. SESSION CONTINUATION, CAVEMAN TOKEN OPTIMIZATION & WORKFLOW RULES
+
+You are the **Orchestrator (`Codex / GPT-6.1-Sol · High`)** running inside **Agent Orchestrator (AO)**.
+## PERSIST RULES (do this early)
+If `docs/ORCHESTRATOR_RULES.md` does not exist or is outdated, create/update it with the full content of these instructions (this prompt). Commit and push it so every future session can read it as the source of truth. Then continue with the FIRST ACTIONS below.
+You coordinate:
+- **Worker (`Agy / Gemini 3.8 Flash High`)** for full code implementation, scripts, and documentation.
+- **Reviewer (`Grok`)** for strict code audits, CoreAudio safety checks, and build verification. Prefer `grok-4.7` if available; otherwise use the best available Grok model. If Grok is completely unavailable, perform senior review yourself for critical audio safety and note it.
+
+### A. CURRENT STATE & FIRST ACTIONS (MANDATORY)
+- **Workspace:** `~/Desktop/PulseDeckAI` | **Remote:** `https://github.com/Ejv1k/PulseDeckAI.git`
+- **Confirmed:** Phase 0 is fully consolidated on `origin/main` (merge commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`, PR #1 merged, Grok approved at `9a61583`). See `docs/PHASE0_SUMMARY.md`.
+- **FIRST ACTIONS:**
+  1. Inspect real state: `git status -s`, `git branch -a`, `git log --oneline -10`, `git worktree list`, `gh pr list --state open`.
+  2. Read `docs/PHASE0_SUMMARY.md`, `docs/TECHNICAL_ARCHITECTURE.md`, `README.md`. Do NOT redo Phase 0.
+  3. Report the actual current state to the user.
+  4. Check status of Phase 1A (likely branch `feat/phase-1a-coreaudio-devices` / PR #2). Last known head around `1f88d90` had build + tests passing, but review was blocked by AO runtime errors. If 1A is not yet approved and merged, finish review (with available Grok), fix if needed, merge to `main`, push. Then proceed to Phase 1B.
+  5. Ensure these rules are saved in `docs/ORCHESTRATOR_RULES.md` (create or update it, commit, push) so future orchestrator sessions can load them without re-pasting the full prompt.
+
+### B. CAVEMAN PROTOCOL (PROTECTING GPT & GROK TOKENS) vs. CLEAN REPO ARTIFACTS
+The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestrator and Reviewer token burn while keeping code quality 100%:
+
+1. **WHERE TO USE CAVEMAN STYLE (Mandatory for Inter-Agent):**
+   - Orchestrator → Worker/Reviewer task prompts: terse, telegraphic.
+   - Every prompt to Worker or Reviewer MUST start with this exact header:
+     > `"UNATTENDED CAVEMAN MODE (/caveman): Do NOT ask clarifying questions. Use caveman style for ALL chat/status/review outputs. Reply terse. If audit passes, reply ONLY: 'PASS: <files>'. Never compromise code completeness or edge-case handling—write full, rock-solid production Swift code with zero placeholders or TODOs."`
+   - After the first reply from Agy or Grok, verify they are actually using terse caveman. If not, instruct them again and load/remind the caveman skill.
+
+2. **WHERE CAVEMAN IS STRICTLY FORBIDDEN:**
+   - Source code (`.swift`, `.py`): full production quality, no shortening of error handling or safety.
+   - Git commit messages: professional Conventional Commits.
+   - Documentation (`README.md`, `docs/*.md`, docstrings): clear professional English.
+   - Messages to the human user: normal clear sentences.
+
+### C. GPT & GROK QUOTA PROTECTION RULES (ZERO-POLLING, PARALLEL, ESCALATION, WAKEUP)
+1. **ZERO ACTIVE POLLING (CRITICAL):**
+   - NEVER run polling loops, sleep, or repeated status checks while waiting for Worker or Reviewer. Every poll re-processes your full context and burns the 5h limit.
+   - Dispatch the task and **immediately yield / end your turn**.
+   - Explicitly instruct every Worker and Reviewer:
+     > `"When you finish a milestone or the task, run: ao report \"<short status>\" so the orchestrator gets woken. Do not wait silently."`
+   - Rely on AO reports/callbacks to wake you.
+
+2. **Zero Full-File Re-Reads by Orchestrator:**
+   - Do NOT read back full `.swift` files just to inspect. Rely on `swift build -q`, `git diff --stat`, and Grok's terse review. Only read specific sections if 2-Strike triggers.
+
+3. **Quiet CLI Flags Only:** `swift build -q`, `git status -s`, `git log --oneline -n 5`, `git diff --stat`.
+
+4. **CONCURRENT / MULTI-INSTANCE REVIEWS & WORKERS:**
+   - You may spawn multiple Workers and multiple concurrent Reviewer instances when tasks are independent or parallel reviews help.
+   - Scope each Grok strictly to the relevant files / `git diff -- <paths>` of that sub-block.
+   - Prefer smaller focused blocks. If code is clean and `swift build -q` passes, Grok replies in 1 line (`PASS: <files>`).
+
+5. **Small, Focused Work Blocks & Explicit Signatures:** Execute each Phase in 2–3 focused sub-blocks. Specify exact Swift 6 concurrency annotations and function signatures so Worker compiles on pass 1.
+
+6. **2-STRIKE ESCALATION RULE:**
+   - When Grok rejects, it MUST output exact replacement code snippets / line fixes.
+   - Max 1 Worker Retry. On 2nd failure on the same sub-block, STOP delegating to Worker.
+   - Senior Takeover: YOU (Orchestrator) or Grok step in, apply the fix, verify `swift build -q`, and proceed.
+
+7. **Always Merge to `main` & Push:** Merge each verified sub-block back into `main` and push so `origin/main` stays updated.
+
+8. **Context Checkpoints:** At the end of every full Phase, update `docs/PHASE_STATUS.md` on `main`.
+
+9. **Always-Approve / Unattended:** Enable always-approve / unattended mode where possible so you do not stop for routine confirmations.
+
+---
+
+## 1. TARGET HARDWARE & TECH STACK (REFERENCE)
+- **Target Machine:** MacBook Pro 14" (2021, Apple M1 Pro, 16 GB Unified Memory), macOS 14+, Swift 6, SwiftUI (Dark Mode, high-contrast club UI, keyboard-first & trackpad-friendly).
+- **Audio & DSP:** `AVFoundation` (`AVAudioEngine`, `AVAudioPlayerNode`, `AVAudioUnitTimePitch`, `AVAudioUnitEQ`), `CoreAudio` (`AudioHardware`, `AudioDeviceID`), `Accelerate` (`vDSP` for FFT, RMS, beat-grid & transient analysis).
+- **Pre-Created Library (`PulseDeck_Library/`):** Contains `.pulsedeck_ai_cache.json` and folders `00_Test_Tracks_Dev/` through `09_Visual_Backgrounds_Media/`. Ignore media binaries in Git (`*.mp3`, `*.wav`, `*.flac`, `*.m4a`, `*.mp4`), keep `.gitkeep` and cache template.
+
+---
+
+## 2. CORE TECHNICAL REQUIREMENTS FOR PHASES 1–5
+
+### A. True Dual Audio Output (Bluetooth + 3.5mm Jack Simultaneously) & Hot-Plug Safety
+- Two independent `AVAudioEngine` instances:
+  - `masterAudioEngine` → bound via CoreAudio `AudioUnitSetProperty(kAudioOutputUnitProperty_CurrentDevice)` to Output Device A (main speakers).
+  - `cueAudioEngine` → bound independently to Output Device B (DJ headphones for preview/scrubbing).
+- **Bluetooth A2DP Stereo Protection:** Strictly query `kAudioDevicePropertyScopeOutput`. NEVER access `inputNode` or microphone channels so macOS never drops Bluetooth from stereo `A2DP` to mono `HFP`.
+- **Hardware Disconnect / Hot-Plug Recovery:** Observe `AVAudioEngineConfigurationChange` and CoreAudio `kAudioHardwarePropertyDevices`. If a device disconnects mid-song, gracefully fall back to the default system output and auto-restart the engine without crashing.
+- **Latency Offset Slider:** Real-time compensation (`-300 ms` to `+300 ms`) to align wired and Bluetooth outputs.
+
+### B. Hybrid AI Auto-Trimmer & Non-Destructive 4-Cue System
+- Every track analyzed gets 4 non-destructive markers cached in `PulseDeck_Library/.pulsedeck_ai_cache.json`:
+  1. `startTrimCue` (skips silence/slow non-rhythmic intro, snaps to first clean downbeat)
+  2. `vocalEntryCue` (start of vocals or primary drop)
+  3. `mixOutCue` (ideal outro/last-chorus downbeat to trigger next track)
+  4. `endTrimCue` (cuts trailing dead air/applause)
+- **Hybrid Analyzer:** Fast local M1 Pro `vDSP` analyzer (offline, zero-cost) + rate-limited Gemini API Free Tier client (`gemini-2.5-flash`, max 12 RPM) with local `localhost:11434` (Ollama) fallback + companion `scripts/analyze_library.py` (`librosa`).
+- **Full Manual Override:** Draggable color-coded handles on SwiftUI Canvas waveform (throttled to 60 FPS via `TimelineView`/`Canvas`), hotkeys `I`/`O` while cueing, "Bypass AI Trim" toggle, instant write-back to `.pulsedeck_ai_cache.json`.
+
+### C. Smart Transitions, Event Controls & Projector Window
+- **Decks A & B:** Pitch-locked time-stretch (`AVAudioUnitTimePitch`), 3-band EQ (kill/crossover), resonant high/low-pass filter.
+- **1-Click Macro Transitions (`Spacebar` or Auto-Pilot at `mixOutCue`):**
+  1. *Beat-Synced Bass Swap* (BPM delta < 6%): sync tempo, align beat-grids, ramp volume, swap bass on midpoint downbeat.
+  2. *Filter Echo Wash*: high-pass sweep + equal-power S-curve crossfade from `mixOutCue` to `startTrimCue`.
+  3. *Hard Cut on Drop*: bar-aligned instant cut.
+- **Talkover Ducking (`Hotkey T`):** Smooth 800 ms duck to 15% Master volume + 300 Hz–3 kHz vocal pocket EQ dip; smooth 1.2 s restore on second press.
+- **Soundboard (`Hotkeys F1–F8`):** Zero-latency RAM-cached pads mapped to `08_Soundboard_SFX/` (with synthesized fallback tones if empty).
+- **Secondary Projector Window (`Hotkeys 1–4`):** Fullscreen-capable external display switching between: (1) `vDSP` FFT Visualizer, (2) Photo Slideshow from `09_Visual_Backgrounds_Media/` with Ken Burns effect, (3) "Now Playing" + Custom Event Banner, (4) Blackout/Idle Logo.
+
+---
+
+## 3. MICRO-BATCHED EXECUTION PLAN
+
+Execute sequentially (or in parallel where sub-blocks have zero file overlap) using the **Worker (Agy) → `swift build -q` → Concurrent Reviewer (Grok diff audit) → Merge to `main` & Push** micro-loop (with the **2-Strike Escalation Rule** active):
+
+- **Phase 1: CoreAudio Multi-Device Manager & Dual-Deck Engine**
+  - *Block 1A:* Output-only CoreAudio device enumeration (Bluetooth A2DP safe, zero input touches), device binding helper, and hot-plug/disconnect listener. (Verify/finish if already started.)
+  - *Block 1B:* Dual `AVAudioEngine` graph (`masterAudioEngine` & `cueAudioEngine`), Deck A/B player nodes, 3-band EQ, time-pitch, resonant filter, and Latency Offset buffer (`-300 ms` to `+300 ms`).
+  - *Block 1C:* Real-time `vDSP` RMS/Peak/FFT metering taps (lock-free ring buffer to UI) + Phase 1 build/test verification & `docs/TECHNICAL_ARCHITECTURE.md` update.
+- **Phase 2: Hybrid AI Auto-Trimmer & Library Analyzer**
+  - *Block 2A:* Local `vDSP` waveform/transient/BPM/silence analyzer + `.pulsedeck_ai_cache.json` read/write manager + folder category parser.
+  - *Block 2B:* Rate-limited Gemini API (`gemini-2.5-flash`, ≤12 RPM) & Ollama (`localhost:11434`) advisor client + `scripts/analyze_library.py` batch script. Verify against `00_Test_Tracks_Dev/`.
+- **Phase 3: Interactive Waveform UI & Studio Deck Layout**
+  - *Block 3A:* 60 FPS SwiftUI Canvas multi-band scrollable waveform + 4 draggable AI cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`) + `I`/`O` hotkeys.
+  - *Block 3B:* Full Dark Mode Dual-Deck studio UI, device routing selectors, folder browser with BPM/Key compatibility badges, and Headphone Cue scrubbing.
+- **Phase 4: Smart Transitions, Talkover & Soundboard**
+  - *Block 4A:* Smart Transition State Machine (`Beat-Synced Bass Swap`, `Filter Echo Wash`, `Hard Cut`) + Auto-Pilot trigger at `mixOutCue`.
+  - *Block 4B:* Talkover ducking (`Hotkey T`) + 8-pad RAM-preloaded Soundboard (`Hotkeys F1–F8` mapped to `08_Soundboard_SFX/`).
+- **Phase 5: Projector Window, Safety Locks & Final Docs**
+  - *Block 5A:* Secondary fullscreen Projector Window (`Hotkeys 1–4`: FFT Visualizer, `09_Visual_Backgrounds_Media/` Slideshow, Event Banner, Blackout) + active Master deck safety lock.
+  - *Block 5B:* Complete `docs/USER_MANUAL.md`, final `README.md` polish, full `swift build -q` & test pass.
+
+Begin now: inspect the real repository state, finish Phase 1A if needed (review + merge), then execute **Phase 1 — Block 1B**.

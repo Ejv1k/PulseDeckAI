@@ -99,15 +99,16 @@ public struct LocalTrackAnalyzer: Sendable {
                 let value = Double(mono[i])
                 guard value.isFinite else { throw LocalAnalysisError.invalidMetadata }
                 let magnitude = absBuffer[i]
-                waveform[bin] = max(waveform[bin], magnitude)
+                // Saturate only display metadata; filters and the tempo envelope retain the original signal.
+                waveform[bin] = max(waveform[bin], min(1, magnitude))
                 lowState += Double(lowAlpha) * (value - lowState)
                 upperState += Double(upperAlpha) * (value - upperState)
                 let lowValue = Float(abs(lowState))
                 let midValue = Float(abs(upperState - lowState))
                 let highValue = Float(abs(value - upperState))
-                low[bin] = max(low[bin], lowValue)
-                mid[bin] = max(mid[bin], midValue)
-                high[bin] = max(high[bin], highValue)
+                low[bin] = max(low[bin], min(1, lowValue))
+                mid[bin] = max(mid[bin], min(1, midValue))
+                high[bin] = max(high[bin], min(1, highValue))
                 envelope[envelopeFeatureIndex] += magnitude * magnitude
                 envelopeCounts[envelopeFeatureIndex] += 1
             }

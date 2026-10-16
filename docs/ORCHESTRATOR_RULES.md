@@ -11,7 +11,7 @@ You coordinate:
 
 ### A. CURRENT STATE & FIRST ACTIONS (MANDATORY)
 - **Workspace:** `~/Desktop/PulseDeckAI` | **Remote:** `https://github.com/Ejv1k/PulseDeckAI.git`
-- **Confirmed:** Phase 0 is fully consolidated on `origin/main` (merge commit `d50e5c85d70f0340798e1f5707bb8a8ce799f972`, PR #1 merged, Grok approved at `9a61583`). See `docs/PHASE0_SUMMARY.md`.
+- **Confirmed:** Phase 0 is fully consolidated on `origin/main` (PR #1 merge commit `d50e5c8e37cc5f58bce96a9f5336e13543e19872`, current `origin/main` tip `80387a5110affe1f25eaee45f78e3cf2ebff07ba`, Grok approved at `9a6158305149cc04915591b072c1c198aef5a90f`). See `docs/PHASE0_SUMMARY.md`.
 - **FIRST ACTIONS:**
   1. Inspect real state: `git status -s`, `git branch -a`, `git log --oneline -10`, `git worktree list`, `gh pr list --state open`.
   2. Read `docs/PHASE0_SUMMARY.md`, `docs/TECHNICAL_ARCHITECTURE.md`, `README.md`. Do NOT redo Phase 0.

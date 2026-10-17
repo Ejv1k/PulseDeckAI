@@ -184,6 +184,164 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testFailedCueSaveSurvivesSuccessfulDifferentCueSaveAndCanRetry() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let started = [
+            XCTestExpectation(description: "Failed start cue save"),
+            XCTestExpectation(description: "Successful vocal cue save"),
+            XCTestExpectation(description: "Retried start cue save")
+        ]
+        let persistence = HeldWaveformPersistence(started: started, failures: [1])
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+        await select(app, a.relativePath)
+
+        var diskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        var diskTrack = try XCTUnwrap(diskCache.tracks[a.relativePath])
+        diskTrack.bpm = 150.0
+        diskTrack.musicalKey = "12A"
+        diskTrack.cueMarkers.endTrimCue = 170.0
+        diskTrack.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["bpm", "musicalKey"],
+            author: "External DJ",
+            notes: "Fresh external notes"
+        )
+        diskCache.tracks[a.relativePath] = diskTrack
+        try CachePersistence.saveAtomic(cache: diskCache, to: cacheURL(root))
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        await completed(started[0])
+        editor.setCue(.vocalEntry, toTime: 20.0)
+        await persistence.releaseNext()
+        await completed(started[1])
+
+        XCTAssertNotNil(editor.errorMessage, "Older failed cue must remain visible while another cue saves")
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        await persistence.releaseNext()
+        await saved(editor)
+
+        XCTAssertEqual(editor.cues.startTrimCue, 4.0)
+        XCTAssertEqual(editor.cues.vocalEntryCue, 20.0)
+        XCTAssertNotNil(editor.errorMessage, "Successful vocal save must not hide failed start cue")
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        var persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, a.cueMarkers.startTrimCue)
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 20.0)
+        XCTAssertEqual(persisted.cueMarkers.endTrimCue, 170.0)
+        XCTAssertEqual(persisted.bpm, 150.0)
+        XCTAssertEqual(persisted.musicalKey, "12A")
+        XCTAssertEqual(persisted.manualOverrides.notes, "Fresh external notes")
+
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.startTrimCue, 4.0, "Reselection must retain failed cue intent")
+        XCTAssertEqual(editor.cues.vocalEntryCue, 20.0, "Reselection must retain successful cue")
+        XCTAssertEqual(editor.cues.endTrimCue, 170.0, "Reselection must adopt unrelated disk cue")
+        XCTAssertEqual(editor.currentTrack?.bpm, 150.0, "Reselection must adopt fresh disk BPM")
+        XCTAssertEqual(editor.currentTrack?.musicalKey, "12A", "Reselection must adopt fresh disk key")
+        XCTAssertEqual(editor.manualOverrides.notes, "Fresh external notes")
+        XCTAssertNotNil(editor.errorMessage, "Reselection must retain failed cue error")
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        await completed(started[2])
+        await persistence.releaseNext()
+        await saved(editor)
+
+        persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, 4.0)
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 20.0)
+        XCTAssertEqual(persisted.cueMarkers.endTrimCue, 170.0)
+        XCTAssertEqual(persisted.bpm, 150.0)
+        XCTAssertEqual(persisted.musicalKey, "12A")
+        XCTAssertEqual(persisted.manualOverrides.notes, "Fresh external notes")
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNil(editor.errorMessage)
+    }
+
+    @MainActor
+    func testFailedCueSaveSurvivesSuccessfulBypassSaveAndCanRetry() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let started = [
+            XCTestExpectation(description: "Failed start cue save"),
+            XCTestExpectation(description: "Successful bypass save"),
+            XCTestExpectation(description: "Retried start cue save")
+        ]
+        let persistence = HeldWaveformPersistence(started: started, failures: [1])
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+        await select(app, a.relativePath)
+
+        var diskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        var diskTrack = try XCTUnwrap(diskCache.tracks[a.relativePath])
+        diskTrack.bpm = 151.0
+        diskTrack.musicalKey = "1A"
+        diskTrack.cueMarkers.vocalEntryCue = 12.0
+        diskTrack.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["bpm", "musicalKey"],
+            author: "External DJ",
+            notes: "Fresh external notes"
+        )
+        diskCache.tracks[a.relativePath] = diskTrack
+        try CachePersistence.saveAtomic(cache: diskCache, to: cacheURL(root))
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        await completed(started[0])
+        editor.toggleAITrimBypass()
+        await persistence.releaseNext()
+        await completed(started[1])
+
+        XCTAssertNotNil(editor.errorMessage, "Older failed cue must remain visible while bypass saves")
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        await persistence.releaseNext()
+        await saved(editor)
+
+        XCTAssertEqual(editor.cues.startTrimCue, 4.0)
+        XCTAssertTrue(editor.aiTrimBypass)
+        XCTAssertNotNil(editor.errorMessage, "Successful bypass save must not hide failed cue")
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        var persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, a.cueMarkers.startTrimCue)
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 12.0)
+        XCTAssertEqual(persisted.bpm, 151.0)
+        XCTAssertEqual(persisted.musicalKey, "1A")
+        XCTAssertEqual(persisted.manualOverrides.notes, "Fresh external notes")
+        XCTAssertTrue(persisted.aiTrimBypass)
+
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.startTrimCue, 4.0, "Reselection must retain failed cue intent")
+        XCTAssertEqual(editor.cues.vocalEntryCue, 12.0, "Reselection must adopt unrelated disk cue")
+        XCTAssertEqual(editor.currentTrack?.bpm, 151.0, "Reselection must adopt fresh disk BPM")
+        XCTAssertEqual(editor.currentTrack?.musicalKey, "1A", "Reselection must adopt fresh disk key")
+        XCTAssertEqual(editor.manualOverrides.notes, "Fresh external notes")
+        XCTAssertTrue(editor.aiTrimBypass, "Reselection must retain successful bypass")
+        XCTAssertNotNil(editor.errorMessage, "Reselection must retain failed cue error")
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        await completed(started[2])
+        await persistence.releaseNext()
+        await saved(editor)
+
+        persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, 4.0)
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 12.0)
+        XCTAssertEqual(persisted.bpm, 151.0)
+        XCTAssertEqual(persisted.musicalKey, "1A")
+        XCTAssertEqual(persisted.manualOverrides.notes, "Fresh external notes")
+        XCTAssertTrue(persisted.aiTrimBypass)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNil(editor.errorMessage)
+    }
+
+    @MainActor
     func testEarlierSaveCompletionPreservesCueDragUntilDragIsCommitted() async throws {
         let (root, a, _, _) = try makeLibrary()
         let started = [XCTestExpectation(description: "Earlier save"), XCTestExpectation(description: "Drag save")]

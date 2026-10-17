@@ -267,13 +267,24 @@ public final class WaveformEditorModel: ObservableObject {
             self.relativePath = relativePath
         }
     }
+    private enum EditedField: Hashable {
+        case cue(CueType)
+        case aiTrimBypass
+    }
+    private struct FieldEdit {
+        let revision: UInt64
+        var isPending: Bool
+        var failureMessage: String?
+    }
     private struct LocalEdit {
         let track: TrackCacheEntry
         let revision: UInt64
         var acceptedPreviousCueValues: [CueType: Set<Double>]
         var acceptedPreviousBypassValues: Set<Bool>
-        var isPending = true
-        var failureMessage: String?
+        var fieldEdits: [EditedField: FieldEdit]
+
+        var hasPendingEdits: Bool { fieldEdits.values.contains(where: \.isPending) }
+        var failureMessage: String? { fieldEdits.values.compactMap(\.failureMessage).first }
     }
     private var localEdits: [TrackIdentity: LocalEdit] = [:]
     private var nextRevision: UInt64 = 0
@@ -285,8 +296,7 @@ public final class WaveformEditorModel: ObservableObject {
 
     public func hasDirtyEdits(for relativePath: String, libraryRootURL: URL) -> Bool {
         let identity = TrackIdentity(root: libraryRootURL, relativePath: relativePath)
-        guard let local = localEdits[identity] else { return false }
-        return local.isPending || local.failureMessage != nil
+        return localEdits[identity] != nil
     }
 
     public func hasActiveInteraction(since revision: UInt64, relativePath: String, libraryRootURL: URL) -> Bool {
@@ -317,21 +327,54 @@ public final class WaveformEditorModel: ObservableObject {
         guard let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: relativePath)] else {
             return persisted
         }
-        guard local.isPending || local.failureMessage != nil else {
-            return persisted
-        }
-        return persisted.map { local.track.mergingPreservingOverrides(with: $0) } ?? local.track
+        return persisted.map { applying(local, to: $0) } ?? local.track
     }
 
     func applyingLocalEdits(to cache: PulseDeckLibraryCache, libraryRootURL: URL) -> PulseDeckLibraryCache {
         var updated = cache
         for (identity, local) in localEdits where identity.root == libraryRootURL.standardizedFileURL {
-            guard local.isPending || local.failureMessage != nil else { continue }
             updated.tracks[identity.relativePath] = updated.tracks[identity.relativePath].map {
-                local.track.mergingPreservingOverrides(with: $0)
+                applying(local, to: $0)
             } ?? local.track
         }
         return updated
+    }
+
+    private func applying(_ local: LocalEdit, to persisted: TrackCacheEntry) -> TrackCacheEntry {
+        var merged = persisted
+        let mapper = WaveformCoordinateMapper(
+            duration: persisted.duration,
+            zoomLevel: 1,
+            scrollOffsetSeconds: 0,
+            totalBins: 0
+        )
+        for cue in CueType.allCases where local.fieldEdits[.cue(cue)] != nil {
+            merged.cueMarkers = mapper.validateAndClamp(
+                cue: cue,
+                newTime: cueValue(cue, in: local.track.cueMarkers),
+                currentCues: merged.cueMarkers
+            )
+        }
+        if local.fieldEdits[.aiTrimBypass] != nil {
+            merged.aiTrimBypass = local.track.aiTrimBypass
+        }
+
+        var overrides = persisted.manualOverrides
+        if !local.fieldEdits.isEmpty {
+            overrides.isManual = true
+            if local.fieldEdits.keys.contains(where: { if case .cue = $0 { true } else { false } }),
+               !overrides.overriddenFields.contains("cueMarkers") {
+                overrides.overriddenFields.append("cueMarkers")
+            }
+            if local.fieldEdits[.aiTrimBypass] != nil,
+               !overrides.overriddenFields.contains("aiTrimBypass") {
+                overrides.overriddenFields.append("aiTrimBypass")
+            }
+            overrides.updatedAt = local.track.manualOverrides.updatedAt ?? overrides.updatedAt
+            overrides.author = local.track.manualOverrides.author ?? overrides.author
+        }
+        merged.manualOverrides = overrides
+        return merged
     }
 
     func finishActiveDrag() {
@@ -372,7 +415,7 @@ public final class WaveformEditorModel: ObservableObject {
         self.errorMessage = local?.failureMessage
         if local?.failureMessage != nil {
             self.statusMessage = "Unsaved cue changes"
-        } else if local?.isPending == true {
+        } else if local?.hasPendingEdits == true {
             self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
         } else {
             self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
@@ -544,6 +587,13 @@ public final class WaveformEditorModel: ObservableObject {
         }
     }
 
+    private func editedField(for intent: WaveformEditIntent) -> EditedField {
+        switch intent {
+        case .cue(let cue, _): .cue(cue)
+        case .aiTrimBypass: .aiTrimBypass
+        }
+    }
+
     private func commitCueChanges(reason: String, cue: CueType) {
         guard var track = currentTrack else { return }
         let previousValue = cueValue(cue, in: track.cueMarkers)
@@ -587,9 +637,12 @@ public final class WaveformEditorModel: ObservableObject {
         nextRevision &+= 1
         let revision = nextRevision
         let submittedInteractionRevision = interactionRevision
+        var fieldEdits = localEdits[identity]?.fieldEdits ?? [:]
+        fieldEdits[editedField(for: intent)] = FieldEdit(revision: revision, isPending: true)
         localEdits[identity] = LocalEdit(track: track, revision: revision,
                                          acceptedPreviousCueValues: acceptedPreviousCueValues,
-                                         acceptedPreviousBypassValues: acceptedPreviousBypassValues)
+                                         acceptedPreviousBypassValues: acceptedPreviousBypassValues,
+                                         fieldEdits: fieldEdits)
         pendingSaveCount += 1
         self.isSaving = true
         let previousSave = inFlightSaveTask
@@ -600,34 +653,54 @@ public final class WaveformEditorModel: ObservableObject {
             do {
                 let updatedCache = try await actor.persistTrack(track, libraryRootURL: rootURL, intent: intent)
                 self?.completeSave(track: track, rootURL: rootURL, identity: identity,
-                                   revision: revision, interactionRevision: submittedInteractionRevision,
+                                   revision: revision, intent: intent,
+                                   interactionRevision: submittedInteractionRevision,
                                    result: .success(updatedCache))
             } catch {
                 self?.completeSave(track: track, rootURL: rootURL, identity: identity,
-                                   revision: revision, interactionRevision: submittedInteractionRevision,
+                                   revision: revision, intent: intent,
+                                   interactionRevision: submittedInteractionRevision,
                                    result: .failure(error))
             }
         }
     }
 
     private func completeSave(track: TrackCacheEntry, rootURL: URL, identity: TrackIdentity,
-                              revision: UInt64, interactionRevision submittedInteractionRevision: UInt64,
+                              revision: UInt64, intent: WaveformEditIntent,
+                              interactionRevision submittedInteractionRevision: UInt64,
                               result: Result<PulseDeckLibraryCache, any Error>) {
         pendingSaveCount -= 1
         isSaving = pendingSaveCount > 0
         let isLatestRevisionForTrack = localEdits[identity]?.revision == revision
-        if isLatestRevisionForTrack {
+        let field = editedField(for: intent)
+        var acknowledgedCurrentField = false
+        if var local = localEdits[identity],
+           var fieldEdit = local.fieldEdits[field],
+           fieldEdit.revision == revision {
+            acknowledgedCurrentField = true
             switch result {
             case .success:
-                localEdits.removeValue(forKey: identity)
+                local.fieldEdits.removeValue(forKey: field)
             case .failure(let error):
-                localEdits[identity]?.isPending = false
-                localEdits[identity]?.failureMessage = error.localizedDescription
+                fieldEdit.isPending = false
+                fieldEdit.failureMessage = error.localizedDescription
+                local.fieldEdits[field] = fieldEdit
+            }
+            if local.fieldEdits.isEmpty {
+                localEdits.removeValue(forKey: identity)
+            } else {
+                localEdits[identity] = local
             }
         }
         if case .success(let cache) = result {
             let savedTrack = cache.tracks[identity.relativePath] ?? track
             onTrackPersisted?(savedTrack, cache, rootURL)
+        }
+        if acknowledgedCurrentField, case .failure(let error) = result,
+           currentTrack?.relativePath == identity.relativePath,
+           libraryRootURL.standardizedFileURL == identity.root {
+            errorMessage = error.localizedDescription
+            statusMessage = "Unsaved cue changes"
         }
         // Earlier completions may update the shared cache, but cannot overwrite a newer edit's UI status.
         guard currentTrack?.relativePath == identity.relativePath,
@@ -635,14 +708,18 @@ public final class WaveformEditorModel: ObservableObject {
               isLatestRevisionForTrack else { return }
         switch result {
         case .success(let cache):
-            errorMessage = nil
-            statusMessage = "Saved cues to .pulsedeck_ai_cache.json"
+            let local = localEdits[identity]
+            errorMessage = local?.failureMessage
+            statusMessage = local?.failureMessage == nil
+                ? "Saved cues to .pulsedeck_ai_cache.json"
+                : "Unsaved cue changes"
             guard interactionRevision == submittedInteractionRevision else { return }
             if let savedTrack = cache.tracks[identity.relativePath] {
-                self.currentTrack = savedTrack
-                self.manualOverrides = savedTrack.manualOverrides
-                self.cues = savedTrack.cueMarkers
-                self.aiTrimBypass = savedTrack.aiTrimBypass
+                let displayedTrack = local.map { applying($0, to: savedTrack) } ?? savedTrack
+                self.currentTrack = displayedTrack
+                self.manualOverrides = displayedTrack.manualOverrides
+                self.cues = displayedTrack.cueMarkers
+                self.aiTrimBypass = displayedTrack.aiTrimBypass
             }
         case .failure(let error):
             errorMessage = error.localizedDescription

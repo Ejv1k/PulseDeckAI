@@ -14,11 +14,13 @@ public final class AppState: ObservableObject {
     @Published public private(set) var loadedCache: PulseDeckLibraryCache?
     @Published public var selectedTrackPath: String?
     public let waveformEditorModel: WaveformEditorModel
-    private let audioCoordinator: AudioEngineCoordinator
-    private let audioMetering: AudioMeteringService
+    private let audioCoordinator: AudioEngineCoordinator?
+    private let audioMetering: AudioMeteringService?
 
     private let scanner = LibraryScanner()
     private var scanGeneration: UInt64 = 0
+    private var selectionGeneration: UInt64 = 0
+    private var loadedCacheRootURL: URL?
 
     public init() {
         let coordinator = AudioEngineCoordinator()
@@ -37,11 +39,25 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = defaultURL
         let editor = WaveformEditorModel(libraryRootURL: defaultURL)
         self.waveformEditorModel = editor
-        editor.onTrackPersisted = { [weak self] track, cache in
-            guard let self = self else { return }
-            self.loadedCache = cache
-        }
+        connectEditorPersistence()
         refreshLibrary()
+    }
+
+    /// Initializes library/editor state without starting audio hardware; the production selection and save paths are shared.
+    init(libraryRootURL: URL, waveformEditorModel: WaveformEditorModel) {
+        self.libraryRootURL = libraryRootURL
+        self.waveformEditorModel = waveformEditorModel
+        self.audioCoordinator = nil
+        self.audioMetering = nil
+        connectEditorPersistence()
+    }
+
+    private func connectEditorPersistence() {
+        waveformEditorModel.onTrackPersisted = { [weak self] _, cache, rootURL in
+            guard let self, self.libraryRootURL.standardizedFileURL == rootURL.standardizedFileURL else { return }
+            self.loadedCache = self.waveformEditorModel.applyingLocalEdits(to: cache, libraryRootURL: rootURL)
+            self.loadedCacheRootURL = rootURL.standardizedFileURL
+        }
     }
 
     /// Scans the library root and updates published state on MainActor.
@@ -69,13 +85,18 @@ public final class AppState: ObservableObject {
                 guard self.scanGeneration == thisGeneration else {
                     return
                 }
+                guard self.libraryRootURL.standardizedFileURL == url.standardizedFileURL else {
+                    self.isScanning = false
+                    return
+                }
 
                 self.scanSummary = summary
-                self.loadedCache = cache
+                self.loadedCache = cache.map { self.waveformEditorModel.applyingLocalEdits(to: $0, libraryRootURL: url) }
+                self.loadedCacheRootURL = url.standardizedFileURL
                 self.waveformEditorModel.updateLibraryRoot(url)
 
-                if self.waveformEditorModel.currentTrack == nil,
-                   let firstTrack = cache?.tracks.values.sorted(by: { $0.relativePath < $1.relativePath }).first {
+                if self.selectedTrackPath == nil, self.waveformEditorModel.currentTrack == nil,
+                   let firstTrack = self.loadedCache?.tracks.values.sorted(by: { $0.relativePath < $1.relativePath }).first {
                     self.waveformEditorModel.loadTrack(firstTrack)
                     self.selectedTrackPath = firstTrack.relativePath
                 }
@@ -106,33 +127,56 @@ public final class AppState: ObservableObject {
     /// Selects a track by relative path and loads it into the waveform editor.
     /// Preserves any pending edits and ensures the latest cached state is loaded,
     /// reloading from disk if the shared in-memory cache is out of date.
-    public func selectTrack(relativePath: String) {
+    @discardableResult
+    public func selectTrack(relativePath: String) -> Task<Void, Never> {
         // If already selected, do not reload stale in-memory cache over current active edits
         if selectedTrackPath == relativePath,
+           waveformEditorModel.libraryRootURL.standardizedFileURL == libraryRootURL.standardizedFileURL,
            let current = waveformEditorModel.currentTrack,
            current.relativePath == relativePath {
-            return
+            return Task {}
         }
 
+        waveformEditorModel.finishActiveDrag()
+        let rootURL = libraryRootURL
+        waveformEditorModel.updateLibraryRoot(rootURL)
+        selectionGeneration &+= 1
+        let generation = selectionGeneration
         self.selectedTrackPath = relativePath
+        let knownCache = loadedCacheRootURL == rootURL.standardizedFileURL ? loadedCache : nil
+        if let track = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: knownCache, libraryRootURL: rootURL) {
+            waveformEditorModel.loadTrack(track)
+        } else {
+            waveformEditorModel.clearTrack()
+        }
 
         // Reload latest cache from disk to ensure freshest state if disk was updated
-        let cacheURL = self.libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
-        if FileManager.default.fileExists(atPath: cacheURL.path),
-           let freshCache = CachePersistence.load(from: cacheURL) {
-            self.loadedCache = freshCache
-        }
-
-        if let track = loadedCache?.tracks[relativePath] {
-            self.waveformEditorModel.loadTrack(track)
-            self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
-        } else {
-            self.statusMessage = "Track '\(relativePath)' not yet analyzed in cache"
+        return Task { [weak self] in
+            let freshCache = await Task.detached(priority: .userInitiated) {
+                CachePersistence.load(from: rootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            }.value
+            guard let self, self.selectionGeneration == generation,
+                  self.libraryRootURL.standardizedFileURL == rootURL.standardizedFileURL,
+                  self.selectedTrackPath == relativePath else { return }
+            if let freshCache {
+                self.loadedCache = self.waveformEditorModel.applyingLocalEdits(to: freshCache, libraryRootURL: rootURL)
+                self.loadedCacheRootURL = rootURL.standardizedFileURL
+            }
+            let currentCache = self.loadedCacheRootURL == rootURL.standardizedFileURL ? self.loadedCache : nil
+            if let track = self.waveformEditorModel.entryForSelection(relativePath: relativePath, cache: currentCache, libraryRootURL: rootURL) {
+                // An immediate local selection may already be receiving gestures; a disk read cannot replace it.
+                if self.waveformEditorModel.currentTrack?.relativePath != relativePath {
+                    self.waveformEditorModel.loadTrack(track)
+                }
+                self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
+            } else {
+                self.statusMessage = "Track '\(relativePath)' not yet analyzed in cache"
+            }
         }
     }
 
     /// Reads the newest output meter on the control queue; callers stay on MainActor.
     public func meterSnapshot(for role: AudioEngineRole) -> AudioMeterSnapshot? {
-        audioMetering.drainLatest(for: role)
+        audioMetering?.drainLatest(for: role)
     }
 }

@@ -134,10 +134,15 @@ public enum WaveformEditorError: LocalizedError, Equatable {
     }
 }
 
+/// Asynchronous persistence boundary shared by the editor and its production background actor.
+public protocol WaveformTrackPersisting: Sendable {
+    func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache
+}
+
 /// Serial background executor actor for atomic cache persistence, ensuring all decoding,
 /// validation, encoding, and disk flush operations run completely off MainActor while preserving
 /// save request ordering.
-public actor WaveformPersistenceActor {
+public actor WaveformPersistenceActor: WaveformTrackPersisting {
     public init() {}
 
     public func persistTrack(
@@ -181,18 +186,84 @@ public final class WaveformEditorModel: ObservableObject {
     @Published public var statusMessage: String = "Waveform Editor Ready"
     @Published public var errorMessage: String? = nil
 
-    public var onTrackPersisted: (@MainActor (TrackCacheEntry, PulseDeckLibraryCache) -> Void)?
+    public var onTrackPersisted: (@MainActor (TrackCacheEntry, PulseDeckLibraryCache, URL) -> Void)?
     public private(set) var libraryRootURL: URL
-    private let persistenceActor = WaveformPersistenceActor()
+    private let persistenceActor: any WaveformTrackPersisting
     private var inFlightSaveTask: Task<Void, Never>?
+    private struct TrackIdentity: Hashable {
+        let root: URL
+        let relativePath: String
 
-    public init(libraryRootURL: URL) {
+        init(root: URL, relativePath: String) {
+            self.root = root.standardizedFileURL
+            self.relativePath = relativePath
+        }
+    }
+    private struct LocalEdit {
+        let track: TrackCacheEntry
+        let revision: UInt64
+        var isPending = true
+        var failureMessage: String?
+    }
+    private var localEdits: [TrackIdentity: LocalEdit] = [:]
+    private var nextRevision: UInt64 = 0
+    private var pendingSaveCount = 0
+
+    public init(libraryRootURL: URL, persistence: any WaveformTrackPersisting = WaveformPersistenceActor()) {
         self.libraryRootURL = libraryRootURL
+        self.persistenceActor = persistence
         self.cues = CueMarkers(startTrimCue: 0.0, vocalEntryCue: 0.0, mixOutCue: 0.0, endTrimCue: 0.0)
     }
 
     public func updateLibraryRoot(_ url: URL) {
+        if libraryRootURL.standardizedFileURL != url.standardizedFileURL {
+            finishActiveDrag()
+            clearTrack()
+        }
         self.libraryRootURL = url
+    }
+
+    /// Local manual revisions remain authoritative for this editing session, including failed or pending saves.
+    /// Fresh analysis metadata can still be adopted without replacing the DJ's latest manual fields.
+    func entryForSelection(relativePath: String, cache: PulseDeckLibraryCache?, libraryRootURL: URL) -> TrackCacheEntry? {
+        let persisted = cache?.tracks[relativePath]
+        guard let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: relativePath)] else {
+            return persisted
+        }
+        return persisted.map { local.track.mergingPreservingOverrides(with: $0) } ?? local.track
+    }
+
+    func applyingLocalEdits(to cache: PulseDeckLibraryCache, libraryRootURL: URL) -> PulseDeckLibraryCache {
+        var updated = cache
+        for (identity, local) in localEdits where identity.root == libraryRootURL.standardizedFileURL {
+            updated.tracks[identity.relativePath] = updated.tracks[identity.relativePath].map {
+                local.track.mergingPreservingOverrides(with: $0)
+            } ?? local.track
+        }
+        return updated
+    }
+
+    func finishActiveDrag() {
+        if let cue = activeDraggingCue { endDrag(cue: cue) }
+    }
+
+    func clearTrack() {
+        currentTrack = nil
+        cues = CueMarkers(startTrimCue: 0, vocalEntryCue: 0, mixOutCue: 0, endTrimCue: 0)
+        aiTrimBypass = false
+        manualOverrides = ManualOverrides()
+        selectedCue = nil
+        activeDraggingCue = nil
+        errorMessage = nil
+        statusMessage = "Waveform Editor Ready"
+        playheadPosition = 0
+        zoomLevel = 1
+        scrollOffsetSeconds = 0
+    }
+
+    /// Waits for saves enqueued before this call; the UI remains responsive while persistence suspends.
+    func waitForPendingSaves() async {
+        await inFlightSaveTask?.value
     }
 
     /// Loads a real cached track analysis entry into the editor.
@@ -206,8 +277,15 @@ public final class WaveformEditorModel: ObservableObject {
         self.playheadPosition = self.cues.startTrimCue
         self.selectedCue = nil
         self.activeDraggingCue = nil
-        self.errorMessage = nil
-        self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
+        let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: entry.relativePath)]
+        self.errorMessage = local?.failureMessage
+        if local?.failureMessage != nil {
+            self.statusMessage = "Unsaved cue changes"
+        } else if local?.isPending == true {
+            self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
+        } else {
+            self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
+        }
     }
 
     /// Returns the coordinate mapper for the current view state.
@@ -384,31 +462,52 @@ public final class WaveformEditorModel: ObservableObject {
         guard let track = currentTrack else { return }
         let rootURL = self.libraryRootURL
         let actor = self.persistenceActor
-
+        let identity = TrackIdentity(root: rootURL, relativePath: track.relativePath)
+        nextRevision &+= 1
+        let revision = nextRevision
+        localEdits[identity] = LocalEdit(track: track, revision: revision)
+        pendingSaveCount += 1
         self.isSaving = true
+        let previousSave = inFlightSaveTask
 
-        // Cancel previous pending save task if any
-        inFlightSaveTask?.cancel()
-
-        inFlightSaveTask = Task { [track, rootURL, actor] in
+        // Chain every snapshot in submission order. Cancellation must never discard another track's commit.
+        inFlightSaveTask = Task { [weak self, track, rootURL, actor] in
+            await previousSave?.value
             do {
                 let updatedCache = try await actor.persistTrack(track, libraryRootURL: rootURL)
-                guard !Task.isCancelled else { return }
-
-                await MainActor.run {
-                    self.isSaving = false
-                    self.errorMessage = nil
-                    self.statusMessage = "Saved cues to .pulsedeck_ai_cache.json"
-                    self.onTrackPersisted?(track, updatedCache)
-                }
+                self?.completeSave(track: track, rootURL: rootURL, identity: identity,
+                                   revision: revision, result: .success(updatedCache))
             } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.isSaving = false
-                    self.errorMessage = error.localizedDescription
-                    self.statusMessage = "Save Error"
-                }
+                self?.completeSave(track: track, rootURL: rootURL, identity: identity,
+                                   revision: revision, result: .failure(error))
             }
+        }
+    }
+
+    private func completeSave(track: TrackCacheEntry, rootURL: URL, identity: TrackIdentity,
+                              revision: UInt64, result: Result<PulseDeckLibraryCache, any Error>) {
+        pendingSaveCount -= 1
+        isSaving = pendingSaveCount > 0
+        if localEdits[identity]?.revision == revision {
+            localEdits[identity]?.isPending = false
+            if case .failure(let error) = result {
+                localEdits[identity]?.failureMessage = error.localizedDescription
+            }
+        }
+        if case .success(let cache) = result {
+            onTrackPersisted?(track, cache, rootURL)
+        }
+        // Earlier completions may update the shared cache, but cannot overwrite a newer edit's UI status.
+        guard currentTrack?.relativePath == identity.relativePath,
+              libraryRootURL.standardizedFileURL == identity.root,
+              localEdits[identity]?.revision == revision else { return }
+        switch result {
+        case .success:
+            errorMessage = nil
+            statusMessage = "Saved cues to .pulsedeck_ai_cache.json"
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+            statusMessage = "Save Error"
         }
     }
 }

@@ -271,7 +271,7 @@ public struct TransitionPlanner: Sendable {
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: 0.0, highGainDB: 0.0)),
+            command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: -12.0, highGainDB: -12.0)),
             priority: .audioProcessing
         ))
         events.append(ScheduledTransitionEvent(
@@ -305,37 +305,40 @@ public struct TransitionPlanner: Sendable {
             let offset = Double(barIndex * 4) * beatInterval
             let progress = Double(barIndex) / Double(bars)
 
-            if barIndex == midpointBars {
-                // INSTANT BASS SWAP on midpoint downbeat
-                // Outgoing low shelf cut to -24 dB; incoming low shelf restored to 0 dB
+            // Continuous monotonic outgoing fader fade from 1.0 down towards 0.0
+            let outVol = Float(max(0.0, 1.0 - progress))
+            events.append(ScheduledTransitionEvent(
+                timeOffsetSeconds: offset,
+                command: .setVolume(deck: outgoing.deck, volume: outVol),
+                priority: .volumeFader
+            ))
+
+            // Complementary mid and high frequency EQ crossfade
+            let outMidHigh = Float(-24.0 * progress)
+            let inMidHigh = Float(-12.0 * (1.0 - progress))
+
+            if barIndex < midpointBars {
+                // Pre-swap: outgoing low shelf remains unity (0 dB), incoming low shelf cut (-24 dB)
                 events.append(ScheduledTransitionEvent(
                     timeOffsetSeconds: offset,
-                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: Float(-2.0 * progress), highGainDB: Float(-2.0 * progress))),
+                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: outMidHigh, highGainDB: outMidHigh)),
                     priority: .audioProcessing
                 ))
                 events.append(ScheduledTransitionEvent(
                     timeOffsetSeconds: offset,
-                    command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
-                    priority: .audioProcessing
-                ))
-            } else if barIndex < midpointBars {
-                // Subtle high/mid balancing before bass swap
-                events.append(ScheduledTransitionEvent(
-                    timeOffsetSeconds: offset,
-                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: Float(-1.5 * progress), highGainDB: Float(-1.5 * progress))),
+                    command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: inMidHigh, highGainDB: inMidHigh)),
                     priority: .audioProcessing
                 ))
             } else {
-                // Post-swap: ramping outgoing fader down towards 0.0
-                let outVol = Float(max(0.0, 1.0 - progress))
+                // At and post-midpoint downbeat: INSTANT BASS SWAP (outgoing low = -24 dB, incoming low = 0 dB)
                 events.append(ScheduledTransitionEvent(
                     timeOffsetSeconds: offset,
-                    command: .setVolume(deck: outgoing.deck, volume: outVol),
-                    priority: .volumeFader
+                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: outMidHigh, highGainDB: outMidHigh)),
+                    priority: .audioProcessing
                 ))
                 events.append(ScheduledTransitionEvent(
                     timeOffsetSeconds: offset,
-                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: Float(-4.0 * progress), highGainDB: Float(-4.0 * progress))),
+                    command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: inMidHigh, highGainDB: inMidHigh)),
                     priority: .audioProcessing
                 ))
             }

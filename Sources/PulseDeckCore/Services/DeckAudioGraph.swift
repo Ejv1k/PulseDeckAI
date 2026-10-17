@@ -22,6 +22,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     public let masterTimePitchNode: AVAudioUnitTimePitch
     public let masterEQNode: AVAudioUnitEQ
     public let masterFilterNode: AVAudioUnitEQ
+    public let masterEchoNode: AVAudioUnitDelay
     public let masterFaderNode: AVAudioMixerNode
 
     // Cue Engine Graph Nodes (strictly separate instances)
@@ -29,6 +30,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     public let cueTimePitchNode: AVAudioUnitTimePitch
     public let cueEQNode: AVAudioUnitEQ
     public let cueFilterNode: AVAudioUnitEQ
+    public let cueEchoNode: AVAudioUnitDelay
     public let cueFaderNode: AVAudioMixerNode
 
     private weak var masterEngine: OutputAudioEngine?
@@ -47,6 +49,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
     private var _masterAudioFile: AVAudioFile?
     private var _cueAudioFile: AVAudioFile?
+    private var _loadedTrackURL: URL?
     private var _trackDurationSeconds: Double = 0.0
     private var _currentSeekPositionSeconds: Double = 0.0
     private var _cueSeekPositionSeconds: Double = 0.0
@@ -92,6 +95,39 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         return _cueScheduleStartSeconds
     }
 
+    /// Loaded track file URL, if any.
+    public var loadedTrackURL: URL? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _loadedTrackURL
+    }
+
+    /// Total audio file duration in seconds.
+    public var trackDurationSeconds: Double {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _trackDurationSeconds
+    }
+
+    /// True if the Master player node is currently rendering playback.
+    public var isMasterPlaying: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isMasterPlaying
+    }
+
+    /// Monotonic master schedule generation counter for invalidating stale callbacks.
+    public var scheduleGeneration: UInt64 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _masterScheduleGeneration
+    }
+
+    /// Current playhead position in seconds along the master player timeline.
+    public var masterPlayheadSeconds: Double {
+        currentMasterPlayheadSeconds()
+    }
+
     /// Initializes a new dual-engine deck audio graph.
     ///
     /// - Parameters:
@@ -115,6 +151,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         self.masterTimePitchNode = AVAudioUnitTimePitch()
         self.masterEQNode = AVAudioUnitEQ(numberOfBands: 3)
         self.masterFilterNode = AVAudioUnitEQ(numberOfBands: 1)
+        self.masterEchoNode = AVAudioUnitDelay()
         self.masterFaderNode = AVAudioMixerNode()
 
         // Instantiate Cue Nodes
@@ -122,6 +159,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         self.cueTimePitchNode = AVAudioUnitTimePitch()
         self.cueEQNode = AVAudioUnitEQ(numberOfBands: 3)
         self.cueFilterNode = AVAudioUnitEQ(numberOfBands: 1)
+        self.cueEchoNode = AVAudioUnitDelay()
         self.cueFaderNode = AVAudioMixerNode()
 
         setupGraphs()
@@ -135,12 +173,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         master.rawEngine.attach(masterTimePitchNode)
         master.rawEngine.attach(masterEQNode)
         master.rawEngine.attach(masterFilterNode)
+        master.rawEngine.attach(masterEchoNode)
         master.rawEngine.attach(masterFaderNode)
 
         master.rawEngine.connect(masterPlayerNode, to: masterTimePitchNode, format: nil)
         master.rawEngine.connect(masterTimePitchNode, to: masterEQNode, format: nil)
         master.rawEngine.connect(masterEQNode, to: masterFilterNode, format: nil)
-        master.rawEngine.connect(masterFilterNode, to: masterFaderNode, format: nil)
+        master.rawEngine.connect(masterFilterNode, to: masterEchoNode, format: nil)
+        master.rawEngine.connect(masterEchoNode, to: masterFaderNode, format: nil)
         master.rawEngine.connect(masterFaderNode, to: master.subMixer, format: nil)
 
         // Setup Cue Graph
@@ -148,21 +188,33 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         cue.rawEngine.attach(cueTimePitchNode)
         cue.rawEngine.attach(cueEQNode)
         cue.rawEngine.attach(cueFilterNode)
+        cue.rawEngine.attach(cueEchoNode)
         cue.rawEngine.attach(cueFaderNode)
 
         cue.rawEngine.connect(cuePlayerNode, to: cueTimePitchNode, format: nil)
         cue.rawEngine.connect(cueTimePitchNode, to: cueEQNode, format: nil)
         cue.rawEngine.connect(cueEQNode, to: cueFilterNode, format: nil)
-        cue.rawEngine.connect(cueFilterNode, to: cueFaderNode, format: nil)
+        cue.rawEngine.connect(cueFilterNode, to: cueEchoNode, format: nil)
+        cue.rawEngine.connect(cueEchoNode, to: cueFaderNode, format: nil)
         cue.rawEngine.connect(cueFaderNode, to: cue.subMixer, format: nil)
 
-        // Initialize EQ bands
+        // Initialize EQ bands and echo defaults
         configureEQ(masterEQNode)
         configureEQ(cueEQNode)
+        configureEcho(masterEchoNode)
+        configureEcho(cueEchoNode)
 
         // Initial volume states
         updateMasterFaderVolume()
         cueFaderNode.outputVolume = 0.0
+    }
+
+    private func configureEcho(_ echo: AVAudioUnitDelay) {
+        echo.bypass = true
+        echo.wetDryMix = 0.0
+        echo.delayTime = 0.375
+        echo.feedback = 0.0
+        echo.lowPassCutoff = 20000.0
     }
 
     private func configureEQ(_ eq: AVAudioUnitEQ) {
@@ -218,6 +270,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             updateMasterFaderVolume()
         }
     }
+
+    /// Effective master gain computed as channel volume multiplied by crossfader weight.
+    public var effectiveMasterGain: Float {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _volume * _crossfaderWeight
+    }
+
 
     public var isCueActive: Bool {
         get {
@@ -335,6 +395,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             self.stateLock.lock()
             self._masterAudioFile = masterFile
             self._cueAudioFile = cueFile
+            self._loadedTrackURL = url
             self._trackDurationSeconds = duration
             self._currentSeekPositionSeconds = 0.0
             self._cueSeekPositionSeconds = 0.0
@@ -394,6 +455,13 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
             self.masterPlayerNode.pause()
             self.cuePlayerNode.pause()
+        }
+    }
+
+    public func stop() {
+        executeOnControlQueue {
+            self.pause()
+            self.seek(to: 0.0)
         }
     }
 
@@ -487,15 +555,57 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
-    // MARK: - Private DSP & Routing Helpers
+    /// Sets echo effect parameters on master and cue engines.
+    public func setEcho(enabled: Bool, feedback: Float, mix: Float) {
+        let safeFeedback: Float
+        if feedback.isFinite {
+            safeFeedback = min(max(feedback * 100.0, -100.0), 100.0)
+        } else {
+            safeFeedback = 0.0
+        }
 
-    private func currentMasterPlayheadSeconds() -> Double {
+        let safeMix: Float
+        if mix.isFinite {
+            safeMix = min(max(mix * 100.0, 0.0), 100.0)
+        } else {
+            safeMix = 0.0
+        }
+
+        executeOnControlQueue {
+            if enabled && safeMix > 0.0 {
+                self.masterEchoNode.delayTime = 0.375
+                self.masterEchoNode.lowPassCutoff = 20000.0
+                self.masterEchoNode.feedback = safeFeedback
+                self.masterEchoNode.wetDryMix = safeMix
+                self.masterEchoNode.bypass = false
+
+                self.cueEchoNode.delayTime = 0.375
+                self.cueEchoNode.lowPassCutoff = 20000.0
+                self.cueEchoNode.feedback = safeFeedback
+                self.cueEchoNode.wetDryMix = safeMix
+                self.cueEchoNode.bypass = false
+            } else {
+                self.masterEchoNode.bypass = true
+                self.masterEchoNode.wetDryMix = 0.0
+                self.masterEchoNode.feedback = 0.0
+
+                self.cueEchoNode.bypass = true
+                self.cueEchoNode.wetDryMix = 0.0
+                self.cueEchoNode.feedback = 0.0
+            }
+        }
+    }
+
+    // MARK: - DSP & Routing Helpers
+
+    public func currentMasterPlayheadSeconds() -> Double {
         stateLock.lock()
         let scheduledStart = _masterScheduleStartSeconds
         let duration = _trackDurationSeconds
         stateLock.unlock()
 
         if let nodeTime = masterPlayerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = masterPlayerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate > 0.0 {
@@ -514,6 +624,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         stateLock.unlock()
 
         if let nodeTime = cuePlayerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = cuePlayerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate > 0.0 {

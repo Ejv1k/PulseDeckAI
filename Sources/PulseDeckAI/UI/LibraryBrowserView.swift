@@ -171,32 +171,53 @@ public struct LibraryBrowserView: View {
                     } else {
                         List {
                             ForEach(Array(selected.audioFiles.enumerated()), id: \.offset) { index, file in
-                                HStack(spacing: 12) {
-                                    Text(String(format: "%02d", index + 1))
-                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                        .foregroundColor(DJTheme.deckA)
-                                        .frame(width: 24, alignment: .leading)
+                                let relPath = "\(selected.folderName)/\(file)"
+                                let isSelected = appState.selectedTrackPath == relPath
 
-                                    Image(systemName: "waveform")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(DJTheme.textSecondary)
+                                Button(action: {
+                                    appState.selectTrack(relativePath: relPath)
+                                }) {
+                                    HStack(spacing: 12) {
+                                        Text(String(format: "%02d", index + 1))
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
+                                            .frame(width: 24, alignment: .leading)
 
-                                    Text(file)
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(DJTheme.textPrimary)
-                                        .lineLimit(1)
+                                        Image(systemName: isSelected ? "waveform.circle.fill" : "waveform")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
 
-                                    Spacer()
+                                        Text(file)
+                                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                            .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
+                                            .lineLimit(1)
 
-                                    Text("MEDIA PRESERVED (GIT-IGNORED)")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .foregroundColor(DJTheme.master)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(DJTheme.master.opacity(0.15))
-                                        .cornerRadius(3)
+                                        Spacer()
+
+                                        if appState.loadedCache?.tracks[relPath] != nil {
+                                            Text("ANALYZED ✓")
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(DJTheme.master)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(DJTheme.master.opacity(0.15))
+                                                .cornerRadius(3)
+                                        } else {
+                                            Text("MEDIA PRESERVED (GIT-IGNORED)")
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(DJTheme.textMuted)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(DJTheme.cardHeader)
+                                                .cornerRadius(3)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 6)
+                                    .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
+                                    .cornerRadius(4)
                                 }
-                                .padding(.vertical, 4)
+                                .buttonStyle(.plain)
                                 .listRowBackground(DJTheme.cardBackground)
                             }
                         }

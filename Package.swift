@@ -54,7 +54,8 @@ let package = Package(
             name: "PulseDeckCoreTests",
             dependencies: [
                 "PulseDeckCore",
-                "PulseDeckAtomics"
+                "PulseDeckAtomics",
+                "PulseDeckAI"
             ],
             path: "Tests/PulseDeckCoreTests",
             swiftSettings: [

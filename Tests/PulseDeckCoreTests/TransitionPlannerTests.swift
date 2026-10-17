@@ -7,7 +7,7 @@ final class TransitionPlannerTests: XCTestCase {
 
     private func makeBeatGrid(bpm: Double, duration: Double = 240.0, offset: Double = 0.0) -> BeatGrid {
         let interval = 60.0 / bpm
-        let count = Int(ceil(duration / interval)) + 8
+        let count = max(0, Int(floor((duration - offset) / interval)) + 1)
         var timestamps: [Double] = []
         for i in 0..<count {
             timestamps.append(offset + Double(i) * interval)
@@ -30,7 +30,7 @@ final class TransitionPlannerTests: XCTestCase {
         endTrim: Double = 235.0,
         beatGrid: BeatGrid? = nil
     ) -> TrackTransitionDescriptor {
-        let grid = beatGrid ?? makeBeatGrid(bpm: bpm > 0 ? bpm : 120.0)
+        let grid = beatGrid ?? makeBeatGrid(bpm: bpm > 0 ? bpm : 120.0, duration: duration.isFinite && duration > 0 ? duration : 240)
         let cues = CueMarkers(
             startTrimCue: startTrim,
             vocalEntryCue: vocalEntry,
@@ -94,7 +94,7 @@ final class TransitionPlannerTests: XCTestCase {
         // Verify incoming seek aligns to nearest incoming downbeat respecting startTrimCue
         let seekEvent = try XCTUnwrap(initialEvents.first {
             if case .seek(let d, let pos) = $0.command {
-                return d == .deckB && abs(pos - 9.5238) < 0.01
+                return d == .deckB && abs(pos - 11.4286) < 0.01
             }
             return false
         })
@@ -268,7 +268,7 @@ final class TransitionPlannerTests: XCTestCase {
 
         // Incoming track: 126 BPM, offset 0.15s, interval = 60/126 = 0.476190s
         // Incoming downbeats: 0.15 + k * 4 * 0.47619s
-        // For k = 5: 0.15 + 9.5238 = 9.6738s (closest downbeat to 10.0s trim cue)
+        // For k = 6: 0.15 + 11.4286 = 11.5786s (first downbeat after 10.0s trim cue)
         let incomingGrid = makeBeatGrid(bpm: 126.0, duration: 240.0, offset: 0.15)
         let incoming = makeTrack(deck: .deckB, bpm: 126.0, startTrim: 10.0, beatGrid: incomingGrid)
 
@@ -296,16 +296,17 @@ final class TransitionPlannerTests: XCTestCase {
         let outgoingBars = (swapTime - outgoingGrid.firstBeatOffsetSeconds) / (4.0 * outgoingGrid.beatIntervalSeconds)
         XCTAssertEqual(outgoingBars.rounded(), outgoingBars, accuracy: 0.0001)
 
-        // Verify incoming deck seeks to aligned incoming downbeat (9.6738s) rather than raw 10.0s
+        // Verify incoming deck seeks to aligned incoming downbeat (11.5786s) rather than raw 10.0s
         let t0Events = plan.events.filter { abs($0.timeOffsetSeconds) < 0.001 }
         let seekEvent = try XCTUnwrap(t0Events.first {
             if case .seek(let d, let pos) = $0.command {
-                return d == .deckB && abs(pos - 9.6738) < 0.01
+                return d == .deckB && abs(pos - 11.5786) < 0.01
             }
             return false
         })
         if case .seek(_, let pos) = seekEvent.command {
-            XCTAssertEqual(pos, 9.6738, accuracy: 0.005)
+            XCTAssertEqual(pos, 11.5786, accuracy: 0.005)
+            XCTAssertGreaterThanOrEqual(pos, incoming.cueMarkers.startTrimCue)
             // Verify pos is an exact downbeat on incoming grid
             let incomingBars = (pos - incomingGrid.firstBeatOffsetSeconds) / (4.0 * incomingGrid.beatIntervalSeconds)
             XCTAssertEqual(incomingBars.rounded(), incomingBars, accuracy: 0.0001)
@@ -532,4 +533,142 @@ final class TransitionPlannerTests: XCTestCase {
         )
         XCTAssertThrowsError(try planner.plan(request))
     }
+    func testAlignedSeeksNeverPrecedeManualTrimAcrossBothQuantizedStyles() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA, beatGrid: makeBeatGrid(bpm: 120, offset: 0.25))
+        for trim in [0.0, 0.15, 10.0, 11.6] {
+            let incoming = makeTrack(deck: .deckB, bpm: 126, startTrim: trim, beatGrid: makeBeatGrid(bpm: 126, offset: 0.15))
+            for style in [TransitionStyle.beatSyncedBassSwap(bars: 8), .hardCutOnDrop()] {
+                let plan = try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: style))
+                let position = try XCTUnwrap(plan.events.compactMap { event -> Double? in
+                    if case .seek(.deckB, let position) = event.command { return position }
+                    return nil
+                }.first)
+                XCTAssertGreaterThanOrEqual(position, trim)
+                XCTAssertLessThan(position, incoming.cueMarkers.endTrimCue)
+                let bars = (position - incoming.beatGrid.firstBeatOffsetSeconds) / (incoming.beatGrid.beatIntervalSeconds * 4)
+                XCTAssertEqual(bars, bars.rounded(), accuracy: 1e-8)
+            }
+        }
+    }
+
+    func testRejectsCompletePlansBeyondPlayableTrackIntervals() throws {
+        let planner = TransitionPlanner()
+        let incoming = makeTrack(deck: .deckB)
+        let short = makeTrack(deck: .deckA, duration: 60, startTrim: 0, vocalEntry: 1, mixOut: 58, endTrim: 60)
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: short, incomingTrack: incoming, style: .filterEchoWash(durationSeconds: 8)))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckA))
+        }
+        let exact = try planner.plan(TransitionRequest(outgoingTrack: short, incomingTrack: incoming, style: .filterEchoWash(durationSeconds: 2)))
+        XCTAssertEqual(exact.endTimestampSeconds, 60)
+        let trimmed = makeTrack(deck: .deckA, duration: 60, startTrim: 0, vocalEntry: 1, mixOut: 58, endTrim: 59)
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: trimmed, incomingTrack: incoming, style: .filterEchoWash(durationSeconds: 2))))
+
+        // The raw trigger plus 16 seconds fits, but quantization to 44.25 makes the complete plan too long.
+        let quantized = makeTrack(deck: .deckA, duration: 60, startTrim: 0, vocalEntry: 1, mixOut: 43.9, endTrim: 60,
+                                  beatGrid: makeBeatGrid(bpm: 120, duration: 60, offset: 0.25))
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: quantized, incomingTrack: incoming, style: .beatSyncedBassSwap(bars: 8)))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckA))
+        }
+        let shortIncoming = makeTrack(deck: .deckB, duration: 20, startTrim: 10, vocalEntry: 10, mixOut: 11, endTrim: 11)
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: short, incomingTrack: shortIncoming, style: .filterEchoWash(durationSeconds: 2)))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckB))
+        }
+        let lateCut = makeTrack(deck: .deckA, duration: 70, startTrim: 0, vocalEntry: 1, mixOut: 58.5, endTrim: 59,
+                               beatGrid: makeBeatGrid(bpm: 120, duration: 70, offset: 0.25))
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: lateCut, incomingTrack: incoming, style: .hardCutOnDrop()))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckA))
+        }
+    }
+
+    func testIncomingContentBoundsIncludeActualPlaybackRates() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA)
+        let incoming = makeTrack(deck: .deckB, duration: 30, startTrim: 0, vocalEntry: 1, mixOut: 5, endTrim: 10)
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming,
+                                                               style: .filterEchoWash(durationSeconds: 8), outgoingPlaybackRate: 0.5))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckB))
+        }
+        let fastOutgoing = try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming,
+                                                             style: .filterEchoWash(durationSeconds: 8), outgoingPlaybackRate: 2))
+        XCTAssertTrue(fastOutgoing.events.contains { $0.command == .setRate(deck: .deckB, rate: 1, keyLock: true) })
+
+        // Incoming 114 BPM plays faster than unity to meet 120 BPM; 16 media seconds are insufficient.
+        let accelerated = makeTrack(deck: .deckB, duration: 30, bpm: 114, startTrim: 0, vocalEntry: 1, mixOut: 10, endTrim: 16.5)
+        XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: accelerated, style: .beatSyncedBassSwap(bars: 8)))) {
+            XCTAssertEqual($0 as? TransitionPlanningError, .insufficientPlayableContent(deck: .deckB))
+        }
+        let slowed = makeTrack(deck: .deckB, duration: 30, bpm: 126, startTrim: 0, vocalEntry: 1, mixOut: 10, endTrim: 16)
+        XCTAssertNoThrow(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: slowed, style: .beatSyncedBassSwap(bars: 8))))
+    }
+
+    func testChainedTransitionsMatchOutgoingEffectiveTempoAndPhase() throws {
+        let planner = TransitionPlanner()
+        let first = try planner.plan(TransitionRequest(outgoingTrack: makeTrack(deck: .deckA, bpm: 120),
+                                                     incomingTrack: makeTrack(deck: .deckB, bpm: 126), style: .beatSyncedBassSwap(bars: 8)))
+        let retainedRate = try XCTUnwrap(first.metadata.tempoAdjustmentRate)
+        let outgoing = makeTrack(deck: .deckB, bpm: 126)
+        let incoming = makeTrack(deck: .deckA, bpm: 126)
+        let second = try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming,
+                                                      style: .beatSyncedBassSwap(bars: 8), outgoingPlaybackRate: retainedRate))
+        XCTAssertEqual(try XCTUnwrap(second.metadata.targetTempoBPM), 126 * Double(retainedRate), accuracy: 1e-8)
+        XCTAssertEqual(try XCTUnwrap(second.metadata.tempoAdjustmentRate), retainedRate, accuracy: 1e-7)
+        XCTAssertEqual(second.durationSeconds / Double(retainedRate), 16, accuracy: 1e-5)
+        XCTAssertTrue(second.events.contains { $0.command == .setRate(deck: .deckA, rate: retainedRate, keyLock: true) })
+        let seek = try XCTUnwrap(second.events.compactMap { event -> Double? in
+            if case .seek(.deckA, let position) = event.command { return position }
+            return nil
+        }.first)
+        let swapOffset = try XCTUnwrap(second.metadata.bassSwapOffsetSeconds)
+        let incomingAtSwap = seek + swapOffset / Double(retainedRate) * Double(retainedRate)
+        let incomingBars = (incomingAtSwap - incoming.beatGrid.firstBeatOffsetSeconds) / (incoming.beatGrid.beatIntervalSeconds * 4)
+        XCTAssertEqual(incomingBars, incomingBars.rounded(), accuracy: 1e-7)
+    }
+
+    func testRejectsMalformedGridsAndDoesNotUseIncomingSentinelForHardCut() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA)
+        let malformed: [BeatGrid] = [
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, .nan]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 0]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 1]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.1, 0.6]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1, beatTimestamps: [0, 1]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 241])
+        ]
+        for grid in malformed {
+            let incoming = makeTrack(deck: .deckB, beatGrid: grid)
+            XCTAssertFalse(planner.isUsableBeatGrid(descriptor: incoming))
+            XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: .beatSyncedBassSwap(bars: 8))))
+        }
+        let sentinel = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1, beatTimestamps: [])
+        let incoming = makeTrack(deck: .deckB, bpm: 0, confidence: 0, startTrim: 10.3, beatGrid: sentinel)
+        let cut = try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: .hardCutOnDrop()))
+        XCTAssertTrue(cut.events.contains { $0.command == .seek(deck: .deckB, positionSeconds: 10.3) })
+    }
+
+    func testMissingDownbeatInsideTrimIntervalAndExtremeParametersFailSafely() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA)
+        let incoming = makeTrack(deck: .deckB, duration: 20, startTrim: 10.1, vocalEntry: 10.1, mixOut: 11, endTrim: 11)
+        for style in [TransitionStyle.beatSyncedBassSwap(bars: 8), .hardCutOnDrop()] {
+            XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: style)))
+        }
+        let partialGrid = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 0.5])
+        let partialIncoming = makeTrack(deck: .deckB, beatGrid: partialGrid)
+        for style in [TransitionStyle.beatSyncedBassSwap(bars: 8, allowFallbackToFilter: true), .hardCutOnDrop(allowFallbackToFilter: true)] {
+            let fallback = try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: partialIncoming, style: style))
+            XCTAssertTrue(fallback.metadata.isFallback)
+            XCTAssertTrue(fallback.events.contains { $0.command == .seek(deck: .deckB, positionSeconds: 10) })
+        }
+        for rate: Float in [0, -1, .nan, .infinity, 33] {
+            XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: makeTrack(deck: .deckB),
+                                                                   style: .filterEchoWash(), outgoingPlaybackRate: rate)))
+        }
+        for bars in [0, -1, Int.max] {
+            XCTAssertThrowsError(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: makeTrack(deck: .deckB),
+                                                                   style: .beatSyncedBassSwap(bars: bars))))
+        }
+    }
+
 }

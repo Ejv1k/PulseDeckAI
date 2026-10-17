@@ -4,8 +4,8 @@ import Foundation
 
 /// Supported automated DJ transition styles.
 public enum TransitionStyle: Sendable, Equatable {
-    /// Beat-synced bass swap across a specified number of bars (e.g. 8, 16, or 32 bars).
-    /// Requires tempo difference <= 6.0% and valid beat grids on both decks.
+    /// Beat-synced bass swap across 8, 16, or 32 bars.
+    /// Requires effective tempo difference strictly below 6.0% and valid beat grids on both decks.
     /// On the midpoint downbeat, cuts outgoing low shelf to -24 dB and restores incoming low shelf to 0 dB.
     case beatSyncedBassSwap(bars: Int = 16, allowFallbackToFilter: Bool = false)
 
@@ -87,16 +87,23 @@ public struct TransitionRequest: Sendable, Equatable {
     /// When nil, defaults to `outgoingTrack.cueMarkers.mixOutCue`.
     public let triggerPositionSeconds: Double?
 
+    /// Current outgoing deck rate, including any rate retained from an earlier transition.
+    /// Supply the live deck rate. Event offsets remain outgoing source-media seconds;
+    /// elapsed playback time equals those offsets divided by this rate.
+    public let outgoingPlaybackRate: Float
+
     public init(
         outgoingTrack: TrackTransitionDescriptor,
         incomingTrack: TrackTransitionDescriptor,
         style: TransitionStyle,
-        triggerPositionSeconds: Double? = nil
+        triggerPositionSeconds: Double? = nil,
+        outgoingPlaybackRate: Float = 1.0
     ) {
         self.outgoingTrack = outgoingTrack
         self.incomingTrack = incomingTrack
         self.style = style
         self.triggerPositionSeconds = triggerPositionSeconds
+        self.outgoingPlaybackRate = outgoingPlaybackRate
     }
 }
 
@@ -166,7 +173,7 @@ public struct ScheduledTransitionEvent: Sendable, Equatable, Identifiable {
     /// Unique identifier for deduplication and tracking.
     public let id: UUID
 
-    /// Time offset in seconds from transition start (always >= 0.0).
+    /// Offset in outgoing source-media seconds from transition start (always >= 0.0).
     public let timeOffsetSeconds: Double
 
     /// Command to execute.
@@ -241,7 +248,7 @@ public struct TransitionPlan: Sendable, Equatable, Identifiable {
     /// Timeline position in seconds on outgoing track where transition begins.
     public let startTimestampSeconds: Double
 
-    /// Total transition duration in seconds.
+    /// Total transition duration in outgoing source-media seconds. An immediate cut has duration zero.
     public let durationSeconds: Double
 
     /// Strictly ordered bounded events.
@@ -310,6 +317,8 @@ public enum TransitionPlanningError: LocalizedError, Sendable, Equatable {
     case invalidCueMarkers(deck: DeckIdentifier, reason: String)
     case triggerPositionOutOfBounds(position: Double, mixOutCue: Double, duration: Double)
     case nonFiniteParameter(String)
+    case invalidPlaybackRate(Float)
+    case insufficientPlayableContent(deck: DeckIdentifier)
 
     public var errorDescription: String? {
         switch self {
@@ -320,7 +329,7 @@ public enum TransitionPlanningError: LocalizedError, Sendable, Equatable {
         case .invalidBPM(let deck, let bpm):
             return "Track on \(deck.rawValue) has invalid BPM: \(bpm) (must be positive and finite)"
         case .tempoDifferenceExceedsThreshold(let outBPM, let inBPM, let delta):
-            return String(format: "BPM difference %.2f%% between %.1f and %.1f exceeds 6.0%% limit for beat-synced transition", delta, outBPM, inBPM)
+            return String(format: "BPM difference %.2f%% between %.1f and %.1f must be below 6.0%% for a beat-synced transition", delta, outBPM, inBPM)
         case .missingBeatGrid(let deck, let reason):
             return "Track on \(deck.rawValue) missing valid beat grid: \(reason)"
         case .invalidCueMarkers(let deck, let reason):
@@ -329,6 +338,10 @@ public enum TransitionPlanningError: LocalizedError, Sendable, Equatable {
             return "Trigger position \(pos)s is out of valid bounds [0.0, \(dur)s] (mixOutCue: \(mixOut)s)"
         case .nonFiniteParameter(let detail):
             return "Transition planning rejected non-finite parameter: \(detail)"
+        case .invalidPlaybackRate(let rate):
+            return "Transition playback rate must be finite and within the supported range: \(rate)"
+        case .insufficientPlayableContent(let deck):
+            return "The complete transition does not fit the playable cue interval on \(deck.rawValue)"
         }
     }
 }

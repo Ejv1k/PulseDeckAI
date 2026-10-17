@@ -24,9 +24,10 @@ public struct TransitionPlanner: Sendable {
 
         let triggerPos = request.triggerPositionSeconds ?? request.outgoingTrack.cueMarkers.mixOutCue
 
+        let result: TransitionPlan
         switch request.style {
         case .beatSyncedBassSwap(let bars, let allowFallback):
-            return try planBeatSyncedBassSwap(
+            result = try planBeatSyncedBassSwap(
                 request: request,
                 triggerPosition: triggerPos,
                 bars: bars,
@@ -34,7 +35,7 @@ public struct TransitionPlanner: Sendable {
             )
 
         case .filterEchoWash(let durationSeconds, let echoSend):
-            return try planFilterEchoWash(
+            result = try planFilterEchoWash(
                 outgoing: request.outgoingTrack,
                 incoming: request.incomingTrack,
                 triggerPosition: triggerPos,
@@ -45,13 +46,15 @@ public struct TransitionPlanner: Sendable {
             )
 
         case .hardCutOnDrop(let bars, let allowFallback):
-            return try planHardCutOnDrop(
+            result = try planHardCutOnDrop(
                 request: request,
                 triggerPosition: triggerPos,
                 bars: bars,
                 allowFallback: allowFallback
             )
         }
+        try validatePlayableBounds(result, request: request)
+        return result
     }
 
     // MARK: - Validation
@@ -60,6 +63,10 @@ public struct TransitionPlanner: Sendable {
         // Deck identity invariant: outgoing and incoming must differ
         guard request.outgoingTrack.deck != request.incomingTrack.deck else {
             throw TransitionPlanningError.sameDeck(request.outgoingTrack.deck)
+        }
+
+        guard request.outgoingPlaybackRate.isFinite, (0.05...32.0).contains(request.outgoingPlaybackRate) else {
+            throw TransitionPlanningError.invalidPlaybackRate(request.outgoingPlaybackRate)
         }
 
         // Duration validation
@@ -92,7 +99,7 @@ public struct TransitionPlanner: Sendable {
 
         // Trigger position validation
         let triggerPos = request.triggerPositionSeconds ?? request.outgoingTrack.cueMarkers.mixOutCue
-        guard triggerPos.isFinite && triggerPos >= 0.0 && triggerPos <= request.outgoingTrack.duration else {
+        guard triggerPos.isFinite && triggerPos >= request.outgoingTrack.cueMarkers.startTrimCue && triggerPos <= request.outgoingTrack.cueMarkers.endTrimCue else {
             throw TransitionPlanningError.triggerPositionOutOfBounds(
                 position: triggerPos,
                 mixOutCue: request.outgoingTrack.cueMarkers.mixOutCue,
@@ -103,8 +110,8 @@ public struct TransitionPlanner: Sendable {
         // Style parameter validation
         switch request.style {
         case .beatSyncedBassSwap(let bars, _):
-            guard bars > 0 else {
-                throw TransitionPlanningError.nonFiniteParameter("Beat-synced bars count must be > 0, got: \(bars)")
+            guard [8, 16, 32].contains(bars) else {
+                throw TransitionPlanningError.nonFiniteParameter("Beat-synced phrase must contain 8, 16, or 32 bars, got: \(bars)")
             }
         case .filterEchoWash(let durationSeconds, let echoSend):
             guard durationSeconds.isFinite && durationSeconds > 0 else {
@@ -114,50 +121,87 @@ public struct TransitionPlanner: Sendable {
                 throw TransitionPlanningError.nonFiniteParameter("Filter wash echoSend must be in range [0.0, 1.0], got: \(echoSend)")
             }
         case .hardCutOnDrop(let bars, _):
-            guard bars > 0 else {
-                throw TransitionPlanningError.nonFiniteParameter("Hard cut bars count must be > 0, got: \(bars)")
+            guard (1...32).contains(bars) else {
+                throw TransitionPlanningError.nonFiniteParameter("Hard cut bars count must be within 1...32, got: \(bars)")
             }
         }
     }
 
-    /// Validates whether a track descriptor has an authentic, usable beat grid.
-    /// Rejects sentinel schema fallbacks (bpm <= 0, confidence <= 0, empty timestamps).
+    /// Rejects schedules whose final commands cannot be reached on the outgoing playhead,
+    /// or whose incoming playback would consume content outside its manual trim interval.
+    private func validatePlayableBounds(_ plan: TransitionPlan, request: TransitionRequest) throws {
+        let outgoing = request.outgoingTrack
+        let incoming = request.incomingTrack
+        guard plan.startTimestampSeconds.isFinite, plan.durationSeconds.isFinite,
+              plan.durationSeconds >= 0,
+              plan.startTimestampSeconds >= outgoing.cueMarkers.startTrimCue,
+              plan.endTimestampSeconds.isFinite,
+              plan.endTimestampSeconds <= outgoing.cueMarkers.endTrimCue else {
+            throw TransitionPlanningError.insufficientPlayableContent(deck: outgoing.deck)
+        }
+        let seek = plan.events.compactMap { event -> Double? in
+            if case .seek(let deck, let position) = event.command, deck == incoming.deck { return position }
+            return nil
+        }.first
+        let rate = plan.events.compactMap { event -> Float? in
+            if case .setRate(let deck, let rate, _) = event.command, deck == incoming.deck { return rate }
+            return nil
+        }.first
+        let playOffset = plan.events.first { $0.command == .play(deck: incoming.deck) }?.timeOffsetSeconds
+        guard let seek, let rate, let playOffset,
+              seek.isFinite, seek >= incoming.cueMarkers.startTrimCue,
+              seek < incoming.cueMarkers.endTrimCue,
+              rate.isFinite, rate > 0,
+              playOffset.isFinite, playOffset >= 0, playOffset <= plan.durationSeconds else {
+            throw TransitionPlanningError.insufficientPlayableContent(deck: incoming.deck)
+        }
+        let consumed = (plan.durationSeconds - playOffset) / Double(request.outgoingPlaybackRate) * Double(rate)
+        guard consumed.isFinite, consumed <= incoming.cueMarkers.endTrimCue - seek else {
+            throw TransitionPlanningError.insufficientPlayableContent(deck: incoming.deck)
+        }
+    }
+
+    /// Validates the complete regular grid, including its phase, interval, tempo and bounds.
+    /// Positive schema sentinels never establish a usable tempo without genuine timestamps.
     public func isUsableBeatGrid(descriptor: TrackTransitionDescriptor) -> Bool {
-        guard descriptor.bpm.isFinite && descriptor.bpm > 0 else { return false }
-        guard descriptor.confidence.isFinite && descriptor.confidence > 0 else { return false }
-        guard !descriptor.beatGrid.beatTimestamps.isEmpty else { return false }
-        guard descriptor.beatGrid.beatIntervalSeconds.isFinite && descriptor.beatGrid.beatIntervalSeconds > 0 else { return false }
-        guard descriptor.beatGrid.beatTimestamps.count >= 2 else { return false }
+        let grid = descriptor.beatGrid
+        guard descriptor.duration.isFinite, descriptor.duration > 0,
+              descriptor.bpm.isFinite, descriptor.bpm > 0,
+              descriptor.confidence.isFinite, (0...1).contains(descriptor.confidence), descriptor.confidence > 0,
+              grid.firstBeatOffsetSeconds.isFinite, grid.firstBeatOffsetSeconds >= 0,
+              grid.beatIntervalSeconds.isFinite, grid.beatIntervalSeconds > 0,
+              grid.beatTimestamps.count >= 2 else { return false }
+        let tolerance = max(1e-7, grid.beatIntervalSeconds * 1e-6)
+        guard abs(grid.beatIntervalSeconds - 60 / descriptor.bpm) <= tolerance else { return false }
+        var previous = -Double.infinity
+        for (index, timestamp) in grid.beatTimestamps.enumerated() {
+            let expected = grid.firstBeatOffsetSeconds + Double(index) * grid.beatIntervalSeconds
+            guard timestamp.isFinite, timestamp >= 0, timestamp <= descriptor.duration,
+                  timestamp > previous, expected.isFinite, abs(timestamp - expected) <= tolerance else { return false }
+            previous = timestamp
+        }
         return true
     }
 
-    /// Finds the first downbeat (beat 0 of a 4-beat bar) in timestamps on or after targetPosition.
+    /// Finds the first existing downbeat (beat 0 of a 4-beat bar) on or after the requested position.
     public func findQuantizedOutgoingDownbeat(timestamps: [Double], onOrAfter targetPosition: Double) -> Double? {
-        guard !timestamps.isEmpty else { return nil }
-        for i in stride(from: 0, to: timestamps.count, by: 4) {
-            let t = timestamps[i]
-            if t >= targetPosition - 0.0001 {
-                return t
-            }
+        guard targetPosition.isFinite else { return nil }
+        for index in stride(from: 0, to: timestamps.count, by: 4) {
+            let timestamp = timestamps[index]
+            if timestamp.isFinite && timestamp >= targetPosition { return timestamp }
         }
         return nil
     }
 
-    /// Finds the downbeat (beat 0 of a 4-beat bar) in incoming timestamps closest to targetTrimCue,
-    /// clamped within track duration.
-    public func findAlignedIncomingDownbeat(timestamps: [Double], near targetTrimCue: Double, duration: Double) -> Double {
-        guard !timestamps.isEmpty else { return min(max(0.0, targetTrimCue), duration) }
-        var bestDownbeat = timestamps[0]
-        var minDiff = abs(timestamps[0] - targetTrimCue)
-        for i in stride(from: 0, to: timestamps.count, by: 4) {
-            let t = timestamps[i]
-            let diff = abs(t - targetTrimCue)
-            if diff < minDiff {
-                minDiff = diff
-                bestDownbeat = t
-            }
+    /// Finds an existing incoming downbeat at or after the trim cue and strictly before the playable end.
+    /// Returns nil instead of seeking backwards or fabricating a downbeat when none fits.
+    public func findAlignedIncomingDownbeat(timestamps: [Double], near targetTrimCue: Double, duration: Double) -> Double? {
+        guard targetTrimCue.isFinite, targetTrimCue >= 0, duration.isFinite else { return nil }
+        for index in stride(from: 0, to: timestamps.count, by: 4) {
+            let timestamp = timestamps[index]
+            if timestamp.isFinite && timestamp >= targetTrimCue && timestamp < duration { return timestamp }
         }
-        return min(max(0.0, bestDownbeat), duration)
+        return nil
     }
 
     // MARK: - Beat-Synced Bass Swap Planning
@@ -195,8 +239,10 @@ public struct TransitionPlanner: Sendable {
         }
 
         // 2. Validate BPM tempo differential (must be strictly < 6.0%)
-        let bpmDelta = abs(incoming.bpm - outgoing.bpm) / outgoing.bpm
-        if bpmDelta >= (Self.maxTempoDifferential - 1e-9) {
+        let effectiveTempo = 60.0 / outgoing.beatGrid.beatIntervalSeconds * Double(request.outgoingPlaybackRate)
+        let incomingTempo = 60.0 / incoming.beatGrid.beatIntervalSeconds
+        let bpmDelta = abs(incomingTempo - effectiveTempo) / effectiveTempo
+        if bpmDelta >= Self.maxTempoDifferential {
             if allowFallback {
                 return try planFilterEchoWash(
                     outgoing: outgoing,
@@ -209,8 +255,8 @@ public struct TransitionPlanner: Sendable {
                 )
             }
             throw TransitionPlanningError.tempoDifferenceExceedsThreshold(
-                outgoingBPM: outgoing.bpm,
-                incomingBPM: incoming.bpm,
+                outgoingBPM: effectiveTempo,
+                incomingBPM: incomingTempo,
                 deltaPercent: bpmDelta * 100.0
             )
         }
@@ -234,21 +280,29 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
-        // 4. Align incoming seek position to nearest incoming downbeat respecting startTrimCue
-        let incomingSeekPos = findAlignedIncomingDownbeat(
+        // 4. Choose an actual incoming downbeat without replaying manually trimmed audio.
+        guard let incomingSeekPos = findAlignedIncomingDownbeat(
             timestamps: incoming.beatGrid.beatTimestamps,
             near: incoming.cueMarkers.startTrimCue,
-            duration: incoming.duration
-        )
+            duration: incoming.cueMarkers.endTrimCue
+        ) else {
+            if allowFallback {
+                return try planFilterEchoWash(
+                    outgoing: outgoing, incoming: incoming, triggerPosition: triggerPosition,
+                    durationSeconds: 8, echoSend: 0.5, style: request.style, isFallback: true
+                )
+            }
+            throw TransitionPlanningError.missingBeatGrid(deck: incoming.deck, reason: "No downbeat fits the incoming trim interval")
+        }
 
         // 5. Compute pitch-locked tempo adjustment rate for incoming deck
-        let rate = Float(outgoing.bpm / incoming.bpm)
+        let rate = Float(effectiveTempo / incomingTempo)
         guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
             throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
         }
 
         // Outgoing beat duration in seconds
-        let beatInterval = 60.0 / outgoing.bpm
+        let beatInterval = outgoing.beatGrid.beatIntervalSeconds
         let totalBeats = bars * 4
         let totalDuration = Double(totalBeats) * beatInterval
 
@@ -380,7 +434,7 @@ public struct TransitionPlanner: Sendable {
         }
 
         let metadata = TransitionPlanMetadata(
-            targetTempoBPM: outgoing.bpm,
+            targetTempoBPM: effectiveTempo,
             tempoAdjustmentRate: rate,
             phraseBars: bars,
             bassSwapOffsetSeconds: bassSwapOffsetSeconds,
@@ -411,6 +465,12 @@ public struct TransitionPlanner: Sendable {
     ) throws -> TransitionPlan {
         let keyframeCount = Self.defaultWashKeyframes
         var events: [ScheduledTransitionEvent] = []
+
+        events.append(ScheduledTransitionEvent(
+            timeOffsetSeconds: 0,
+            command: .setRate(deck: incoming.deck, rate: 1, keyLock: true),
+            priority: .configuration
+        ))
 
         // MARK: t = 0.0 Initial Setup Events
         events.append(ScheduledTransitionEvent(
@@ -588,16 +648,35 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
-        let incomingSeekPos = findAlignedIncomingDownbeat(
-            timestamps: incoming.beatGrid.beatTimestamps,
-            near: incoming.cueMarkers.startTrimCue,
-            duration: incoming.duration
-        )
+        let incomingSeekPos: Double
+        if isUsableBeatGrid(descriptor: incoming) {
+            guard let downbeat = findAlignedIncomingDownbeat(
+                timestamps: incoming.beatGrid.beatTimestamps,
+                near: incoming.cueMarkers.startTrimCue,
+                duration: incoming.cueMarkers.endTrimCue
+            ) else {
+                if allowFallback {
+                    return try planFilterEchoWash(
+                        outgoing: outgoing, incoming: incoming, triggerPosition: triggerPosition,
+                        durationSeconds: 8, echoSend: 0.5, style: request.style, isFallback: true
+                    )
+                }
+                throw TransitionPlanningError.missingBeatGrid(deck: incoming.deck, reason: "No downbeat fits the incoming trim interval")
+            }
+            incomingSeekPos = downbeat
+        } else {
+            // A hard cut needs only the outgoing grid. Preserve the incoming trim cue for unknown tempo.
+            incomingSeekPos = incoming.cueMarkers.startTrimCue
+        }
 
         let cutOffsetSeconds = max(0.0, cutTime - triggerPosition)
-        let totalDuration = max(0.01, cutOffsetSeconds)
+        let totalDuration = cutOffsetSeconds
 
-        var events: [ScheduledTransitionEvent] = []
+        var events: [ScheduledTransitionEvent] = [ScheduledTransitionEvent(
+            timeOffsetSeconds: 0,
+            command: .setRate(deck: incoming.deck, rate: 1, keyLock: true),
+            priority: .configuration
+        )]
 
         // MARK: t = 0.0 Pre-Cue Incoming Deck
         events.append(ScheduledTransitionEvent(

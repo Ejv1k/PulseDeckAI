@@ -131,6 +131,35 @@ public struct TransitionPlanner: Sendable {
         return true
     }
 
+    /// Finds the first downbeat (beat 0 of a 4-beat bar) in timestamps on or after targetPosition.
+    public func findQuantizedOutgoingDownbeat(timestamps: [Double], onOrAfter targetPosition: Double) -> Double? {
+        guard !timestamps.isEmpty else { return nil }
+        for i in stride(from: 0, to: timestamps.count, by: 4) {
+            let t = timestamps[i]
+            if t >= targetPosition - 0.0001 {
+                return t
+            }
+        }
+        return nil
+    }
+
+    /// Finds the downbeat (beat 0 of a 4-beat bar) in incoming timestamps closest to targetTrimCue,
+    /// clamped within track duration.
+    public func findAlignedIncomingDownbeat(timestamps: [Double], near targetTrimCue: Double, duration: Double) -> Double {
+        guard !timestamps.isEmpty else { return min(max(0.0, targetTrimCue), duration) }
+        var bestDownbeat = timestamps[0]
+        var minDiff = abs(timestamps[0] - targetTrimCue)
+        for i in stride(from: 0, to: timestamps.count, by: 4) {
+            let t = timestamps[i]
+            let diff = abs(t - targetTrimCue)
+            if diff < minDiff {
+                minDiff = diff
+                bestDownbeat = t
+            }
+        }
+        return min(max(0.0, bestDownbeat), duration)
+    }
+
     // MARK: - Beat-Synced Bass Swap Planning
 
     private func planBeatSyncedBassSwap(
@@ -165,9 +194,9 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
-        // 2. Validate BPM tempo differential (must be <= 6.0%)
+        // 2. Validate BPM tempo differential (must be strictly < 6.0%)
         let bpmDelta = abs(incoming.bpm - outgoing.bpm) / outgoing.bpm
-        if bpmDelta > (Self.maxTempoDifferential + 0.0001) {
+        if bpmDelta >= (Self.maxTempoDifferential - 1e-9) {
             if allowFallback {
                 return try planFilterEchoWash(
                     outgoing: outgoing,
@@ -186,7 +215,33 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
-        // 3. Compute pitch-locked tempo adjustment rate for incoming deck
+        // 3. Quantize transition start to outgoing downbeat (beat 0 of a 4-beat bar)
+        guard let quantizedStart = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.beatTimestamps, onOrAfter: triggerPosition) else {
+            if allowFallback {
+                return try planFilterEchoWash(
+                    outgoing: outgoing,
+                    incoming: incoming,
+                    triggerPosition: triggerPosition,
+                    durationSeconds: 8.0,
+                    echoSend: 0.5,
+                    style: request.style,
+                    isFallback: true
+                )
+            }
+            throw TransitionPlanningError.missingBeatGrid(
+                deck: outgoing.deck,
+                reason: "No quantized outgoing downbeat found on or after trigger position \(triggerPosition)s"
+            )
+        }
+
+        // 4. Align incoming seek position to nearest incoming downbeat respecting startTrimCue
+        let incomingSeekPos = findAlignedIncomingDownbeat(
+            timestamps: incoming.beatGrid.beatTimestamps,
+            near: incoming.cueMarkers.startTrimCue,
+            duration: incoming.duration
+        )
+
+        // 5. Compute pitch-locked tempo adjustment rate for incoming deck
         let rate = Float(outgoing.bpm / incoming.bpm)
         guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
             throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
@@ -211,7 +266,7 @@ public struct TransitionPlanner: Sendable {
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .seek(deck: incoming.deck, positionSeconds: incoming.cueMarkers.startTrimCue),
+            command: .seek(deck: incoming.deck, positionSeconds: incomingSeekPos),
             priority: .transportPrep
         ))
         events.append(ScheduledTransitionEvent(
@@ -333,7 +388,7 @@ public struct TransitionPlanner: Sendable {
             style: request.style,
             outgoingDeck: outgoing.deck,
             incomingDeck: incoming.deck,
-            startTimestampSeconds: triggerPosition,
+            startTimestampSeconds: quantizedStart,
             durationSeconds: totalDuration,
             events: events,
             metadata: metadata
@@ -512,18 +567,7 @@ public struct TransitionPlanner: Sendable {
         }
 
         // Find the quantized downbeat (beat 0 of a 4-beat bar) at or after trigger position
-        let timestamps = outgoing.beatGrid.beatTimestamps
-        var targetDownbeat: Double? = nil
-
-        for i in stride(from: 0, to: timestamps.count, by: 4) {
-            let t = timestamps[i]
-            if t >= triggerPosition - 0.0001 {
-                targetDownbeat = t
-                break
-            }
-        }
-
-        guard let cutTime = targetDownbeat else {
+        guard let cutTime = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.beatTimestamps, onOrAfter: triggerPosition) else {
             if allowFallback {
                 return try planFilterEchoWash(
                     outgoing: outgoing,
@@ -541,6 +585,12 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
+        let incomingSeekPos = findAlignedIncomingDownbeat(
+            timestamps: incoming.beatGrid.beatTimestamps,
+            near: incoming.cueMarkers.startTrimCue,
+            duration: incoming.duration
+        )
+
         let cutOffsetSeconds = max(0.0, cutTime - triggerPosition)
         let totalDuration = max(0.01, cutOffsetSeconds)
 
@@ -549,7 +599,7 @@ public struct TransitionPlanner: Sendable {
         // MARK: t = 0.0 Pre-Cue Incoming Deck
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .seek(deck: incoming.deck, positionSeconds: incoming.cueMarkers.startTrimCue),
+            command: .seek(deck: incoming.deck, positionSeconds: incomingSeekPos),
             priority: .transportPrep
         ))
         events.append(ScheduledTransitionEvent(

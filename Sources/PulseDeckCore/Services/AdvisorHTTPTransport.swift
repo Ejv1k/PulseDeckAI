@@ -12,34 +12,73 @@ protocol AdvisorHTTPTransport: Sendable {
 }
 
 struct URLSessionAdvisorHTTPTransport: AdvisorHTTPTransport {
-    let session: URLSession
-    private let redirectDelegate: RedirectRejectingURLSessionDelegate
+    private let configuration: URLSessionConfiguration
 
     init(configuration: URLSessionConfiguration = .ephemeral) {
-        let redirectDelegate = RedirectRejectingURLSessionDelegate()
-        self.redirectDelegate = redirectDelegate
-        self.session = URLSession(
-            configuration: configuration,
-            delegate: redirectDelegate,
-            delegateQueue: nil
-        )
+        self.configuration = configuration.copy() as! URLSessionConfiguration
     }
 
     func send(_ request: URLRequest) async throws -> AdvisorHTTPResponse {
-        let (body, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse else {
-            throw AIAdvisorError.invalidHTTPResponse
+        guard request.timeoutInterval.isFinite, request.timeoutInterval > 0 else {
+            throw AIAdvisorError.invalidConfiguration
         }
-        var headers: [String: String] = [:]
-        for (key, value) in response.allHeaderFields {
-            guard let key = key as? String else { continue }
-            headers[key.lowercased()] = String(describing: value)
+        let operation = AdvisorHTTPRequest()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                operation.start(request, configuration: configuration, continuation: continuation)
+            }
+        } onCancel: {
+            operation.cancel()
         }
-        return AdvisorHTTPResponse(statusCode: response.statusCode, headers: headers, body: body)
     }
 }
 
-private final class RedirectRejectingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// All mutable state is protected by `lock`. Each operation owns one session and task;
+/// every terminal path clears ownership, cancels the deadline, and invalidates the session.
+/// Delegate callbacks and cancellation may race, but only one can resume the continuation.
+private final class AdvisorHTTPRequest: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private static let maximumBodyBytes = 1_048_576
+    private let lock = NSLock()
+    private var finished = false
+    private var continuation: CheckedContinuation<AdvisorHTTPResponse, Error>?
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var deadline: DispatchWorkItem?
+    private var response: HTTPURLResponse?
+    private var body = Data()
+
+    func start(
+        _ request: URLRequest,
+        configuration: URLSessionConfiguration,
+        continuation: CheckedContinuation<AdvisorHTTPResponse, Error>
+    ) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        self.continuation = continuation
+        let configuration = configuration.copy() as! URLSessionConfiguration
+        configuration.timeoutIntervalForResource = request.timeoutInterval
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.finish(error: URLError(.timedOut))
+        }
+        self.session = session
+        self.task = task
+        self.deadline = deadline
+        DispatchQueue.global().asyncAfter(deadline: .now() + request.timeoutInterval, execute: deadline)
+        lock.unlock()
+        // Cancellation between unlock and resume leaves the task cancelled; resume cannot restart it.
+        task.resume()
+    }
+
+    func cancel() {
+        finish(error: CancellationError())
+    }
+
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -48,6 +87,86 @@ private final class RedirectRejectingURLSessionDelegate: NSObject, URLSessionTas
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         completionHandler(nil)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let response = response as? HTTPURLResponse else {
+            finish(error: AIAdvisorError.invalidHTTPResponse)
+            completionHandler(.cancel)
+            return
+        }
+        guard response.expectedContentLength <= Self.maximumBodyBytes else {
+            finish(error: AIAdvisorError.responseTooLarge)
+            completionHandler(.cancel)
+            return
+        }
+        lock.lock()
+        let active = !finished
+        if active { self.response = response }
+        lock.unlock()
+        completionHandler(active ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        guard data.count <= Self.maximumBodyBytes - body.count else {
+            lock.unlock()
+            finish(error: AIAdvisorError.responseTooLarge)
+            return
+        }
+        body.append(data)
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        finish(error: error)
+    }
+
+    private func finish(error: Error?) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let result: Result<AdvisorHTTPResponse, Error>
+        if let error {
+            result = .failure(error)
+        } else if let response {
+            var headers: [String: String] = [:]
+            for (key, value) in response.allHeaderFields {
+                if let key = key as? String {
+                    headers[key.lowercased()] = String(describing: value)
+                }
+            }
+            result = .success(AdvisorHTTPResponse(statusCode: response.statusCode, headers: headers, body: body))
+        } else {
+            result = .failure(AIAdvisorError.invalidHTTPResponse)
+        }
+        let continuation = self.continuation
+        let session = self.session
+        let task = self.task
+        let deadline = self.deadline
+        self.continuation = nil
+        self.session = nil
+        self.task = nil
+        self.deadline = nil
+        self.response = nil
+        self.body = Data()
+        lock.unlock()
+        deadline?.cancel()
+        task?.cancel()
+        session?.invalidateAndCancel()
+        continuation?.resume(with: result)
     }
 }
 

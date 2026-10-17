@@ -44,9 +44,9 @@ PulseDeck AI follows a phased, verification-driven development lifecycle. It is 
 * [x] **Atomic Persistence Service:** Crash-safe temporary-file serialization with synchronous hardware flush (`F_FULLFSYNC` on macOS / `fsync` on Linux) before atomic file replacement guarantees against cache corruption.
 * [x] **Codified Architectural Protocols:** Formal Swift protocol specifications for dual audio engines, deck signal processing graphs, latency compensation, and AI advisors.
 
-### Planned for Future Phases (Roadmap Preview)
-* [ ] **Phase 1:** CoreAudio HAL physical device enumeration, real-time dual `AVAudioEngine` startup, deck signal routing, and lock-free SPSC metering.
-* [ ] **Phase 2:** Offline Accelerate vDSP audio analysis (silence, RMS, FFT, beat grid, vocal estimation), Gemini 2.5 Flash / Ollama advisor integration, and `.pulsedeck_ai_cache.json` automated population.
+### Implementation Roadmap
+* [x] **Phase 1:** Output-only CoreAudio device handling, dual `AVAudioEngine` graphs, and lock-free SPSC metering; physical routing and Bluetooth timing still require hardware validation.
+* [x] **Phase 2:** Offline vDSP waveform/transient/BPM/silence analysis, schema-v1 cache persistence, optional Gemini/Ollama advice, and a dry-run librosa batch companion. Live providers remain unverified; no semantic vocal detection is claimed.
 * [ ] **Phase 3:** SwiftUI Canvas multi-band waveform visualizer, interactive colored cue handles (I/O keys), AI trim bypass, and cue scrubbing.
 * [ ] **Phase 4:** Automated transition engine (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`, reducing master music to ~15% linear amplitude over 800ms with mid dip), and RAM-preloaded soundboard (`F1`–`F8`).
 * [ ] **Phase 5:** Secondary projector display window (FFT visualizer, Ken Burns background media, Now Playing), external display management, and Master Deck safety locks.
@@ -235,8 +235,8 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 | Phase | Milestone Name | Scope & Core Deliverables | Status |
 | :---: | :--- | :--- | :---: |
 | **0** | **Operational Foundation & Documentation** | Swift 6 SPM workspace, SwiftUI dark GUI, library scanner, cache schema v1, architectural protocols, comprehensive docs | **COMPLETE** |
-| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine` startup, 3-band EQ, resonant filter, lock-free SPSC metering | *Planned* |
-| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP audio analysis, beat grid detection, Gemini 2.5 Flash / Ollama integration, cache population | *Planned* |
+| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine` startup, 3-band EQ, resonant filter, lock-free SPSC metering | **Implemented; hardware validation pending** |
+| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP analysis, beat grid estimation, optional Gemini/Ollama advice, validated cache and batch companion | **Implemented; live-provider validation pending** |
 | **3** | **Waveforms, Cues & Interactive Browser** | Multi-band SwiftUI Canvas waveforms, 4 bounded cue handles, keyboard cueing (`I`/`O`), AI trim bypass, cue scrubbing | *Planned* |
 | **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot engine, Talkover ducking (`T`, reducing master to ~15% linear level), RAM soundboard (`F1`–`F8`) | *Planned* |
 | **5** | **Projector Screen & Final Polish** | Secondary external presentation window (FFT visualizer, Ken Burns media, Now Playing), master safety locks | *Planned* |

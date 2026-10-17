@@ -198,6 +198,23 @@ final class WaveformCuePersistenceTests: XCTestCase {
         try SharedCacheContract().validate(data: rawData)
     }
 
+    func testLoadFailureAbortsSaveAndPreservesExistingInvalidCache() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("PulseDeckTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let cacheURL = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let corruptContent = Data("{\"schemaVersion\": \"2.0.0\", \"libraryRoot\": \"test\"}".utf8)
+        try corruptContent.write(to: cacheURL)
+
+        // Schema version 2.0.0 fails validation; CachePersistence.load returns nil
+        XCTAssertNil(CachePersistence.load(from: cacheURL))
+
+        // Invariant: when cacheURL exists but load fails, aborting save preserves raw file on disk
+        let contentOnDisk = try Data(contentsOf: cacheURL)
+        XCTAssertEqual(contentOnDisk, corruptContent)
+    }
+
     // MARK: - Coordinate Conversion & Zoom/Scroll Windowing Math
 
     func testCoordinateConversionAndZoomWindowing() {

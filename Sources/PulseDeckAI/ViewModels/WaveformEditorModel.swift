@@ -122,6 +122,18 @@ public struct WaveformCoordinateMapper: Sendable, Equatable {
     }
 }
 
+/// Errors thrown during WaveformEditorModel operations.
+public enum WaveformEditorError: LocalizedError, Equatable {
+    case invalidExistingCache(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidExistingCache(let fileName):
+            return "Existing cache file '\(fileName)' failed schema validation or is unreadable. Aborting save to preserve file."
+        }
+    }
+}
+
 /// Observable state model for the Phase 3A interactive Waveform Editor.
 /// Owns track waveform data, coordinate mappings, zoom/scroll states, cue marker manipulations,
 /// AI trim bypass state, and atomic cache persistence.
@@ -351,11 +363,10 @@ public final class WaveformEditorModel: ObservableObject {
             do {
                 var cache: PulseDeckLibraryCache
                 if FileManager.default.fileExists(atPath: cacheURL.path) {
-                    if let loaded = CachePersistence.load(from: cacheURL) {
-                        cache = loaded
-                    } else {
-                        cache = PulseDeckLibraryCache(libraryRoot: rootURL.lastPathComponent)
+                    guard let loaded = CachePersistence.load(from: cacheURL) else {
+                        throw WaveformEditorError.invalidExistingCache(cacheURL.lastPathComponent)
                     }
+                    cache = loaded
                 } else {
                     cache = PulseDeckLibraryCache(libraryRoot: rootURL.lastPathComponent)
                 }
@@ -375,7 +386,7 @@ public final class WaveformEditorModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isSaving = false
-                    self.errorMessage = "Failed to save cues: \(error.localizedDescription)"
+                    self.errorMessage = error.localizedDescription
                     self.statusMessage = "Save Error"
                 }
             }

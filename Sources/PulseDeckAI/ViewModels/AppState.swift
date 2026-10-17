@@ -35,7 +35,12 @@ public final class AppState: ObservableObject {
         let cwd = FileManager.default.currentDirectoryPath
         let defaultURL = URL(fileURLWithPath: cwd).appendingPathComponent(PulseDeckCoreConfig.defaultLibraryFolderName)
         self.libraryRootURL = defaultURL
-        self.waveformEditorModel = WaveformEditorModel(libraryRootURL: defaultURL)
+        let editor = WaveformEditorModel(libraryRootURL: defaultURL)
+        self.waveformEditorModel = editor
+        editor.onTrackPersisted = { [weak self] track, cache in
+            guard let self = self else { return }
+            self.loadedCache = cache
+        }
         refreshLibrary()
     }
 
@@ -98,9 +103,26 @@ public final class AppState: ObservableObject {
         self.selectedCrate = crate
     }
 
-    /// Selects a track by relative path and loads it into the waveform editor if cached.
+    /// Selects a track by relative path and loads it into the waveform editor.
+    /// Preserves any pending edits and ensures the latest cached state is loaded,
+    /// reloading from disk if the shared in-memory cache is out of date.
     public func selectTrack(relativePath: String) {
+        // If already selected, do not reload stale in-memory cache over current active edits
+        if selectedTrackPath == relativePath,
+           let current = waveformEditorModel.currentTrack,
+           current.relativePath == relativePath {
+            return
+        }
+
         self.selectedTrackPath = relativePath
+
+        // Reload latest cache from disk to ensure freshest state if disk was updated
+        let cacheURL = self.libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        if FileManager.default.fileExists(atPath: cacheURL.path),
+           let freshCache = CachePersistence.load(from: cacheURL) {
+            self.loadedCache = freshCache
+        }
+
         if let track = loadedCache?.tracks[relativePath] {
             self.waveformEditorModel.loadTrack(track)
             self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"

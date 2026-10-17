@@ -134,6 +134,35 @@ public enum WaveformEditorError: LocalizedError, Equatable {
     }
 }
 
+/// Serial background executor actor for atomic cache persistence, ensuring all decoding,
+/// validation, encoding, and disk flush operations run completely off MainActor while preserving
+/// save request ordering.
+public actor WaveformPersistenceActor {
+    public init() {}
+
+    public func persistTrack(
+        _ track: TrackCacheEntry,
+        libraryRootURL: URL
+    ) throws -> PulseDeckLibraryCache {
+        let cacheURL = libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        var cache: PulseDeckLibraryCache
+        if FileManager.default.fileExists(atPath: cacheURL.path) {
+            guard let loaded = CachePersistence.load(from: cacheURL) else {
+                throw WaveformEditorError.invalidExistingCache(cacheURL.lastPathComponent)
+            }
+            cache = loaded
+        } else {
+            cache = PulseDeckLibraryCache(libraryRoot: libraryRootURL.lastPathComponent)
+        }
+
+        cache.tracks[track.relativePath] = track
+        cache.generatedAt = ISO8601DateFormatter().string(from: Date())
+
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+        return cache
+    }
+}
+
 /// Observable state model for the Phase 3A interactive Waveform Editor.
 /// Owns track waveform data, coordinate mappings, zoom/scroll states, cue marker manipulations,
 /// AI trim bypass state, and atomic cache persistence.
@@ -152,7 +181,9 @@ public final class WaveformEditorModel: ObservableObject {
     @Published public var statusMessage: String = "Waveform Editor Ready"
     @Published public var errorMessage: String? = nil
 
+    public var onTrackPersisted: (@MainActor (TrackCacheEntry, PulseDeckLibraryCache) -> Void)?
     public private(set) var libraryRootURL: URL
+    private let persistenceActor = WaveformPersistenceActor()
     private var inFlightSaveTask: Task<Void, Never>?
 
     public init(libraryRootURL: URL) {
@@ -352,38 +383,26 @@ public final class WaveformEditorModel: ObservableObject {
     private func persistCurrentTrackToCache() {
         guard let track = currentTrack else { return }
         let rootURL = self.libraryRootURL
+        let actor = self.persistenceActor
 
         self.isSaving = true
 
         // Cancel previous pending save task if any
         inFlightSaveTask?.cancel()
 
-        inFlightSaveTask = Task { [track, rootURL] in
-            let cacheURL = rootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        inFlightSaveTask = Task { [track, rootURL, actor] in
             do {
-                var cache: PulseDeckLibraryCache
-                if FileManager.default.fileExists(atPath: cacheURL.path) {
-                    guard let loaded = CachePersistence.load(from: cacheURL) else {
-                        throw WaveformEditorError.invalidExistingCache(cacheURL.lastPathComponent)
-                    }
-                    cache = loaded
-                } else {
-                    cache = PulseDeckLibraryCache(libraryRoot: rootURL.lastPathComponent)
-                }
-
-                // Update track in cache
-                cache.tracks[track.relativePath] = track
-                cache.generatedAt = ISO8601DateFormatter().string(from: Date())
-
-                // Atomic save with POSIX flush and schema validation
-                try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+                let updatedCache = try await actor.persistTrack(track, libraryRootURL: rootURL)
+                guard !Task.isCancelled else { return }
 
                 await MainActor.run {
                     self.isSaving = false
                     self.errorMessage = nil
                     self.statusMessage = "Saved cues to .pulsedeck_ai_cache.json"
+                    self.onTrackPersisted?(track, updatedCache)
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self.isSaving = false
                     self.errorMessage = error.localizedDescription

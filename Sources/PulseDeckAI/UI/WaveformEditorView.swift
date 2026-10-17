@@ -258,50 +258,32 @@ public struct WaveformEditorView: View {
             context.stroke(beatPath, with: .color(Color.white.opacity(0.08)), lineWidth: 1)
         }
 
-        // Visible Waveform Bins (Strictly Bounded Work)
+        // Visible Waveform Bins (Strictly Bounded Work via WaveformSampler)
         let metadata = track.waveformMetadata
         guard let binRange = mapper.visibleBinRange() else { return }
 
-        let visibleBinCount = binRange.count
         let columns = max(1, Int(width))
-        let binsPerColumn = max(1, visibleBinCount / columns)
-        let step = max(1.0, Double(visibleBinCount) / Double(columns))
+        let samples = WaveformSampler.sampleColumns(
+            metadata: metadata,
+            binRange: binRange,
+            columnCount: columns
+        )
 
-        let startBin = binRange.lowerBound
-        var col = 0
-        while col < columns {
-            let binIdx = min(binRange.upperBound, startBin + Int(Double(col) * step))
-            guard binIdx < metadata.peakValues.count else { break }
-
-            // Aggregate peaks across binsPerColumn to ensure transient accuracy without aliasing
-            var peak: Float = 0.0
-            var low: Float = 0.0
-            var mid: Float = 0.0
-            var high: Float = 0.0
-
-            let endIdx = min(binIdx + binsPerColumn, metadata.peakValues.count)
-            for i in binIdx..<endIdx {
-                peak = max(peak, metadata.peakValues[i])
-                low = max(low, metadata.lowBandPeaks[i])
-                mid = max(mid, metadata.midBandPeaks[i])
-                high = max(high, metadata.highBandPeaks[i])
-            }
-
-            let barHeight = max(2.0, CGFloat(peak) * maxHalfHeight)
-            let colX = CGFloat(col)
+        let columnWidth = max(1.0, width / CGFloat(columns))
+        for sample in samples {
+            let barHeight = max(2.0, CGFloat(sample.peak) * maxHalfHeight)
+            let colX = CGFloat(sample.column)
 
             // Multiband Color Blending (Electric Cyan Lows + Amber Mids + Ice White Highs)
-            let r = Double(min(1.0, mid * 0.95 + high * 0.8))
-            let g = Double(min(1.0, low * 0.85 + mid * 0.65 + high * 0.9))
-            let b = Double(min(1.0, low * 1.0 + high * 0.95))
+            let r = Double(min(1.0, sample.mid * 0.95 + sample.high * 0.8))
+            let g = Double(min(1.0, sample.low * 0.85 + sample.mid * 0.65 + sample.high * 0.9))
+            let b = Double(min(1.0, sample.low * 1.0 + sample.high * 0.95))
             let blendedColor = Color(red: r, green: g, blue: b)
 
             var barPath = Path()
             barPath.move(to: CGPoint(x: colX, y: midY - barHeight))
             barPath.addLine(to: CGPoint(x: colX, y: midY + barHeight))
-            context.stroke(barPath, with: .color(blendedColor), lineWidth: max(1.0, width / CGFloat(columns)))
-
-            col += 1
+            context.stroke(barPath, with: .color(blendedColor), lineWidth: columnWidth)
         }
     }
 

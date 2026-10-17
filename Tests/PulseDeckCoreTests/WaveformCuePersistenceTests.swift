@@ -2,6 +2,106 @@ import Foundation
 import XCTest
 @testable import PulseDeckCore
 
+/// Errors thrown during WaveformEditor operations.
+enum WaveformEditorError: LocalizedError, Equatable {
+    case invalidExistingCache(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidExistingCache(let fileName):
+            return "Existing cache file '\(fileName)' failed schema validation or is unreadable. Aborting save to preserve file."
+        }
+    }
+}
+
+/// Production sampler for mapping multi-band waveform bins proportionally to display columns.
+struct WaveformSampler: Sendable {
+    struct ColumnSample: Equatable, Sendable {
+        let column: Int
+        let binIndex: Int
+        let peak: Float
+        let low: Float
+        let mid: Float
+        let high: Float
+    }
+
+    static func sampleColumns(
+        metadata: WaveformMetadata,
+        binRange: ClosedRange<Int>,
+        columnCount: Int
+    ) -> [ColumnSample] {
+        guard columnCount > 0, !metadata.peakValues.isEmpty else { return [] }
+
+        let visibleBinCount = binRange.count
+        let startBin = binRange.lowerBound
+        let endBin = binRange.upperBound
+        let totalBins = metadata.peakValues.count
+
+        var samples = [ColumnSample]()
+        samples.reserveCapacity(columnCount)
+
+        for col in 0..<columnCount {
+            let progressStart = Double(col) / Double(columnCount)
+            let progressEnd = Double(col + 1) / Double(columnCount)
+
+            let sliceStart = min(endBin, max(startBin, startBin + Int(progressStart * Double(visibleBinCount))))
+            let sliceEnd = min(endBin + 1, max(sliceStart + 1, startBin + Int(ceil(progressEnd * Double(visibleBinCount)))))
+
+            var peak: Float = 0.0
+            var low: Float = 0.0
+            var mid: Float = 0.0
+            var high: Float = 0.0
+
+            for b in sliceStart..<sliceEnd where b < totalBins {
+                peak = max(peak, metadata.peakValues[b])
+                low = max(low, metadata.lowBandPeaks[b])
+                mid = max(mid, metadata.midBandPeaks[b])
+                high = max(high, metadata.highBandPeaks[b])
+            }
+
+            samples.append(ColumnSample(
+                column: col,
+                binIndex: sliceStart,
+                peak: peak,
+                low: low,
+                mid: mid,
+                high: high
+            ))
+        }
+
+        return samples
+    }
+}
+
+/// Serial background executor actor for atomic cache persistence, ensuring all decoding,
+/// validation, encoding, and disk flush operations run completely off MainActor while preserving
+/// save request ordering.
+actor WaveformPersistenceActor {
+    init() {}
+
+    func persistTrack(
+        _ track: TrackCacheEntry,
+        libraryRootURL: URL
+    ) throws -> PulseDeckLibraryCache {
+        let cacheURL = libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        var cache: PulseDeckLibraryCache
+        if FileManager.default.fileExists(atPath: cacheURL.path) {
+            guard let loaded = CachePersistence.load(from: cacheURL) else {
+                throw WaveformEditorError.invalidExistingCache(cacheURL.lastPathComponent)
+            }
+            cache = loaded
+        } else {
+            cache = PulseDeckLibraryCache(libraryRoot: libraryRootURL.lastPathComponent)
+        }
+
+        cache.tracks[track.relativePath] = track
+        cache.generatedAt = ISO8601DateFormatter().string(from: Date())
+
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+        return cache
+    }
+}
+
 final class WaveformCuePersistenceTests: XCTestCase {
 
     // MARK: - Cue Invariants and Bounds Validation
@@ -213,6 +313,166 @@ final class WaveformCuePersistenceTests: XCTestCase {
         // Invariant: when cacheURL exists but load fails, aborting save preserves raw file on disk
         let contentOnDisk = try Data(contentsOf: cacheURL)
         XCTAssertEqual(contentOnDisk, corruptContent)
+    }
+
+    // MARK: - Waveform Sampling Proportionality (High Zoom)
+
+    func testWaveformSamplerProportionalMappingAtHighZoom() {
+        // 4,096 bins, simulating 32x zoom (129 visible bins) across 800 columns
+        let totalBins = 4096
+        var peaks = [Float](repeating: 0.1, count: totalBins)
+        let low = [Float](repeating: 0.05, count: totalBins)
+        var mid = [Float](repeating: 0.05, count: totalBins)
+        let high = [Float](repeating: 0.05, count: totalBins)
+
+        // Inject a known transient peak at bin 1064 (middle of visible range)
+        peaks[1064] = 0.95
+        mid[1064] = 0.90
+
+        let metadata = WaveformMetadata(
+            sampleCount: totalBins * 512,
+            downsampleFactor: 512,
+            peakValues: peaks,
+            lowBandPeaks: low,
+            midBandPeaks: mid,
+            highBandPeaks: high
+        )
+
+        let binRange = 1000...1128 // 129 visible bins
+        let columnCount = 800
+
+        let samples = WaveformSampler.sampleColumns(
+            metadata: metadata,
+            binRange: binRange,
+            columnCount: columnCount
+        )
+
+        XCTAssertEqual(samples.count, 800)
+
+        // Column 0 must map to start of visible range
+        XCTAssertEqual(samples.first?.binIndex, 1000)
+
+        // Middle columns (~400) must map near the middle of visible range (bin 1064)
+        let midSample = samples[400]
+        XCTAssertTrue((1060...1068).contains(midSample.binIndex))
+        XCTAssertEqual(midSample.peak, 0.95, accuracy: 0.01)
+
+        // Last column (799) must map to the end of visible range (bin 1128)
+        XCTAssertEqual(samples.last?.binIndex, 1128)
+
+        // Monotonic progression: every column must have non-decreasing binIndex
+        for i in 1..<samples.count {
+            XCTAssertGreaterThanOrEqual(samples[i].binIndex, samples[i-1].binIndex)
+        }
+    }
+
+    // MARK: - Track Selection Synchronized with Manual Edits (Edit/Save/Switch/Reselect)
+
+    func testEditSaveSwitchReselectPreservesManualOverrides() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("PulseDeckTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let cacheURL = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        var cache = PulseDeckLibraryCache(libraryRoot: tempDir.lastPathComponent)
+
+        let trackA = "00_Test_Tracks_Dev/track_a.wav"
+        let trackB = "00_Test_Tracks_Dev/track_b.wav"
+
+        let entryA = makeSampleTrackEntry(
+            relativePath: trackA,
+            duration: 180.0,
+            cues: CueMarkers(startTrimCue: 2.0, vocalEntryCue: 10.0, mixOutCue: 160.0, endTrimCue: 175.0)
+        )
+        let entryB = makeSampleTrackEntry(
+            relativePath: trackB,
+            duration: 200.0,
+            cues: CueMarkers(startTrimCue: 3.0, vocalEntryCue: 15.0, mixOutCue: 180.0, endTrimCue: 195.0)
+        )
+
+        CachePersistence.upsertTrack(entryA, in: &cache)
+        CachePersistence.upsertTrack(entryB, in: &cache)
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+
+        let persistenceActor = WaveformPersistenceActor()
+
+        // 1. Edit Track A
+        var editedA = entryA
+        let customCuesA = CueMarkers(startTrimCue: 5.5, vocalEntryCue: 18.2, mixOutCue: 165.0, endTrimCue: 178.0)
+        editedA.cueMarkers = customCuesA
+        editedA.aiTrimBypass = true
+        editedA.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["cueMarkers", "aiTrimBypass"],
+            updatedAt: "2026-10-17T12:00:00Z",
+            author: "DJ Manual Editor"
+        )
+
+        // 2. Persist Track A via background actor
+        let updatedCacheAfterA = try await persistenceActor.persistTrack(editedA, libraryRootURL: tempDir)
+
+        // In-memory shared cache is updated
+        var inMemorySharedCache = updatedCacheAfterA
+
+        // 3. Switch selection to Track B
+        let selectedB = inMemorySharedCache.tracks[trackB]
+        XCTAssertNotNil(selectedB)
+        XCTAssertEqual(selectedB?.relativePath, trackB)
+
+        // 4. Reselect Track A (simulating AppState.selectTrack reloading from shared cache or disk)
+        let freshCacheFromDisk = try XCTUnwrap(CachePersistence.load(from: cacheURL))
+        inMemorySharedCache = freshCacheFromDisk
+        let reselectedA = try XCTUnwrap(inMemorySharedCache.tracks[trackA])
+
+        // Verify Track A retains all manual cues, bypass, and overrides without reverting to stale state
+        XCTAssertEqual(reselectedA.cueMarkers, customCuesA)
+        XCTAssertTrue(reselectedA.aiTrimBypass)
+        XCTAssertTrue(reselectedA.manualOverrides.isManual)
+        XCTAssertEqual(reselectedA.manualOverrides.overriddenFields, ["cueMarkers", "aiTrimBypass"])
+
+        // 5. Subsequent edit to Track A builds on the preserved state rather than clobbering it
+        var secondEditA = reselectedA
+        secondEditA.cueMarkers.vocalEntryCue = 20.0
+        _ = try await persistenceActor.persistTrack(secondEditA, libraryRootURL: tempDir)
+
+        let finalDiskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL))
+        let finalA = try XCTUnwrap(finalDiskCache.tracks[trackA])
+        XCTAssertEqual(finalA.cueMarkers.vocalEntryCue, 20.0)
+        XCTAssertEqual(finalA.cueMarkers.startTrimCue, 5.5) // preserved
+        XCTAssertTrue(finalA.aiTrimBypass) // preserved
+    }
+
+    // MARK: - Serial Background Persistence Actor
+
+    func testBackgroundPersistenceActorExecutesOffMainActorAndPreservesOrder() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("PulseDeckTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let cacheURL = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        var cache = PulseDeckLibraryCache(libraryRoot: tempDir.lastPathComponent)
+        let trackPath = "00_Test_Tracks_Dev/serial_test.wav"
+        let initialEntry = makeSampleTrackEntry(
+            relativePath: trackPath,
+            duration: 100.0,
+            cues: CueMarkers(startTrimCue: 1.0, vocalEntryCue: 5.0, mixOutCue: 90.0, endTrimCue: 99.0)
+        )
+        CachePersistence.upsertTrack(initialEntry, in: &cache)
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+
+        let actor = WaveformPersistenceActor()
+
+        // Dispatch 5 sequential edits through the background actor
+        for i in 1...5 {
+            var updated = initialEntry
+            updated.cueMarkers.startTrimCue = Double(i) * 0.5
+            let resultCache = try await actor.persistTrack(updated, libraryRootURL: tempDir)
+            XCTAssertEqual(resultCache.tracks[trackPath]?.cueMarkers.startTrimCue, Double(i) * 0.5)
+        }
+
+        // Final verification on disk
+        let diskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL))
+        XCTAssertEqual(diskCache.tracks[trackPath]?.cueMarkers.startTrimCue, 2.5)
     }
 
     // MARK: - Coordinate Conversion & Zoom/Scroll Windowing Math

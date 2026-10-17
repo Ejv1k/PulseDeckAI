@@ -305,6 +305,253 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(invalid.visibleBinRange())
     }
 
+    func testProductionSamplerHandlesEmptyAndUnequalBandLengthsSafely() throws {
+        // Schema-valid entry where peakValues has entries, but band arrays are empty or shorter
+        let peaks: [Float] = [0.1, 0.4, 0.9, 0.3, 0.7]
+        let lowPeaks: [Float] = [0.2] // shorter
+        let midPeaks: [Float] = [] // empty
+        let highPeaks: [Float] = [0.05, 0.3, 0.8] // shorter
+
+        let metadata = WaveformMetadata(
+            sampleCount: 2_560,
+            downsampleFactor: 512,
+            peakValues: peaks,
+            lowBandPeaks: lowPeaks,
+            midBandPeaks: midPeaks,
+            highBandPeaks: highPeaks
+        )
+
+        // Must not crash/trap, and must correctly sample available peaks while defaulting missing bands to 0
+        let samples = WaveformSampler.sampleColumns(metadata: metadata, binRange: 0...4, columnCount: 5)
+        XCTAssertEqual(samples.count, 5)
+        XCTAssertEqual(samples[2].peak, 0.9)
+        XCTAssertEqual(samples[2].low, 0.0) // low was only 1 element, bin 2 is safely 0.0
+        XCTAssertEqual(samples[2].mid, 0.0) // mid was empty, safely 0.0
+        XCTAssertEqual(samples[2].high, 0.8) // high has 3 elements, bin 2 is 0.8
+        XCTAssertEqual(samples[4].high, 0.0) // bin 4 out of bounds for high, safely 0.0
+
+        // Entirely empty bands in valid cache loaded from disk must render safely
+        let (root, _, _, _) = try makeLibrary()
+        var diskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let emptyBandsTrack = TrackCacheEntry(
+            relativePath: "crate/empty_bands.wav",
+            fileFingerprint: "empty_bands_fp",
+            fileSizeBytes: 5_000,
+            fileModificationTime: "2026-10-17T10:00:00Z",
+            duration: 60.0,
+            sampleRate: 44_100,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "5A",
+            confidence: 0.9,
+            waveformMetadata: WaveformMetadata(
+                sampleCount: 60 * 44_100,
+                downsampleFactor: 512,
+                peakValues: [0.5, 0.8],
+                lowBandPeaks: [],
+                midBandPeaks: [],
+                highBandPeaks: []
+            ),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 0.5]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 5, mixOutCue: 50, endTrimCue: 60),
+            analyzerVersion: "fixture",
+            analysisTimestamp: "2026-10-17T10:00:00Z"
+        )
+        diskCache.tracks[emptyBandsTrack.relativePath] = emptyBandsTrack
+        try CachePersistence.saveAtomic(cache: diskCache, to: cacheURL(root))
+
+        let reloaded = try XCTUnwrap(CachePersistence.load(from: cacheURL(root))?.tracks[emptyBandsTrack.relativePath])
+        let loadedSamples = WaveformSampler.sampleColumns(metadata: reloaded.waveformMetadata, binRange: 0...1, columnCount: 10)
+        XCTAssertEqual(loadedSamples.count, 10)
+        XCTAssertEqual(loadedSamples.first?.peak, 0.5)
+        XCTAssertEqual(loadedSamples.last?.peak, 0.8)
+        XCTAssertEqual(loadedSamples.first?.low, 0.0)
+    }
+
+    func testProductionMinimapSamplerCoversCompleteTrackAndAgreesWithScrollMapping() {
+        // Case 1: 1,200 bins across 800 columns (total > cols)
+        // Ensure final third (bins 800..1199) is NOT omitted and end spike is present in final column
+        let totalBins = 1_200
+        let cols = 800
+        var peaks1200 = [Float](repeating: 0.1, count: totalBins)
+        peaks1200[1_199] = 0.95 // Spike at the very end of track
+        let metadata1200 = WaveformMetadata(
+            sampleCount: 1_200 * 512,
+            downsampleFactor: 512,
+            peakValues: peaks1200,
+            lowBandPeaks: peaks1200,
+            midBandPeaks: peaks1200,
+            highBandPeaks: peaks1200
+        )
+
+        let minimapSamples1200 = WaveformSampler.sampleMinimap(metadata: metadata1200, columnCount: cols)
+        XCTAssertEqual(minimapSamples1200.count, cols)
+        XCTAssertEqual(minimapSamples1200.first?.binIndex, 0)
+        // Last column must reach the end bin and capture the spike
+        XCTAssertEqual(minimapSamples1200.last?.peak, 0.95)
+        XCTAssertGreaterThanOrEqual(minimapSamples1200.last?.binIndex ?? 0, 1_198)
+
+        // Coordinate mapper viewport at scroll end aligns with end bins
+        let duration = 240.0
+        let mapper = WaveformCoordinateMapper(
+            duration: duration,
+            zoomLevel: 2.0,
+            scrollOffsetSeconds: 120.0, // Scrolled to final half
+            totalBins: totalBins
+        )
+        let visibleRange = try! XCTUnwrap(mapper.visibleBinRange())
+        XCTAssertEqual(visibleRange.upperBound, totalBins - 1)
+        // Minimap drag at far right corresponds to full duration
+        let endFrac = 1.0
+        XCTAssertEqual(endFrac * duration, duration)
+
+        // Case 2: Fewer bins than columns (100 bins, 800 columns)
+        // Proportional sampling must distribute bins across width without freezing the last bin
+        let fewBins = 100
+        var linearPeaks = [Float](repeating: 0.0, count: fewBins)
+        for i in 0..<fewBins { linearPeaks[i] = Float(i) / Float(fewBins) }
+        let metadataFew = WaveformMetadata(
+            sampleCount: fewBins * 512,
+            downsampleFactor: 512,
+            peakValues: linearPeaks,
+            lowBandPeaks: linearPeaks,
+            midBandPeaks: linearPeaks,
+            highBandPeaks: linearPeaks
+        )
+
+        let minimapFew = WaveformSampler.sampleMinimap(metadata: metadataFew, columnCount: cols)
+        XCTAssertEqual(minimapFew.count, cols)
+        XCTAssertEqual(minimapFew.first?.binIndex, 0)
+        // Center column (400) maps proportionally to ~50, NOT clamped to 99
+        let midBin = try! XCTUnwrap(minimapFew[400].binIndex)
+        XCTAssertTrue((49...51).contains(midBin), "Mid column should map near bin 50, got \(midBin)")
+        // Bin index strictly increases across width
+        for c in 1..<minimapFew.count {
+            XCTAssertGreaterThanOrEqual(minimapFew[c].binIndex, minimapFew[c - 1].binIndex)
+        }
+    }
+
+    @MainActor
+    func testSelectionAdoptsFreshDiskChangesAndManualSavePreservesFreshAnalysisAndUnrelatedFields() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+
+        // 1. Initial selection loads baseline state into in-memory cache and editor
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.currentTrack?.bpm, 128.0)
+        XCTAssertEqual(editor.currentTrack?.musicalKey, "8A")
+
+        // 2. External analyzer updates disk after in-memory cache was populated
+        var updatedDiskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let updatedEntry = TrackCacheEntry(
+            relativePath: a.relativePath,
+            fileFingerprint: "fresh_reanalysis_hash",
+            fileSizeBytes: 12_000,
+            fileModificationTime: "2026-10-17T12:00:00Z",
+            duration: a.duration,
+            sampleRate: a.sampleRate,
+            channels: a.channels,
+            bitDepth: a.bitDepth,
+            bpm: 142.5,
+            musicalKey: "11B",
+            confidence: 0.99,
+            waveformMetadata: a.waveformMetadata,
+            beatGrid: a.beatGrid,
+            structure: a.structure,
+            cueMarkers: a.cueMarkers,
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(
+                isManual: true,
+                overriddenFields: ["bpm"],
+                updatedAt: "2026-10-17T12:00:00Z",
+                author: "External Pro DJ",
+                notes: "Preserve external phrasing"
+            ),
+            analyzerVersion: "v2-pro",
+            analysisTimestamp: "2026-10-17T12:00:00Z"
+        )
+        updatedDiskCache.tracks[a.relativePath] = updatedEntry
+        try CachePersistence.saveAtomic(cache: updatedDiskCache, to: cacheURL(root))
+
+        // 3. Same-track reselection must NOT early return; unedited selection adopts fresh disk
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.currentTrack?.bpm, 142.5)
+        XCTAssertEqual(editor.currentTrack?.musicalKey, "11B")
+        XCTAssertEqual(editor.currentTrack?.fileFingerprint, "fresh_reanalysis_hash")
+        XCTAssertEqual(editor.manualOverrides.notes, "Preserve external phrasing")
+        XCTAssertEqual(editor.manualOverrides.author, "External Pro DJ")
+
+        // 4. Subsequent manual cue edit and AI trim bypass save
+        editor.setCue(.startTrim, toTime: 4.8)
+        editor.toggleAITrimBypass()
+        await saved(editor)
+
+        // 5. Verify saved disk entry preserved fresh non-manual metadata AND unrelated manual fields
+        let savedEntry = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(savedEntry.cueMarkers.startTrimCue, 4.8)
+        XCTAssertTrue(savedEntry.aiTrimBypass)
+        XCTAssertEqual(savedEntry.bpm, 142.5, "Fresh analysis/manual BPM preserved")
+        XCTAssertEqual(savedEntry.musicalKey, "11B", "Fresh analysis key preserved")
+        XCTAssertEqual(savedEntry.fileFingerprint, "fresh_reanalysis_hash", "Fresh non-manual fingerprint preserved")
+        XCTAssertEqual(savedEntry.confidence, 0.99, "Fresh non-manual confidence preserved")
+        XCTAssertEqual(savedEntry.manualOverrides.notes, "Preserve external phrasing", "Unrelated manual notes preserved")
+        XCTAssertEqual(savedEntry.manualOverrides.author, "DJ (PulseDeck Manual Editor)")
+        XCTAssertEqual(Set(savedEntry.manualOverrides.overriddenFields), ["bpm", "cueMarkers", "aiTrimBypass"])
+    }
+
+    @MainActor
+    func testPendingInteractionPreventsDiskOverwriteUntilAcknowledged() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let started = [XCTestExpectation(description: "Held save")]
+        let persistence = HeldWaveformPersistence(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+
+        await select(app, a.relativePath)
+
+        // Begin active edit which triggers pending save
+        editor.setCue(.startTrim, toTime: 6.2)
+        await completed(started[0])
+        XCTAssertTrue(editor.isSaving)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+
+        // Disk changes while local edit is pending
+        var diskCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        diskCache.tracks[a.relativePath]?.bpm = 150.0
+        try CachePersistence.saveAtomic(cache: diskCache, to: cacheURL(root))
+
+        // Reselecting same path while edit is pending must NOT overwrite dirty local cues
+        let reselectTask = app.selectTrack(relativePath: a.relativePath)
+        await reselectTask.value
+        XCTAssertEqual(editor.cues.startTrimCue, 6.2)
+
+        // Active drag gesture also prevents disk overwrite
+        editor.beginDrag(cue: .vocalEntry)
+        editor.updateDrag(cue: .vocalEntry, toTime: 25.0)
+        let dragReselectTask = app.selectTrack(relativePath: a.relativePath)
+        await dragReselectTask.value
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25.0)
+        editor.endDrag(cue: .vocalEntry)
+
+        // Release all held saves and wait for completion
+        await persistence.releaseAll()
+        await saved(editor)
+
+        // Once saved and acknowledged, dirty state is cleared
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        let final = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(final.cueMarkers.startTrimCue, 6.2)
+        XCTAssertEqual(final.cueMarkers.vocalEntryCue, 25.0)
+        XCTAssertEqual(final.bpm, 150.0, "Saved merge preserved disk BPM")
+    }
+
     @MainActor
     private func select(_ app: AppState, _ relativePath: String) async {
         let task = app.selectTrack(relativePath: relativePath)

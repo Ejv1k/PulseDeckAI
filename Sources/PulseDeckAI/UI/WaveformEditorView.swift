@@ -454,16 +454,16 @@ public struct WaveformEditorView: View {
 
                     // Simplified full track peak line
                     Canvas { context, size in
-                        let total = track.waveformMetadata.peakValues.count
-                        guard total > 0 else { return }
                         let cols = max(1, Int(size.width))
-                        let step = max(1, total / cols)
-                        for c in 0..<cols {
-                            let idx = min(total - 1, c * step)
-                            let p = CGFloat(track.waveformMetadata.peakValues[idx])
+                        let samples = WaveformSampler.sampleMinimap(
+                            metadata: track.waveformMetadata,
+                            columnCount: cols
+                        )
+                        for sample in samples {
+                            let p = CGFloat(sample.peak)
                             var path = Path()
-                            path.move(to: CGPoint(x: CGFloat(c), y: size.height / 2.0 - p * (size.height / 2.0)))
-                            path.addLine(to: CGPoint(x: CGFloat(c), y: size.height / 2.0 + p * (size.height / 2.0)))
+                            path.move(to: CGPoint(x: CGFloat(sample.column), y: size.height / 2.0 - p * (size.height / 2.0)))
+                            path.addLine(to: CGPoint(x: CGFloat(sample.column), y: size.height / 2.0 + p * (size.height / 2.0)))
                             context.stroke(path, with: .color(DJTheme.textMuted.opacity(0.6)), lineWidth: 1)
                         }
                     }

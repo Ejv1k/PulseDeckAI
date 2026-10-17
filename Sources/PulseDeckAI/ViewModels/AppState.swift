@@ -129,26 +129,28 @@ public final class AppState: ObservableObject {
     /// reloading from disk if the shared in-memory cache is out of date.
     @discardableResult
     public func selectTrack(relativePath: String) -> Task<Void, Never> {
-        // If already selected, do not reload stale in-memory cache over current active edits
-        if selectedTrackPath == relativePath,
-           waveformEditorModel.libraryRootURL.standardizedFileURL == libraryRootURL.standardizedFileURL,
-           let current = waveformEditorModel.currentTrack,
-           current.relativePath == relativePath {
-            return Task {}
+        let rootURL = libraryRootURL
+        let standardizedRoot = rootURL.standardizedFileURL
+        let isSameTrackAlreadySelected = (selectedTrackPath == relativePath &&
+            waveformEditorModel.libraryRootURL.standardizedFileURL == standardizedRoot &&
+            waveformEditorModel.currentTrack?.relativePath == relativePath)
+
+        waveformEditorModel.updateLibraryRoot(rootURL)
+
+        if !isSameTrackAlreadySelected {
+            waveformEditorModel.finishActiveDrag()
+            self.selectedTrackPath = relativePath
+            let knownCache = loadedCacheRootURL == standardizedRoot ? loadedCache : nil
+            if let track = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: knownCache, libraryRootURL: rootURL) {
+                waveformEditorModel.loadTrack(track)
+            } else {
+                waveformEditorModel.clearTrack()
+            }
         }
 
-        waveformEditorModel.finishActiveDrag()
-        let rootURL = libraryRootURL
-        waveformEditorModel.updateLibraryRoot(rootURL)
         selectionGeneration &+= 1
         let generation = selectionGeneration
-        self.selectedTrackPath = relativePath
-        let knownCache = loadedCacheRootURL == rootURL.standardizedFileURL ? loadedCache : nil
-        if let track = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: knownCache, libraryRootURL: rootURL) {
-            waveformEditorModel.loadTrack(track)
-        } else {
-            waveformEditorModel.clearTrack()
-        }
+        let selectionRevision = waveformEditorModel.interactionRevision
 
         // Reload latest cache from disk to ensure freshest state if disk was updated
         return Task { [weak self] in
@@ -156,16 +158,20 @@ public final class AppState: ObservableObject {
                 CachePersistence.load(from: rootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
             }.value
             guard let self, self.selectionGeneration == generation,
-                  self.libraryRootURL.standardizedFileURL == rootURL.standardizedFileURL,
+                  self.libraryRootURL.standardizedFileURL == standardizedRoot,
                   self.selectedTrackPath == relativePath else { return }
             if let freshCache {
                 self.loadedCache = self.waveformEditorModel.applyingLocalEdits(to: freshCache, libraryRootURL: rootURL)
-                self.loadedCacheRootURL = rootURL.standardizedFileURL
+                self.loadedCacheRootURL = standardizedRoot
             }
-            let currentCache = self.loadedCacheRootURL == rootURL.standardizedFileURL ? self.loadedCache : nil
+            let currentCache = self.loadedCacheRootURL == standardizedRoot ? self.loadedCache : nil
             if let track = self.waveformEditorModel.entryForSelection(relativePath: relativePath, cache: currentCache, libraryRootURL: rootURL) {
-                // An immediate local selection may already be receiving gestures; a disk read cannot replace it.
-                if self.waveformEditorModel.currentTrack?.relativePath != relativePath {
+                let isDirtyOrInteracting = self.waveformEditorModel.hasActiveInteraction(
+                    since: selectionRevision,
+                    relativePath: relativePath,
+                    libraryRootURL: rootURL
+                )
+                if !isDirtyOrInteracting {
                     self.waveformEditorModel.loadTrack(track)
                 }
                 self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"

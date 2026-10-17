@@ -54,11 +54,19 @@ public struct WaveformSampler: Sendable {
             var mid: Float = 0.0
             var high: Float = 0.0
 
-            for b in sliceStart..<sliceEnd where b < totalBins {
-                peak = max(peak, metadata.peakValues[b])
-                low = max(low, metadata.lowBandPeaks[b])
-                mid = max(mid, metadata.midBandPeaks[b])
-                high = max(high, metadata.highBandPeaks[b])
+            for b in sliceStart..<sliceEnd {
+                if b >= 0 && b < totalBins {
+                    peak = max(peak, metadata.peakValues[b])
+                }
+                if b >= 0 && b < metadata.lowBandPeaks.count {
+                    low = max(low, metadata.lowBandPeaks[b])
+                }
+                if b >= 0 && b < metadata.midBandPeaks.count {
+                    mid = max(mid, metadata.midBandPeaks[b])
+                }
+                if b >= 0 && b < metadata.highBandPeaks.count {
+                    high = max(high, metadata.highBandPeaks[b])
+                }
             }
 
             samples.append(ColumnSample(
@@ -72,5 +80,18 @@ public struct WaveformSampler: Sendable {
         }
 
         return samples
+    }
+
+    /// Samples peak and band values across the full track proportionally for minimap rendering.
+    public static func sampleMinimap(
+        metadata: WaveformMetadata,
+        columnCount: Int
+    ) -> [ColumnSample] {
+        guard columnCount > 0, !metadata.peakValues.isEmpty else { return [] }
+        return sampleColumns(
+            metadata: metadata,
+            binRange: 0...(metadata.peakValues.count - 1),
+            columnCount: columnCount
+        )
     }
 }

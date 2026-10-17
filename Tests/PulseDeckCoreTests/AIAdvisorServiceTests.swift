@@ -18,6 +18,114 @@ final class AIAdvisorServiceTests: XCTestCase {
         XCTAssertEqual(RedirectingAdvisorURLProtocol.recorder.hosts, ["127.0.0.1"])
     }
 
+    func testHTTPTransportEnforcesTotalDeadlineForSlowTrickleResponse() async throws {
+        let (transport, request, probe, identifier) = try Self.streamingRequest(mode: "trickle", timeout: 0.2)
+        defer { StreamingAdvisorURLProtocol.registry.remove(identifier) }
+        let operation = Task { try await transport.send(request) }
+        let watchdog = Task {
+            try await Task.sleep(for: .seconds(2))
+            operation.cancel()
+        }
+        defer { watchdog.cancel() }
+        do {
+            _ = try await operation.value
+            XCTFail("Expected total request deadline")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .timedOut)
+        } catch {
+            XCTFail("Expected timedOut, received \(error)")
+        }
+        await fulfillment(of: [probe.stopped], timeout: 1)
+        XCTAssertGreaterThan(probe.chunkCount, 1, "Response must keep making progress before the deadline")
+    }
+
+    func testHTTPTransportCancelsOversizeBodiesWithoutTrustworthyContentLength() async throws {
+        for mode in ["overflow-missing", "overflow-false", "overflow-declared"] {
+            let (transport, request, probe, identifier) = try Self.streamingRequest(mode: mode, timeout: 1)
+            defer { StreamingAdvisorURLProtocol.registry.remove(identifier) }
+            let operation = Task { try await transport.send(request) }
+            let watchdog = Task {
+                try await Task.sleep(for: .seconds(2))
+                operation.cancel()
+            }
+            defer { watchdog.cancel() }
+            do {
+                _ = try await operation.value
+                XCTFail("Expected receiving-size limit for \(mode)")
+            } catch {
+                XCTAssertEqual(error as? AIAdvisorError, .responseTooLarge, mode)
+            }
+            await fulfillment(of: [probe.stopped], timeout: 1)
+        }
+    }
+
+    func testHTTPTransportAcceptsExactLimitAndEmptyBody() async throws {
+        for (mode, expectedCount) in [("exact-limit", 1_048_576), ("empty", 0)] {
+            let (transport, request, _, identifier) = try Self.streamingRequest(mode: mode, timeout: 2)
+            defer { StreamingAdvisorURLProtocol.registry.remove(identifier) }
+            let response = try await transport.send(request)
+            XCTAssertEqual(response.statusCode, 200)
+            XCTAssertEqual(response.body.count, expectedCount)
+        }
+    }
+
+    func testHTTPTransportCancellationStopsOnlyItsRequest() async throws {
+        let (transport, request, probe, identifier) = try Self.streamingRequest(mode: "trickle", timeout: 2)
+        defer { StreamingAdvisorURLProtocol.registry.remove(identifier) }
+        let operation = Task { try await transport.send(request) }
+        await fulfillment(of: [probe.firstChunk], timeout: 1)
+        var mutableHealthyRequest = request
+        mutableHealthyRequest.url = try XCTUnwrap(URL(string: "http://127.0.0.1/exact-limit"))
+        mutableHealthyRequest.setValue(nil, forHTTPHeaderField: "X-Test-Identifier")
+        let healthyRequest = mutableHealthyRequest
+        let healthyOperation = Task { try await transport.send(healthyRequest) }
+        operation.cancel()
+        do {
+            _ = try await operation.value
+            XCTFail("Expected caller cancellation")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected CancellationError, received \(error)")
+        }
+        await fulfillment(of: [probe.stopped], timeout: 1)
+
+        let response = try await healthyOperation.value
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(response.body.count, 1_048_576)
+    }
+
+    func testHTTPTransportAlreadyCancelledCallerDoesNotStartRequest() async throws {
+        let (transport, request, probe, identifier) = try Self.streamingRequest(mode: "trickle", timeout: 1)
+        defer { StreamingAdvisorURLProtocol.registry.remove(identifier) }
+        let operation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await transport.send(request)
+        }
+        do {
+            _ = try await operation.value
+            XCTFail("Expected caller cancellation before startup")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected CancellationError, received \(error)")
+        }
+        XCTAssertEqual(probe.chunkCount, 0)
+    }
+
+    private static func streamingRequest(
+        mode: String,
+        timeout: TimeInterval
+    ) throws -> (URLSessionAdvisorHTTPTransport, URLRequest, StreamingHTTPProbe, String) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingAdvisorURLProtocol.self]
+        let probe = StreamingHTTPProbe()
+        let identifier = UUID().uuidString
+        StreamingAdvisorURLProtocol.registry.insert(probe, identifier: identifier)
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1/\(mode)")))
+        request.timeoutInterval = timeout
+        request.setValue(identifier, forHTTPHeaderField: "X-Test-Identifier")
+        return (URLSessionAdvisorHTTPTransport(configuration: configuration), request, probe, identifier)
+    }
+
     func testGeminiUsesConfiguredModelHeaderAndCurrentStructuredOutputSchema() async throws {
         let clock = ManualAdvisorClock()
         let transport = StubAdvisorTransport(responses: [Self.geminiResponse(Self.validRecommendation)], clock: clock)
@@ -252,6 +360,7 @@ private final class RedirectingAdvisorURLProtocol: URLProtocol {
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Location": externalURL.absoluteString]
                   ) else { return }
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: externalURL), redirectResponse: redirectResponse)
             client?.urlProtocol(self, didReceive: redirectResponse, cacheStoragePolicy: .notAllowed)
             client?.urlProtocolDidFinishLoading(self)
         } else {
@@ -285,6 +394,112 @@ private final class RedirectRequestRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         recordedHosts.removeAll()
+    }
+}
+
+private final class StreamingHTTPProbe: @unchecked Sendable {
+    let stopped = XCTestExpectation(description: "Underlying URLProtocol stopped")
+    let firstChunk = XCTestExpectation(description: "First response chunk received")
+    private let lock = NSLock()
+    private var chunks = 0
+
+    var chunkCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return chunks
+    }
+
+    func recordChunk() {
+        lock.lock()
+        chunks += 1
+        let first = chunks == 1
+        lock.unlock()
+        if first { firstChunk.fulfill() }
+    }
+}
+
+private final class StreamingHTTPRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var probes: [String: StreamingHTTPProbe] = [:]
+
+    func insert(_ probe: StreamingHTTPProbe, identifier: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        probes[identifier] = probe
+    }
+
+    func remove(_ identifier: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        probes.removeValue(forKey: identifier)
+    }
+
+    func probe(for request: URLRequest) -> StreamingHTTPProbe? {
+        lock.lock()
+        defer { lock.unlock() }
+        return request.value(forHTTPHeaderField: "X-Test-Identifier").flatMap { probes[$0] }
+    }
+}
+
+private final class StreamingAdvisorURLProtocol: URLProtocol, @unchecked Sendable {
+    static let registry = StreamingHTTPRegistry()
+    // Timer ownership and all fixture callbacks stay on this serial queue.
+    private let queue = DispatchQueue(label: "PulseDeckTests.StreamingHTTP")
+    private var timer: DispatchSourceTimer?
+    private var stopped = false
+    private var probe: StreamingHTTPProbe?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        queue.async { self.startOnQueue() }
+    }
+
+    private func startOnQueue() {
+        guard !stopped, let url = request.url else { return }
+        probe = Self.registry.probe(for: request)
+        let mode = url.lastPathComponent
+        let headers: [String: String]?
+        switch mode {
+        case "overflow-false": headers = ["Content-Length": "1"]
+        case "overflow-declared": headers = ["Content-Length": "1048577"]
+        default: headers = nil
+        }
+        guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if mode == "empty" {
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: mode == "trickle" ? .milliseconds(30) : .milliseconds(5))
+        var chunks = 0
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.stopped else { return }
+            chunks += 1
+            self.probe?.recordChunk()
+            self.client?.urlProtocol(self, didLoad: Data(repeating: 0x20, count: mode == "trickle" ? 1 : 65_536))
+            if mode == "exact-limit", chunks == 16 {
+                self.timer?.cancel()
+                self.client?.urlProtocolDidFinishLoading(self)
+            } else if mode != "trickle", chunks == 17 {
+                // Never finish an oversized response: only receiver cancellation can terminate it.
+                self.timer?.cancel()
+            }
+        }
+        self.timer = timer
+        timer.resume()
+    }
+
+    override func stopLoading() {
+        queue.async {
+            guard !self.stopped else { return }
+            self.stopped = true
+            self.timer?.cancel()
+            self.timer = nil
+            self.probe?.stopped.fulfill()
+        }
     }
 }
 

@@ -219,4 +219,40 @@ final class TransitionStateMachineTests: XCTestCase {
         XCTAssertEqual(incomingVolumes.last, 1)
     }
 
+    func testClusteredSubToleranceOffsetsEmitStrictlyChronologicallyInSkippedBatch() throws {
+        let events = [
+            ScheduledTransitionEvent(
+                timeOffsetSeconds: 0.0,
+                command: .setVolume(deck: .deckA, volume: 0.5),
+                priority: .volumeFader
+            ),
+            ScheduledTransitionEvent(
+                timeOffsetSeconds: 0.000075,
+                command: .play(deck: .deckB),
+                priority: .transportStart
+            ),
+            ScheduledTransitionEvent(
+                timeOffsetSeconds: 0.00015,
+                command: .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0, midGainDB: 0, highGainDB: 0)),
+                priority: .audioProcessing
+            )
+        ]
+        let plan = TransitionPlan(
+            style: .filterEchoWash(durationSeconds: 1.0),
+            outgoingDeck: .deckA,
+            incomingDeck: .deckB,
+            startTimestampSeconds: 100.0,
+            durationSeconds: 1.0,
+            events: events,
+            metadata: TransitionPlanMetadata()
+        )
+        var machine = TransitionStateMachine(plan: plan)
+        let emitted = try machine.advance(to: 100.0002)
+        XCTAssertEqual(emitted.count, 3)
+        XCTAssertEqual(emitted[0], .setVolume(deck: .deckA, volume: 0.5))
+        XCTAssertEqual(emitted[1], .play(deck: .deckB))
+        XCTAssertEqual(emitted[2], .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0, midGainDB: 0, highGainDB: 0)))
+    }
+
 }
+

@@ -28,6 +28,19 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     private let stateLock = NSLock()
 
     private var _latencyCompensation: LatencyCompensation = LatencyCompensation(offsetMs: 0.0)
+    private var _transitionExecutionService: TransitionExecutionService?
+
+    /// Lazily initialized transition execution service governing automated transitions.
+    public var transitionExecutionService: TransitionExecutionService {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        if let existing = _transitionExecutionService {
+            return existing
+        }
+        let created = TransitionExecutionService(coordinator: self)
+        _transitionExecutionService = created
+        return created
+    }
 
     /// Initializes the dual-engine coordinator with full CoreAudio HAL and monitor integration.
     ///

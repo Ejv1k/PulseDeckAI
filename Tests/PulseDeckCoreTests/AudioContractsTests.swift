@@ -72,20 +72,13 @@ final class AudioContractsTests: XCTestCase {
         let aggressiveConfig = GeminiAdvisorConfig(requestsPerMinute: 60)
         XCTAssertEqual(aggressiveConfig.requestsPerMinute, 12)
 
-        // Backoff delay calculation test
+        // Deterministic bounded backoff supports hermetic Retry-After tests.
         let backoff0 = config.backoffDelaySeconds(forAttempt: 0)
-        XCTAssertGreaterThan(backoff0, 0.5)
-        XCTAssertLessThanOrEqual(backoff0, 2.0)
+        XCTAssertEqual(backoff0, 1.0)
 
         let backoff3 = config.backoffDelaySeconds(forAttempt: 3)
-        XCTAssertGreaterThan(backoff3, 5.0)
-        XCTAssertLessThanOrEqual(backoff3, 30.0) // Strictly capped at 30s after jitter
+        XCTAssertEqual(backoff3, 8.0)
 
-        // Verify that high retry attempts are always capped after jitter at 30s
-        for _ in 0..<50 {
-            let backoffHigh = config.backoffDelaySeconds(forAttempt: 10)
-            XCTAssertGreaterThanOrEqual(backoffHigh, 24.0)
-            XCTAssertLessThanOrEqual(backoffHigh, 30.0, "Backoff delay must be strictly capped at 30s after jitter")
-        }
+        XCTAssertEqual(config.backoffDelaySeconds(forAttempt: 10), 30.0)
     }
 }

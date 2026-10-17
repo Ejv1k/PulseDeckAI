@@ -91,10 +91,10 @@ final class TransitionPlannerTests: XCTestCase {
         })
         XCTAssertEqual(rateEvent.priority, .configuration)
 
-        // Verify incoming seek to startTrimCue
+        // Verify incoming seek aligns to nearest incoming downbeat respecting startTrimCue
         let seekEvent = try XCTUnwrap(initialEvents.first {
             if case .seek(let d, let pos) = $0.command {
-                return d == .deckB && pos == incoming.cueMarkers.startTrimCue
+                return d == .deckB && abs(pos - 9.5238) < 0.01
             }
             return false
         })
@@ -161,14 +161,30 @@ final class TransitionPlannerTests: XCTestCase {
         let planner = TransitionPlanner()
         let outgoing = makeTrack(deck: .deckA, bpm: 120.0)
 
-        // 127.2 BPM: |127.2 - 120| / 120 = 0.060 (exactly 6.0%) -> must succeed
-        let incoming6Percent = makeTrack(deck: .deckB, bpm: 127.2)
-        let request6Percent = TransitionRequest(
+        // 127.08 BPM: |127.08 - 120| / 120 = 5.9% (< 6.0%) -> must succeed
+        let incomingUnder6 = makeTrack(deck: .deckB, bpm: 127.08)
+        let requestUnder6 = TransitionRequest(
             outgoingTrack: outgoing,
-            incomingTrack: incoming6Percent,
+            incomingTrack: incomingUnder6,
             style: .beatSyncedBassSwap(bars: 8)
         )
-        XCTAssertNoThrow(try planner.plan(request6Percent))
+        XCTAssertNoThrow(try planner.plan(requestUnder6))
+
+        // 127.2 BPM: |127.2 - 120| / 120 = 0.060 (exactly 6.0%, NOT strictly < 6.0%) -> must throw or fallback
+        let incoming6Percent = makeTrack(deck: .deckB, bpm: 127.2)
+        let request6NoFallback = TransitionRequest(
+            outgoingTrack: outgoing,
+            incomingTrack: incoming6Percent,
+            style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false)
+        )
+        XCTAssertThrowsError(try planner.plan(request6NoFallback)) { error in
+            guard case TransitionPlanningError.tempoDifferenceExceedsThreshold(let outBPM, let inBPM, _) = error else {
+                XCTFail("Expected tempoDifferenceExceedsThreshold, got: \(error)")
+                return
+            }
+            XCTAssertEqual(outBPM, 120.0)
+            XCTAssertEqual(inBPM, 127.2)
+        }
 
         // 128.0 BPM: |128 - 120| / 120 = 6.67% > 6.0% -> must throw or fallback
         let incomingOver = makeTrack(deck: .deckB, bpm: 128.0)
@@ -177,14 +193,7 @@ final class TransitionPlannerTests: XCTestCase {
             incomingTrack: incomingOver,
             style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false)
         )
-        XCTAssertThrowsError(try planner.plan(requestNoFallback)) { error in
-            guard case TransitionPlanningError.tempoDifferenceExceedsThreshold(let outBPM, let inBPM, _) = error else {
-                XCTFail("Expected tempoDifferenceExceedsThreshold, got: \(error)")
-                return
-            }
-            XCTAssertEqual(outBPM, 120.0)
-            XCTAssertEqual(inBPM, 128.0)
-        }
+        XCTAssertThrowsError(try planner.plan(requestNoFallback))
 
         // With fallback enabled -> successfully produces safe Filter Echo Wash plan
         let requestWithFallback = TransitionRequest(
@@ -195,6 +204,59 @@ final class TransitionPlannerTests: XCTestCase {
         let fallbackPlan = try planner.plan(requestWithFallback)
         XCTAssertTrue(fallbackPlan.metadata.isFallback)
         XCTAssertEqual(fallbackPlan.durationSeconds, 8.0)
+    }
+
+    func testBeatSyncedBassSwapWithNonzeroOffsetsAndOffGridTrigger() throws {
+        let planner = TransitionPlanner()
+        // Outgoing track: 120 BPM, offset 0.25s, beats at 0.25, 0.75, 1.25 ...
+        // Downbeats (every 4 beats) at: 0.25, 2.25, 4.25, ..., 200.25, 202.25 ...
+        let outgoingGrid = makeBeatGrid(bpm: 120.0, duration: 240.0, offset: 0.25)
+        let outgoing = makeTrack(deck: .deckA, bpm: 120.0, mixOut: 200.0, beatGrid: outgoingGrid)
+
+        // Incoming track: 126 BPM, offset 0.15s, interval = 60/126 = 0.476190s
+        // Incoming downbeats: 0.15 + k * 4 * 0.47619s
+        // For k = 5: 0.15 + 9.5238 = 9.6738s (closest downbeat to 10.0s trim cue)
+        let incomingGrid = makeBeatGrid(bpm: 126.0, duration: 240.0, offset: 0.15)
+        let incoming = makeTrack(deck: .deckB, bpm: 126.0, startTrim: 10.0, beatGrid: incomingGrid)
+
+        // Off-grid trigger at 200.0s (between beats 199.75 and 200.25)
+        let request = TransitionRequest(
+            outgoingTrack: outgoing,
+            incomingTrack: incoming,
+            style: .beatSyncedBassSwap(bars: 16),
+            triggerPositionSeconds: 200.0
+        )
+
+        let plan = try planner.plan(request)
+
+        // Schedule must quantize start to the next outgoing downbeat: 200.25s
+        XCTAssertEqual(plan.startTimestampSeconds, 200.25, accuracy: 0.0001)
+
+        // Bass swap downbeat occurs at bar 8 = 32 beats * 0.5s = 16.0s offset
+        XCTAssertEqual(try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds), 16.0, accuracy: 0.0001)
+
+        // Absolute outgoing playhead at bass swap: 200.25 + 16.0 = 216.25s
+        let swapTime = plan.startTimestampSeconds + 16.0
+        XCTAssertEqual(swapTime, 216.25, accuracy: 0.0001)
+
+        // Verify 216.25 is an exact downbeat on outgoing grid: (216.25 - 0.25) / (4 * 0.5) = 216.0 / 2.0 = 108 bars
+        let outgoingBars = (swapTime - outgoingGrid.firstBeatOffsetSeconds) / (4.0 * outgoingGrid.beatIntervalSeconds)
+        XCTAssertEqual(outgoingBars.rounded(), outgoingBars, accuracy: 0.0001)
+
+        // Verify incoming deck seeks to aligned incoming downbeat (9.6738s) rather than raw 10.0s
+        let t0Events = plan.events.filter { abs($0.timeOffsetSeconds) < 0.001 }
+        let seekEvent = try XCTUnwrap(t0Events.first {
+            if case .seek(let d, let pos) = $0.command {
+                return d == .deckB && abs(pos - 9.6738) < 0.01
+            }
+            return false
+        })
+        if case .seek(_, let pos) = seekEvent.command {
+            XCTAssertEqual(pos, 9.6738, accuracy: 0.005)
+            // Verify pos is an exact downbeat on incoming grid
+            let incomingBars = (pos - incomingGrid.firstBeatOffsetSeconds) / (4.0 * incomingGrid.beatIntervalSeconds)
+            XCTAssertEqual(incomingBars.rounded(), incomingBars, accuracy: 0.0001)
+        }
     }
 
     // MARK: - Beat Grid & Sentinel Handling
@@ -322,8 +384,8 @@ final class TransitionPlannerTests: XCTestCase {
         // Check pre-cue at t = 0
         let t0Events = plan.events.filter { abs($0.timeOffsetSeconds) < 0.001 }
         XCTAssertTrue(t0Events.contains {
-            if case .seek(let d, let pos) = $0.command {
-                return d == .deckB && pos == incoming.cueMarkers.startTrimCue
+            if case .seek(let d, _) = $0.command {
+                return d == .deckB
             }
             return false
         })

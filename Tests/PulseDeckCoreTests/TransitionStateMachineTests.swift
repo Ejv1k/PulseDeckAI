@@ -194,4 +194,29 @@ final class TransitionStateMachineTests: XCTestCase {
         let postCancelAdvance = try machine.advance(to: 108.0)
         XCTAssertTrue(postCancelAdvance.isEmpty)
     }
+    func testImmediateDownbeatHardCutCompletesBeforeOutgoingClockStops() throws {
+        let grid = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5,
+                            beatTimestamps: stride(from: 0.0, through: 240.0, by: 0.5).map { $0 })
+        let cues = CueMarkers(startTrimCue: 10, vocalEntryCue: 30, mixOutCue: 200, endTrimCue: 235)
+        let outgoing = TrackTransitionDescriptor(deck: .deckA, duration: 240, bpm: 120, confidence: 1, cueMarkers: cues, beatGrid: grid)
+        let incoming = TrackTransitionDescriptor(deck: .deckB, duration: 240, bpm: 120, confidence: 1, cueMarkers: cues, beatGrid: grid)
+        let plan = try TransitionPlanner().plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: .hardCutOnDrop()))
+        XCTAssertEqual(plan.durationSeconds, 0)
+        var machine = TransitionStateMachine(plan: plan)
+        let commands = try machine.advance(to: plan.startTimestampSeconds)
+        XCTAssertTrue(commands.contains(.stop(deck: .deckA)))
+        XCTAssertTrue(commands.contains(.play(deck: .deckB)))
+        XCTAssertEqual(machine.executedEventCount, plan.events.count)
+        XCTAssertEqual(machine.state, .completed)
+        XCTAssertTrue(machine.isFinished)
+        XCTAssertEqual(machine.progress, 1)
+        XCTAssertTrue(machine.cancel().isEmpty, "A completed cut must never stop the new outgoing deck")
+        XCTAssertTrue(try machine.advance(to: plan.startTimestampSeconds).isEmpty)
+        let incomingVolumes = commands.compactMap { command -> Float? in
+            if case .setVolume(.deckB, let volume) = command { return volume }
+            return nil
+        }
+        XCTAssertEqual(incomingVolumes.last, 1)
+    }
+
 }

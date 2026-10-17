@@ -26,7 +26,7 @@ Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI
 | **Operating System** | macOS Sonoma 14.0 or newer | macOS 14+ required for Swift 6 structured concurrency |
 | **Language & Toolchain** | Swift 6.0 (`swift-tools-version: 6.0`) | Strict concurrency checks (`.swiftLanguageMode(.v6)`) |
 | **Frameworks** | AVFAudio, CoreAudio HAL, Accelerate (vDSP), SwiftUI | Native Apple frameworks only (zero third-party binary blobs) |
-| **Python Companion** | Python 3.10+ (standard library only for Phase 0) | Used for cross-language cache schema validation |
+| **Python Companion** | Python 3.10+; standard library for validation, optional `librosa`/`soundfile` for batch analysis | Analyzer dependencies live in `requirements-analysis.txt` |
 
 ---
 
@@ -44,9 +44,9 @@ PulseDeck AI follows a phased, verification-driven development lifecycle. It is 
 * [x] **Atomic Persistence Service:** Crash-safe temporary-file serialization with synchronous hardware flush (`F_FULLFSYNC` on macOS / `fsync` on Linux) before atomic file replacement guarantees against cache corruption.
 * [x] **Codified Architectural Protocols:** Formal Swift protocol specifications for dual audio engines, deck signal processing graphs, latency compensation, and AI advisors.
 
-### Planned for Future Phases (Roadmap Preview)
-* [ ] **Phase 1:** CoreAudio HAL physical device enumeration, real-time dual `AVAudioEngine` startup, deck signal routing, and lock-free SPSC metering.
-* [ ] **Phase 2:** Offline Accelerate vDSP audio analysis (silence, RMS, FFT, beat grid, vocal estimation), Gemini 2.5 Flash / Ollama advisor integration, and `.pulsedeck_ai_cache.json` automated population.
+### Implementation Roadmap
+* [x] **Phase 1:** Output-only CoreAudio device handling, dual `AVAudioEngine` graphs, and lock-free SPSC metering; physical routing and Bluetooth timing still require hardware validation.
+* [x] **Phase 2:** Offline vDSP waveform/transient/BPM/silence analysis, schema-v1 cache persistence, optional Gemini/Ollama advice, and a dry-run librosa batch companion. Live providers remain unverified; no semantic vocal detection is claimed.
 * [ ] **Phase 3:** SwiftUI Canvas multi-band waveform visualizer, interactive colored cue handles (I/O keys), AI trim bypass, and cue scrubbing.
 * [ ] **Phase 4:** Automated transition engine (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`, reducing master music to ~15% linear amplitude over 800ms with mid dip), and RAM-preloaded soundboard (`F1`–`F8`).
 * [ ] **Phase 5:** Secondary projector display window (FFT visualizer, Ken Burns background media, Now Playing), external display management, and Master Deck safety locks.
@@ -110,9 +110,10 @@ When a human DJ manually adjusts cues, BPM, or musical key, the track entry reco
 ### 5. Hybrid Advisor Safety & Rate Limiting
 The AI DJ Advisor evaluates harmonic compatibility (Camelot wheel), energy progression, and transition bar counts:
 * **Primary Provider:** Google Gemini API configured for `gemini-2.5-flash`.
-* **Rate Limiting:** Enforces a hard ceiling of $\le 12$ Requests Per Minute ($\ge 5.0\,\text{s}$ interval) with exponential backoff and jitter on HTTP 429 errors.
-* **Local Fallback:** Configurable local Ollama endpoint (`http://localhost:11434`, e.g. `llama3:latest`) for 100% offline gig reliability.
-* **Provider Terms Advisory:** Cloud API quotas and free tier availability are controlled by Google AI Studio and may change over time; PulseDeck AI guarantees full offline autonomy using Accelerate DSP when cloud access is unavailable. API keys are never stored in repository or cache files.
+* **Rate Limiting:** A rolling window limits all cloud attempts, including retries, to 12 requests in any 60 seconds. Retry count and delay are bounded; `Retry-After` is honored up to 30 seconds.
+* **Local Fallback:** Optional local Ollama runs at `http://localhost:11434` by default. If it is unavailable, advisor requests fail with bounded errors; library analysis and playback remain offline.
+* **Privacy:** Gemini keys come from `GEMINI_API_KEY` or the configured environment variable and travel only in the `x-goog-api-key` header. Keys never enter URLs, logs, repository, or cache files.
+* **Model availability:** `gemini-2.5-flash` remains the default model ID. Google currently limits new-project access; endpoint and model are configurable. See [Google model availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash).
 
 ---
 
@@ -127,6 +128,7 @@ pulsedeckai/
 │   ├── USER_MANUAL.md                        # Event DJ operating manual, setup, keyboard map
 │   └── cache_schema_v1.json                  # JSON Schema (Draft 2020-12) for library cache
 ├── scripts/
+│   ├── analyze_library.py                    # Offline librosa batch estimates; dry run by default
 │   └── pulsedeck_cache.py                    # Python companion cache validator & dataclasses
 ├── Sources/
 │   ├── PulseDeckCore/                        # Headless DJ Engine Core Library
@@ -196,6 +198,14 @@ swift run PulseDeckAI
 python3 scripts/pulsedeck_cache.py PulseDeck_Library/.pulsedeck_ai_cache.json
 ```
 
+### 5. Run Offline Batch Estimates Safely
+Install optional analyzer dependencies, then preview estimates without writing files:
+```bash
+python3 -m pip install -r requirements-analysis.txt
+python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --dry-run
+```
+To write a validated schema v1 copy, pass `--output-cache /tmp/pulsedeck-analysis.json`. The tool reads audio and the input cache only; output must be a separate JSON file outside the library. Unknown tempo keeps BPM/confidence at `0`, beat timestamps empty, and the schema's `1.0` second interval sentinel. It does not infer vocal segments or create beat-based cues.
+
 ---
 
 ## DJ Library Crate Hierarchy
@@ -225,8 +235,8 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 | Phase | Milestone Name | Scope & Core Deliverables | Status |
 | :---: | :--- | :--- | :---: |
 | **0** | **Operational Foundation & Documentation** | Swift 6 SPM workspace, SwiftUI dark GUI, library scanner, cache schema v1, architectural protocols, comprehensive docs | **COMPLETE** |
-| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine` startup, 3-band EQ, resonant filter, lock-free SPSC metering | *Planned* |
-| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP audio analysis, beat grid detection, Gemini 2.5 Flash / Ollama integration, cache population | *Planned* |
+| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine` startup, 3-band EQ, resonant filter, lock-free SPSC metering | **Implemented; hardware validation pending** |
+| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP analysis, beat grid estimation, optional Gemini/Ollama advice, validated cache and batch companion | **Implemented; live-provider validation pending** |
 | **3** | **Waveforms, Cues & Interactive Browser** | Multi-band SwiftUI Canvas waveforms, 4 bounded cue handles, keyboard cueing (`I`/`O`), AI trim bypass, cue scrubbing | *Planned* |
 | **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot engine, Talkover ducking (`T`, reducing master to ~15% linear level), RAM soundboard (`F1`–`F8`) | *Planned* |
 | **5** | **Projector Screen & Final Polish** | Secondary external presentation window (FFT visualizer, Ken Burns media, Now Playing), master safety locks | *Planned* |

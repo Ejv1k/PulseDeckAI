@@ -28,6 +28,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     private let stateLock = NSLock()
 
     private var _latencyCompensation: LatencyCompensation = LatencyCompensation(offsetMs: 0.0)
+    private var _crossfaderPosition: Float = 0.5
     private var _transitionExecutionService: TransitionExecutionService?
 
     /// Lazily initialized transition execution service governing automated transitions.
@@ -177,12 +178,28 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
     // MARK: - Crossfader Macro Routing
 
+    /// Current crossfader position from 0.0 (full Deck A) to 1.0 (full Deck B).
+    public var crossfaderPosition: Float {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _crossfaderPosition
+        }
+        set {
+            setCrossfader(position: newValue)
+        }
+    }
+
     /// Updates crossfader weighting across Deck A and Deck B.
     ///
     /// - Parameter position: Bipolar crossfader position from 0.0 (full Deck A) to 1.0 (full Deck B).
     ///   Center position (0.5) delivers full unity gain on both decks.
     public func setCrossfader(position: Float) {
         let safePos = position.isFinite ? min(max(position, 0.0), 1.0) : 0.5
+        stateLock.lock()
+        _crossfaderPosition = safePos
+        stateLock.unlock()
+
         let weightA: Float = safePos <= 0.5 ? 1.0 : (1.0 - safePos) * 2.0
         let weightB: Float = safePos >= 0.5 ? 1.0 : safePos * 2.0
 

@@ -98,6 +98,7 @@ public enum TransitionExecutionServiceError: LocalizedError, Sendable, Equatable
     case rateMismatch(expected: Float, actual: Float)
     case playheadPastTrigger(current: Double, trigger: Double)
     case nonFinitePlayhead(Double)
+    case incompatibleCrossfaderRouting(deck: DeckIdentifier, crossfaderPosition: Float)
 
     public var errorDescription: String? {
         switch self {
@@ -119,8 +120,17 @@ public enum TransitionExecutionServiceError: LocalizedError, Sendable, Equatable
             return "Current playhead \(current)s is already past trigger position \(trigger)s."
         case .nonFinitePlayhead(let val):
             return "Playhead position must be finite, got: \(val)"
+        case .incompatibleCrossfaderRouting(let deck, let crossfaderPosition):
+            return "Incompatible crossfader routing: outgoing deck \(deck.rawValue) is muted at crossfader position \(crossfaderPosition)."
         }
     }
+}
+
+// MARK: - AutoPilot One-Shot Identity Key
+
+private struct AutoPilotFiredKey: Hashable, Sendable {
+    let deck: DeckIdentifier
+    let generation: UInt64
 }
 
 // MARK: - Transition Execution Service
@@ -150,7 +160,8 @@ public actor TransitionExecutionService {
     private var executionGeneration: UInt64 = 0
     private var initialOutgoingRate: Float = 1.0
     private var lastObservedDeckGeneration: [DeckIdentifier: UInt64] = [:]
-    private var autoPilotFiredGenerations: Set<UInt64> = []
+    private var autoPilotFiredHistory: Set<AutoPilotFiredKey> = []
+    private var initialCrossfaderPosition: Float?
 
     private var driverTask: Task<Void, Never>?
     private var lastTickedPosition: Double?
@@ -233,6 +244,16 @@ public actor TransitionExecutionService {
 
         try validateLoadedTracks(for: request)
 
+        // Validate crossfader routing: outgoing deck must be audible on master
+        let outDeck = request.outgoingTrack.deck
+        let outWeight = (outDeck == .deckA) ? coordinator.deckA.crossfaderWeight : coordinator.deckB.crossfaderWeight
+        guard outWeight > 1e-3 else {
+            throw TransitionExecutionServiceError.incompatibleCrossfaderRouting(
+                deck: outDeck,
+                crossfaderPosition: currentCrossfaderPosition()
+            )
+        }
+
         let plan = try planner.plan(request)
 
         executionGeneration &+= 1
@@ -243,20 +264,44 @@ public actor TransitionExecutionService {
 
         recordDeckGenerations()
 
+        // Capture initial crossfader position before opening crossfader weights
+        initialCrossfaderPosition = currentCrossfaderPosition()
+
+        // Open crossfader weights for both decks during transition so transition volume envelopes
+        // are unattenuated without double attenuation or endpoint muting
+        coordinator.deckA.crossfaderWeight = 1.0
+        coordinator.deckB.crossfaderWeight = 1.0
+
         var sm = TransitionStateMachine(plan: plan)
         activePlan = plan
         state = .inProgress(style: plan.style, progress: 0.0)
 
-        // Initial commands at start timestamp (e.g. rate, seek, neutral/target EQ, mute/fader prep, play)
-        let initialCommands = try sm.advance(to: plan.startTimestampSeconds)
+        // Determine actual starting playhead
+        let currentPos = currentPlayhead(for: request.outgoingTrack.deck)
+        let startPosition: Double
+        if let explicitTrigger = request.triggerPositionSeconds {
+            if currentPos > explicitTrigger {
+                startPosition = currentPos
+            } else {
+                startPosition = explicitTrigger
+            }
+        } else {
+            startPosition = currentPos
+        }
+
+        // Advance from actual playhead: emits commands ONLY if startPosition >= plan.startTimestampSeconds
+        let initialCommands = try sm.advance(to: startPosition)
         self.stateMachine = sm
-        lastTickedPosition = plan.startTimestampSeconds
+        lastTickedPosition = startPosition
 
         executeCommands(initialCommands)
 
         if sm.isFinished {
             state = .completed
             stopDriver()
+            let targetPos: Float = (plan.incomingDeck == .deckB) ? 1.0 : 0.0
+            applyCrossfader(position: targetPos)
+            initialCrossfaderPosition = nil
         } else {
             startDriver()
         }
@@ -288,9 +333,21 @@ public actor TransitionExecutionService {
         let recoveryCommands = sm.cancel()
         stateMachine = sm
         state = .cancelled
+
+        let plan = activePlan
         activePlan = nil
 
         executeCommands(recoveryCommands)
+
+        // Restore crossfader to initial pre-transition position
+        if let initialPos = initialCrossfaderPosition {
+            applyCrossfader(position: initialPos)
+            initialCrossfaderPosition = nil
+        } else if let plan {
+            let fallbackPos: Float = (plan.outgoingDeck == .deckA) ? 0.0 : 1.0
+            applyCrossfader(position: fallbackPos)
+        }
+
         return recoveryCommands
     }
 
@@ -372,11 +429,13 @@ public actor TransitionExecutionService {
             }
 
             if pos >= (triggerPosition - 1e-4) {
-                let deckGen = deckGeneration(for: request.outgoingTrack.deck)
-                guard !autoPilotFiredGenerations.contains(deckGen) else {
+                let deck = request.outgoingTrack.deck
+                let deckGen = deckGeneration(for: deck)
+                let key = AutoPilotFiredKey(deck: deck, generation: deckGen)
+                guard !autoPilotFiredHistory.contains(key) else {
                     return []
                 }
-                autoPilotFiredGenerations.insert(deckGen)
+                autoPilotFiredHistory.insert(key)
 
                 // One-shot AutoPilot fire!
                 disableAutoPilot()
@@ -405,6 +464,11 @@ public actor TransitionExecutionService {
                 throw TransitionExecutionServiceError.nonFinitePlayhead(pos)
             }
 
+            // In live unforced ticks, if playhead has not advanced past last ticked position, wait for next render buffer
+            if playheadSeconds == nil, let last = lastTickedPosition, pos <= last {
+                return []
+            }
+
             let dueCommands = try sm.advance(to: pos)
             self.stateMachine = sm
             lastTickedPosition = pos
@@ -414,6 +478,9 @@ public actor TransitionExecutionService {
             if sm.isFinished {
                 state = .completed
                 stopDriver()
+                let targetPos: Float = (plan.incomingDeck == .deckB) ? 1.0 : 0.0
+                applyCrossfader(position: targetPos)
+                initialCrossfaderPosition = nil
             } else {
                 state = .inProgress(style: style, progress: sm.progress)
             }
@@ -578,10 +645,46 @@ public actor TransitionExecutionService {
         return abs(liveRate - initialOutgoingRate) > 0.01
     }
 
+    // MARK: - Crossfader Helpers
+
+    private func currentCrossfaderPosition() -> Float {
+        if let concrete = coordinator as? AudioEngineCoordinator {
+            return concrete.crossfaderPosition
+        }
+        let weightA = coordinator.deckA.crossfaderWeight
+        let weightB = coordinator.deckB.crossfaderWeight
+        if weightA > 0.99 && weightB < 0.01 {
+            return 0.0
+        } else if weightB > 0.99 && weightA < 0.01 {
+            return 1.0
+        }
+        return 0.5
+    }
+
+    private func applyCrossfader(position: Float) {
+        if let concrete = coordinator as? AudioEngineCoordinator {
+            concrete.setCrossfader(position: position)
+        } else {
+            let safePos = position.isFinite ? min(max(position, 0.0), 1.0) : 0.5
+            let weightA: Float = safePos <= 0.5 ? 1.0 : (1.0 - safePos) * 2.0
+            let weightB: Float = safePos >= 0.5 ? 1.0 : safePos * 2.0
+            coordinator.deckA.crossfaderWeight = weightA
+            coordinator.deckB.crossfaderWeight = weightB
+        }
+    }
+
+    private func isMasterEngineRunning() -> Bool {
+        if let concrete = coordinator as? AudioEngineCoordinator {
+            return concrete.masterAudioEngine.isRunning
+        }
+        return true
+    }
+
     // MARK: - Driver Loop
 
     private func startDriver() {
         stopDriver()
+        guard isMasterEngineRunning() else { return }
         driverTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 20_000_000) // 20ms poll interval
@@ -589,9 +692,21 @@ public actor TransitionExecutionService {
                 do {
                     _ = try await self.tick()
                 } catch {
+                    await self.handleDriverError(error)
                     break
                 }
             }
+        }
+    }
+
+    private func handleDriverError(_ error: Error) {
+        switch state {
+        case .inProgress:
+            _ = cancelTransition()
+        case .armed:
+            disableAutoPilot()
+        case .idle, .completed, .cancelled:
+            break
         }
     }
 

@@ -271,6 +271,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
+    /// Effective master gain computed as channel volume multiplied by crossfader weight.
+    public var effectiveMasterGain: Float {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _volume * _crossfaderWeight
+    }
+
+
     public var isCueActive: Bool {
         get {
             stateLock.lock()
@@ -597,6 +605,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         stateLock.unlock()
 
         if let nodeTime = masterPlayerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = masterPlayerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate > 0.0 {
@@ -615,6 +624,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         stateLock.unlock()
 
         if let nodeTime = cuePlayerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = cuePlayerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate > 0.0 {

@@ -127,7 +127,7 @@ public struct TransitionStateMachine: Sendable {
 
         // Deterministic sort: ascending timestamp, then priority order
         let sortedEvents = dueEvents.sorted {
-            if abs($0.timeOffsetSeconds - $1.timeOffsetSeconds) > 0.0001 {
+            if $0.timeOffsetSeconds != $1.timeOffsetSeconds {
                 return $0.timeOffsetSeconds < $1.timeOffsetSeconds
             }
             return $0.priority < $1.priority

@@ -152,6 +152,9 @@ public enum TransitionCommandPriority: Int, Sendable, Equatable, Comparable {
     /// Equalizer, resonant filter, and echo DSP settings.
     case audioProcessing = 30
 
+    /// Initial gain or mute preparation before playback starts.
+    case gainPreparation = 35
+
     /// Playback start commands.
     case transportStart = 40
 

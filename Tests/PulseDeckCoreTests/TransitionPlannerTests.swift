@@ -372,13 +372,20 @@ final class TransitionPlannerTests: XCTestCase {
         let plan = try planner.plan(request)
         XCTAssertEqual(plan.durationSeconds, 8.0)
 
-        // Verify initial echo send configuration
-        XCTAssertTrue(plan.events.contains {
-            if case .setEcho(let d, let enabled, _, let mix) = $0.command {
-                return d == .deckA && enabled && abs(mix - 0.6) < 0.001
-            }
-            return false
-        })
+        // Verify exact whole ordered start-command batch at t = 0 (initial mute precedes transport start)
+        let t0Events = plan.events.filter { $0.timeOffsetSeconds == 0.0 }
+        let expectedStartBatch: [TransitionCommand] = [
+            .setRate(deck: .deckB, rate: 1.0, keyLock: true),
+            .seek(deck: .deckB, positionSeconds: incoming.cueMarkers.startTrimCue),
+            .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
+            .setFilter(deck: .deckB, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
+            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0.6),
+            .setFilter(deck: .deckA, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
+            .setVolume(deck: .deckB, volume: 0.0),
+            .play(deck: .deckB),
+            .setVolume(deck: .deckA, volume: 1.0)
+        ]
+        XCTAssertEqual(t0Events.map(\.command), expectedStartBatch)
 
         // Verify equal-power sum: gainOut^2 + gainIn^2 ≈ 1.0 at every intermediate step
         let intermediateOffsets = Set(plan.events.map { $0.timeOffsetSeconds }).filter { $0 > 0.0 && $0 < 8.0 }
@@ -671,4 +678,69 @@ final class TransitionPlannerTests: XCTestCase {
         }
     }
 
+    func testFilterEchoWashMutePrecedesPlayInOrderedStartBatch() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA, bpm: 120.0)
+        let incoming = makeTrack(deck: .deckB, bpm: 140.0)
+        let request = TransitionRequest(
+            outgoingTrack: outgoing,
+            incomingTrack: incoming,
+            style: .filterEchoWash(durationSeconds: 8.0, echoSend: 0.6)
+        )
+        let plan = try planner.plan(request)
+        var machine = TransitionStateMachine(plan: plan)
+        let startBatch = try machine.advance(to: plan.startTimestampSeconds)
+
+        let muteIndex = try XCTUnwrap(startBatch.firstIndex(where: {
+            if case .setVolume(let deck, let vol) = $0 {
+                return deck == .deckB && vol == 0.0
+            }
+            return false
+        }))
+        let playIndex = try XCTUnwrap(startBatch.firstIndex(where: {
+            if case .play(let deck) = $0 {
+                return deck == .deckB
+            }
+            return false
+        }))
+
+        XCTAssertLessThan(muteIndex, playIndex, "Incoming deck mute must occur strictly before transport start")
+
+        let expectedStartBatch: [TransitionCommand] = [
+            .setRate(deck: .deckB, rate: 1.0, keyLock: true),
+            .seek(deck: .deckB, positionSeconds: incoming.cueMarkers.startTrimCue),
+            .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
+            .setFilter(deck: .deckB, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
+            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0.6),
+            .setFilter(deck: .deckA, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
+            .setVolume(deck: .deckB, volume: 0.0),
+            .play(deck: .deckB),
+            .setVolume(deck: .deckA, volume: 1.0)
+        ]
+        XCTAssertEqual(startBatch, expectedStartBatch)
+    }
+
+    func testFilterEchoWashShortDurationMonotonicEventOffsets() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA, bpm: 120.0)
+        let incoming = makeTrack(deck: .deckB, bpm: 120.0)
+        let request = TransitionRequest(
+            outgoingTrack: outgoing,
+            incomingTrack: incoming,
+            style: .filterEchoWash(durationSeconds: 0.0008, echoSend: 0.5)
+        )
+        let plan = try planner.plan(request)
+
+        for i in 1..<plan.events.count {
+            let prev = plan.events[i - 1]
+            let curr = plan.events[i]
+            XCTAssertLessThanOrEqual(
+                prev.timeOffsetSeconds,
+                curr.timeOffsetSeconds,
+                "Event \(i) at \(curr.timeOffsetSeconds) was placed before event \(i-1) at \(prev.timeOffsetSeconds)"
+            )
+        }
+    }
+
 }
+

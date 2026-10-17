@@ -427,7 +427,7 @@ public struct TransitionPlanner: Sendable {
 
         // Deterministic sort: ascending timeOffset, then priority order
         events.sort {
-            if abs($0.timeOffsetSeconds - $1.timeOffsetSeconds) > 0.0001 {
+            if $0.timeOffsetSeconds != $1.timeOffsetSeconds {
                 return $0.timeOffsetSeconds < $1.timeOffsetSeconds
             }
             return $0.priority < $1.priority
@@ -490,16 +490,6 @@ public struct TransitionPlanner: Sendable {
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .setVolume(deck: incoming.deck, volume: 0.0),
-            priority: .volumeFader
-        ))
-        events.append(ScheduledTransitionEvent(
-            timeOffsetSeconds: 0.0,
-            command: .play(deck: incoming.deck),
-            priority: .transportStart
-        ))
-        events.append(ScheduledTransitionEvent(
-            timeOffsetSeconds: 0.0,
             command: .setEcho(deck: outgoing.deck, enabled: true, feedback: 0.5, mix: echoSend),
             priority: .audioProcessing
         ))
@@ -507,6 +497,16 @@ public struct TransitionPlanner: Sendable {
             timeOffsetSeconds: 0.0,
             command: .setFilter(deck: outgoing.deck, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
             priority: .audioProcessing
+        ))
+        events.append(ScheduledTransitionEvent(
+            timeOffsetSeconds: 0.0,
+            command: .setVolume(deck: incoming.deck, volume: 0.0),
+            priority: .gainPreparation
+        ))
+        events.append(ScheduledTransitionEvent(
+            timeOffsetSeconds: 0.0,
+            command: .play(deck: incoming.deck),
+            priority: .transportStart
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
@@ -578,7 +578,7 @@ public struct TransitionPlanner: Sendable {
         ))
 
         events.sort {
-            if abs($0.timeOffsetSeconds - $1.timeOffsetSeconds) > 0.0001 {
+            if $0.timeOffsetSeconds != $1.timeOffsetSeconds {
                 return $0.timeOffsetSeconds < $1.timeOffsetSeconds
             }
             return $0.priority < $1.priority
@@ -687,7 +687,7 @@ public struct TransitionPlanner: Sendable {
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
             command: .setVolume(deck: incoming.deck, volume: 0.0),
-            priority: .volumeFader
+            priority: .gainPreparation
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
@@ -723,7 +723,7 @@ public struct TransitionPlanner: Sendable {
         ))
 
         events.sort {
-            if abs($0.timeOffsetSeconds - $1.timeOffsetSeconds) > 0.0001 {
+            if $0.timeOffsetSeconds != $1.timeOffsetSeconds {
                 return $0.timeOffsetSeconds < $1.timeOffsetSeconds
             }
             return $0.priority < $1.priority

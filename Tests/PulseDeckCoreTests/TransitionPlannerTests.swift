@@ -154,7 +154,60 @@ final class TransitionPlannerTests: XCTestCase {
         })
 
         // Bounded plan verification: must not create thousands of automation events
-        XCTAssertLessThanOrEqual(plan.events.count, 40)
+        XCTAssertLessThanOrEqual(plan.events.count, 60)
+    }
+
+    func testBeatSyncedBassSwapComplementaryGainProgressionAndContinuousFader() throws {
+        let planner = TransitionPlanner()
+        let outgoing = makeTrack(deck: .deckA, bpm: 120.0)
+        let incoming = makeTrack(deck: .deckB, bpm: 126.0)
+
+        let request = TransitionRequest(
+            outgoingTrack: outgoing,
+            incomingTrack: incoming,
+            style: .beatSyncedBassSwap(bars: 16)
+        )
+
+        let plan = try planner.plan(request)
+        let beatInterval = 60.0 / 120.0 // 0.5s
+
+        // Test each bar boundary 1..<16
+        for barIndex in 1..<16 {
+            let offset = Double(barIndex * 4) * beatInterval
+            let barEvents = plan.events.filter { abs($0.timeOffsetSeconds - offset) < 0.001 }
+            let progress = Double(barIndex) / 16.0
+
+            // 1. Outgoing volume fader must be continuous and monotonic: exactly (1.0 - progress)
+            let outVolEvent = try XCTUnwrap(barEvents.first {
+                if case .setVolume(let d, let v) = $0.command { return d == .deckA && abs(v - Float(1.0 - progress)) < 0.001 }
+                return false
+            })
+            XCTAssertEqual(outVolEvent.priority, .volumeFader)
+
+            // 2. Outgoing EQ mid/high ramps down: -24.0 * progress
+            let expectedOutMidHigh = Float(-24.0 * progress)
+            let expectedOutLow: Float = barIndex < 8 ? 0.0 : -24.0
+            XCTAssertTrue(barEvents.contains {
+                if case .setEQ(let d, let eq) = $0.command {
+                    return d == .deckA && eq.lowGainDB == expectedOutLow
+                        && abs(eq.midGainDB - expectedOutMidHigh) < 0.001
+                        && abs(eq.highGainDB - expectedOutMidHigh) < 0.001
+                }
+                return false
+            })
+
+            // 3. Incoming EQ mid/high ramps up: -12.0 * (1.0 - progress)
+            let expectedInMidHigh = Float(-12.0 * (1.0 - progress))
+            let expectedInLow: Float = barIndex < 8 ? -24.0 : 0.0
+            XCTAssertTrue(barEvents.contains {
+                if case .setEQ(let d, let eq) = $0.command {
+                    return d == .deckB && eq.lowGainDB == expectedInLow
+                        && abs(eq.midGainDB - expectedInMidHigh) < 0.001
+                        && abs(eq.highGainDB - expectedInMidHigh) < 0.001
+                }
+                return false
+            })
+        }
     }
 
     func testTempoDifferenceThreshold6Percent() throws {

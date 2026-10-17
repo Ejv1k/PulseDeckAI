@@ -125,18 +125,27 @@ public struct WaveformCoordinateMapper: Sendable, Equatable {
 /// Errors thrown during WaveformEditorModel operations.
 public enum WaveformEditorError: LocalizedError, Equatable {
     case invalidExistingCache(String)
+    case conflictingEdit(relativePath: String, field: String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidExistingCache(let fileName):
             return "Existing cache file '\(fileName)' failed schema validation or is unreadable. Aborting save to preserve file."
+        case .conflictingEdit(let relativePath, let field):
+            return "Track '\(relativePath)' has a newer \(field) edit on disk. Aborting save to preserve it."
         }
     }
 }
 
+/// Identifies the exact editor field changed from its selected value.
+public enum WaveformEditIntent: Sendable {
+    case cue(CueType, acceptedPreviousValues: Set<Double>)
+    case aiTrimBypass(acceptedPreviousValues: Set<Bool>)
+}
+
 /// Asynchronous persistence boundary shared by the editor and its production background actor.
 public protocol WaveformTrackPersisting: Sendable {
-    func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache
+    func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL, intent: WaveformEditIntent) async throws -> PulseDeckLibraryCache
 }
 
 /// Serial background executor actor for atomic cache persistence, ensuring all decoding,
@@ -147,7 +156,8 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
 
     public func persistTrack(
         _ track: TrackCacheEntry,
-        libraryRootURL: URL
+        libraryRootURL: URL,
+        intent: WaveformEditIntent
     ) throws -> PulseDeckLibraryCache {
         let cacheURL = libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
         var cache: PulseDeckLibraryCache
@@ -161,8 +171,8 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         }
 
         let entryToSave: TrackCacheEntry
-        if let diskEntry = cache.tracks[track.relativePath], track.manualOverrides.isManual {
-            entryToSave = mergeManualIntent(track: track, intoDiskEntry: diskEntry)
+        if let diskEntry = cache.tracks[track.relativePath] {
+            entryToSave = try mergeManualIntent(track: track, intoDiskEntry: diskEntry, intent: intent)
         } else {
             entryToSave = track
         }
@@ -174,25 +184,34 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         return cache
     }
 
-    private func mergeManualIntent(track: TrackCacheEntry, intoDiskEntry disk: TrackCacheEntry) -> TrackCacheEntry {
+    private func mergeManualIntent(
+        track: TrackCacheEntry,
+        intoDiskEntry disk: TrackCacheEntry,
+        intent: WaveformEditIntent
+    ) throws -> TrackCacheEntry {
         var merged = disk
 
         var mergedFields = disk.manualOverrides.overriddenFields
-        for field in track.manualOverrides.overriddenFields where !mergedFields.contains(field) {
-            mergedFields.append(field)
-        }
-
-        if track.manualOverrides.overriddenFields.contains("cueMarkers") {
-            merged.cueMarkers = track.cueMarkers.clamped(toDuration: disk.duration)
-        }
-        if track.manualOverrides.overriddenFields.contains("aiTrimBypass") {
+        switch intent {
+        case .cue(let cue, let acceptedPreviousValues):
+            guard acceptedPreviousValues.contains(cueValue(cue, in: disk.cueMarkers)) else {
+                throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "\(cue.displayName)")
+            }
+            var cues = disk.cueMarkers
+            cues = WaveformCoordinateMapper(
+                duration: disk.duration,
+                zoomLevel: 1,
+                scrollOffsetSeconds: 0,
+                totalBins: 0
+            ).validateAndClamp(cue: cue, newTime: cueValue(cue, in: track.cueMarkers), currentCues: cues)
+            merged.cueMarkers = cues
+            if !mergedFields.contains("cueMarkers") { mergedFields.append("cueMarkers") }
+        case .aiTrimBypass(let acceptedPreviousValues):
+            guard acceptedPreviousValues.contains(disk.aiTrimBypass) else {
+                throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "AI trim bypass")
+            }
             merged.aiTrimBypass = track.aiTrimBypass
-        }
-        if track.manualOverrides.overriddenFields.contains("bpm") {
-            merged.bpm = track.bpm
-        }
-        if track.manualOverrides.overriddenFields.contains("musicalKey") {
-            merged.musicalKey = track.musicalKey
+            if !mergedFields.contains("aiTrimBypass") { mergedFields.append("aiTrimBypass") }
         }
 
         merged.manualOverrides = ManualOverrides(
@@ -200,10 +219,19 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             overriddenFields: mergedFields,
             updatedAt: track.manualOverrides.updatedAt ?? disk.manualOverrides.updatedAt,
             author: track.manualOverrides.author ?? disk.manualOverrides.author,
-            notes: track.manualOverrides.notes ?? disk.manualOverrides.notes
+            notes: disk.manualOverrides.notes
         )
 
         return merged
+    }
+
+    private func cueValue(_ cue: CueType, in cues: CueMarkers) -> Double {
+        switch cue {
+        case .startTrim: cues.startTrimCue
+        case .vocalEntry: cues.vocalEntryCue
+        case .mixOut: cues.mixOutCue
+        case .endTrim: cues.endTrimCue
+        }
     }
 }
 
@@ -242,6 +270,8 @@ public final class WaveformEditorModel: ObservableObject {
     private struct LocalEdit {
         let track: TrackCacheEntry
         let revision: UInt64
+        var acceptedPreviousCueValues: [CueType: Set<Double>]
+        var acceptedPreviousBypassValues: Set<Bool>
         var isPending = true
         var failureMessage: String?
     }
@@ -406,7 +436,7 @@ public final class WaveformEditorModel: ObservableObject {
         self.interactionRevision &+= 1
         guard activeDraggingCue == cue else { return }
         self.activeDraggingCue = nil
-        commitCueChanges(reason: "Dragged \(cue.displayName)")
+        commitCueChanges(reason: "Dragged \(cue.displayName)", cue: cue)
     }
 
     /// Sets a cue to a specific timestamp (e.g. from hotkeys I/O or scrubber).
@@ -421,7 +451,7 @@ public final class WaveformEditorModel: ObservableObject {
         )
         self.cues = mapper.validateAndClamp(cue: cue, newTime: toTime, currentCues: self.cues)
         self.selectedCue = cue
-        commitCueChanges(reason: "Set \(cue.displayName) to \(String(format: "%.3f", toTime))s")
+        commitCueChanges(reason: "Set \(cue.displayName) to \(String(format: "%.3f", toTime))s", cue: cue)
     }
 
     /// Nudges the currently selected or specified cue by a small delta in seconds.
@@ -432,7 +462,11 @@ public final class WaveformEditorModel: ObservableObject {
 
     /// Toggles the AI trim bypass state and atomically persists to cache.
     public func toggleAITrimBypass() {
-        guard currentTrack != nil else { return }
+        guard let selectedTrack = currentTrack else { return }
+        let previousValue = aiTrimBypass
+        let identity = TrackIdentity(root: libraryRootURL, relativePath: selectedTrack.relativePath)
+        var acceptedPreviousValues = localEdits[identity]?.acceptedPreviousBypassValues ?? []
+        acceptedPreviousValues.insert(previousValue)
         self.interactionRevision &+= 1
         self.aiTrimBypass.toggle()
 
@@ -452,7 +486,7 @@ public final class WaveformEditorModel: ObservableObject {
         }
 
         self.statusMessage = "AI Trim \(self.aiTrimBypass ? "Bypassed" : "Active")"
-        persistCurrentTrackToCache()
+        persistCurrentTrackToCache(intent: .aiTrimBypass(acceptedPreviousValues: acceptedPreviousValues))
     }
 
     // MARK: - Zoom and Scroll
@@ -501,8 +535,21 @@ public final class WaveformEditorModel: ObservableObject {
 
     // MARK: - Atomic Persistence
 
-    private func commitCueChanges(reason: String) {
+    private func cueValue(_ cue: CueType, in cues: CueMarkers) -> Double {
+        switch cue {
+        case .startTrim: cues.startTrimCue
+        case .vocalEntry: cues.vocalEntryCue
+        case .mixOut: cues.mixOutCue
+        case .endTrim: cues.endTrimCue
+        }
+    }
+
+    private func commitCueChanges(reason: String, cue: CueType) {
         guard var track = currentTrack else { return }
+        let previousValue = cueValue(cue, in: track.cueMarkers)
+        let identity = TrackIdentity(root: libraryRootURL, relativePath: track.relativePath)
+        var acceptedPreviousValues = localEdits[identity]?.acceptedPreviousCueValues[cue] ?? []
+        acceptedPreviousValues.insert(previousValue)
 
         // Update track's cues
         track.cueMarkers = self.cues
@@ -521,17 +568,28 @@ public final class WaveformEditorModel: ObservableObject {
         self.currentTrack = track
         self.statusMessage = "\(reason) (Persisting...)"
 
-        persistCurrentTrackToCache()
+        persistCurrentTrackToCache(intent: .cue(cue, acceptedPreviousValues: acceptedPreviousValues))
     }
 
-    private func persistCurrentTrackToCache() {
+    private func persistCurrentTrackToCache(intent: WaveformEditIntent) {
         guard let track = currentTrack else { return }
         let rootURL = self.libraryRootURL
         let actor = self.persistenceActor
         let identity = TrackIdentity(root: rootURL, relativePath: track.relativePath)
+        var acceptedPreviousCueValues = localEdits[identity]?.acceptedPreviousCueValues ?? [:]
+        var acceptedPreviousBypassValues = localEdits[identity]?.acceptedPreviousBypassValues ?? []
+        switch intent {
+        case .cue(let cue, let values):
+            acceptedPreviousCueValues[cue] = values
+        case .aiTrimBypass(let values):
+            acceptedPreviousBypassValues = values
+        }
         nextRevision &+= 1
         let revision = nextRevision
-        localEdits[identity] = LocalEdit(track: track, revision: revision)
+        let submittedInteractionRevision = interactionRevision
+        localEdits[identity] = LocalEdit(track: track, revision: revision,
+                                         acceptedPreviousCueValues: acceptedPreviousCueValues,
+                                         acceptedPreviousBypassValues: acceptedPreviousBypassValues)
         pendingSaveCount += 1
         self.isSaving = true
         let previousSave = inFlightSaveTask
@@ -540,18 +598,21 @@ public final class WaveformEditorModel: ObservableObject {
         inFlightSaveTask = Task { [weak self, track, rootURL, actor] in
             await previousSave?.value
             do {
-                let updatedCache = try await actor.persistTrack(track, libraryRootURL: rootURL)
+                let updatedCache = try await actor.persistTrack(track, libraryRootURL: rootURL, intent: intent)
                 self?.completeSave(track: track, rootURL: rootURL, identity: identity,
-                                   revision: revision, result: .success(updatedCache))
+                                   revision: revision, interactionRevision: submittedInteractionRevision,
+                                   result: .success(updatedCache))
             } catch {
                 self?.completeSave(track: track, rootURL: rootURL, identity: identity,
-                                   revision: revision, result: .failure(error))
+                                   revision: revision, interactionRevision: submittedInteractionRevision,
+                                   result: .failure(error))
             }
         }
     }
 
     private func completeSave(track: TrackCacheEntry, rootURL: URL, identity: TrackIdentity,
-                              revision: UInt64, result: Result<PulseDeckLibraryCache, any Error>) {
+                              revision: UInt64, interactionRevision submittedInteractionRevision: UInt64,
+                              result: Result<PulseDeckLibraryCache, any Error>) {
         pendingSaveCount -= 1
         isSaving = pendingSaveCount > 0
         let isLatestRevisionForTrack = localEdits[identity]?.revision == revision
@@ -576,6 +637,7 @@ public final class WaveformEditorModel: ObservableObject {
         case .success(let cache):
             errorMessage = nil
             statusMessage = "Saved cues to .pulsedeck_ai_cache.json"
+            guard interactionRevision == submittedInteractionRevision else { return }
             if let savedTrack = cache.tracks[identity.relativePath] {
                 self.currentTrack = savedTrack
                 self.manualOverrides = savedTrack.manualOverrides

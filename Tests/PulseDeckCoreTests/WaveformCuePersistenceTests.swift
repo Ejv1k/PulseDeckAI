@@ -20,7 +20,7 @@ private actor HeldWaveformPersistence: WaveformTrackPersisting {
         self.failures = failures
     }
 
-    func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache {
+    func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL, intent: WaveformEditIntent) async throws -> PulseDeckLibraryCache {
         requests.append(track)
         let ordinal = requests.count
         if !released {
@@ -30,7 +30,7 @@ private actor HeldWaveformPersistence: WaveformTrackPersisting {
             }
         }
         if failures.contains(ordinal) { throw InjectedFailure.writeFailed }
-        return try await production.persistTrack(track, libraryRootURL: libraryRootURL)
+        return try await production.persistTrack(track, libraryRootURL: libraryRootURL, intent: intent)
     }
 
     func releaseNext() {
@@ -184,6 +184,46 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testEarlierSaveCompletionPreservesCueDragUntilDragIsCommitted() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let started = [XCTestExpectation(description: "Earlier save"), XCTestExpectation(description: "Drag save")]
+        let persistence = HeldWaveformPersistence(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+
+        await select(app, a.relativePath)
+        editor.setCue(.startTrim, toTime: 6.2)
+        await completed(started[0])
+
+        editor.beginDrag(cue: .vocalEntry)
+        editor.updateDrag(cue: .vocalEntry, toTime: 25.0)
+        await persistence.releaseNext()
+        await editor.waitForPendingSaves()
+
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25.0)
+        XCTAssertEqual(editor.activeDraggingCue, .vocalEntry)
+
+        editor.endDrag(cue: .vocalEntry)
+        await completed(started[1])
+        await persistence.releaseNext()
+        await saved(editor)
+
+        let persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, 6.2)
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 25.0)
+
+        let reloadedEditor = WaveformEditorModel(libraryRootURL: root)
+        let reloadedApp = AppState(libraryRootURL: root, waveformEditorModel: reloadedEditor)
+        await select(reloadedApp, a.relativePath)
+        XCTAssertEqual(reloadedEditor.cues.startTrimCue, 6.2)
+        XCTAssertEqual(reloadedEditor.cues.vocalEntryCue, 25.0)
+    }
+
+    @MainActor
     func testProductionEditorAbortsInvalidExistingCacheWithoutLosingDirtyState() async throws {
         let (root, a, b, _) = try makeLibrary()
         let editor = WaveformEditorModel(libraryRootURL: root)
@@ -255,12 +295,14 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         let actor = WaveformPersistenceActor()
         var changed = a
         changed.cueMarkers.startTrimCue = 5
-        let result = try await actor.persistTrack(changed, libraryRootURL: root)
+        changed.manualOverrides = ManualOverrides(isManual: true, overriddenFields: ["cueMarkers"])
+        let intent = WaveformEditIntent.cue(.startTrim, acceptedPreviousValues: [a.cueMarkers.startTrimCue])
+        let result = try await actor.persistTrack(changed, libraryRootURL: root, intent: intent)
         XCTAssertEqual(result.tracks[b.relativePath], b)
         XCTAssertEqual(result.tracks[untouched.relativePath], untouched)
         XCTAssertEqual(try diskEntry(a.relativePath, root: root), changed)
         try FileManager.default.removeItem(at: cacheURL(root))
-        let created = try await actor.persistTrack(changed, libraryRootURL: root)
+        let created = try await actor.persistTrack(changed, libraryRootURL: root, intent: intent)
         XCTAssertEqual(created.tracks, [a.relativePath: changed])
         try SharedCacheContract().validate(data: Data(contentsOf: cacheURL(root)))
     }
@@ -500,6 +542,82 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(savedEntry.manualOverrides.notes, "Preserve external phrasing", "Unrelated manual notes preserved")
         XCTAssertEqual(savedEntry.manualOverrides.author, "DJ (PulseDeck Manual Editor)")
         XCTAssertEqual(Set(savedEntry.manualOverrides.overriddenFields), ["bpm", "cueMarkers", "aiTrimBypass"])
+    }
+
+    @MainActor
+    func testCueAndBypassSaveMergesOnlyCurrentIntentIntoFreshDiskEntry() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        var initialCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        initialCache.tracks[a.relativePath]?.manualOverrides = ManualOverrides(
+            isManual: true,
+            overriddenFields: ["bpm", "musicalKey"],
+            author: "Original DJ",
+            notes: "old notes"
+        )
+        try CachePersistence.saveAtomic(cache: initialCache, to: cacheURL(root))
+
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.manualOverrides.notes, "old notes")
+
+        var externalCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        var externalEntry = try XCTUnwrap(externalCache.tracks[a.relativePath])
+        externalEntry.bpm = 147.5
+        externalEntry.musicalKey = "12A"
+        externalEntry.cueMarkers.vocalEntryCue = 12.0
+        externalEntry.cueMarkers.mixOutCue = 155.0
+        externalEntry.manualOverrides.updatedAt = "2026-10-17T13:00:00Z"
+        externalEntry.manualOverrides.author = "External DJ"
+        externalEntry.manualOverrides.notes = "new notes"
+        externalCache.tracks[a.relativePath] = externalEntry
+        try CachePersistence.saveAtomic(cache: externalCache, to: cacheURL(root))
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        editor.toggleAITrimBypass()
+        await saved(editor)
+
+        let savedEntry = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(savedEntry.cueMarkers.startTrimCue, 4.0)
+        XCTAssertEqual(savedEntry.cueMarkers.vocalEntryCue, 12.0)
+        XCTAssertEqual(savedEntry.cueMarkers.mixOutCue, 155.0)
+        XCTAssertTrue(savedEntry.aiTrimBypass)
+        XCTAssertEqual(savedEntry.bpm, 147.5)
+        XCTAssertEqual(savedEntry.musicalKey, "12A")
+        XCTAssertEqual(savedEntry.manualOverrides.notes, "new notes")
+        XCTAssertEqual(savedEntry.manualOverrides.author, "DJ (PulseDeck Manual Editor)")
+        XCTAssertEqual(Set(savedEntry.manualOverrides.overriddenFields), ["bpm", "musicalKey", "cueMarkers", "aiTrimBypass"])
+
+        let reloadedEditor = WaveformEditorModel(libraryRootURL: root)
+        let reloadedApp = AppState(libraryRootURL: root, waveformEditorModel: reloadedEditor)
+        await select(reloadedApp, a.relativePath)
+        XCTAssertEqual(reloadedEditor.cues.startTrimCue, 4.0)
+        XCTAssertEqual(reloadedEditor.cues.vocalEntryCue, 12.0)
+        XCTAssertEqual(reloadedEditor.cues.mixOutCue, 155.0)
+        XCTAssertTrue(reloadedEditor.aiTrimBypass)
+        XCTAssertEqual(reloadedEditor.manualOverrides.notes, "new notes")
+        XCTAssertEqual(reloadedEditor.currentTrack?.bpm, 147.5)
+        XCTAssertEqual(reloadedEditor.currentTrack?.musicalKey, "12A")
+    }
+
+    @MainActor
+    func testConcurrentEditToSameCueAbortsWithoutOverwritingDisk() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        await select(app, a.relativePath)
+
+        var externalCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        externalCache.tracks[a.relativePath]?.cueMarkers.startTrimCue = 3.0
+        try CachePersistence.saveAtomic(cache: externalCache, to: cacheURL(root))
+
+        editor.setCue(.startTrim, toTime: 4.0)
+        await saved(editor)
+
+        XCTAssertTrue(editor.errorMessage?.contains("newer START TRIM edit on disk") == true)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.startTrimCue, 3.0)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, a.cueMarkers.vocalEntryCue)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
     }
 
     @MainActor

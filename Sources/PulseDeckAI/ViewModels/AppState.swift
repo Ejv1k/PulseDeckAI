@@ -11,6 +11,9 @@ public final class AppState: ObservableObject {
     @Published public var isScanning: Bool = false
     @Published public var statusMessage: String = "Phase 0 Operational Shell Initialized"
     @Published public private(set) var meteringErrorMessage: String?
+    @Published public private(set) var loadedCache: PulseDeckLibraryCache?
+    @Published public var selectedTrackPath: String?
+    public let waveformEditorModel: WaveformEditorModel
     private let audioCoordinator: AudioEngineCoordinator
     private let audioMetering: AudioMeteringService
 
@@ -32,6 +35,7 @@ public final class AppState: ObservableObject {
         let cwd = FileManager.default.currentDirectoryPath
         let defaultURL = URL(fileURLWithPath: cwd).appendingPathComponent(PulseDeckCoreConfig.defaultLibraryFolderName)
         self.libraryRootURL = defaultURL
+        self.waveformEditorModel = WaveformEditorModel(libraryRootURL: defaultURL)
         refreshLibrary()
     }
 
@@ -52,6 +56,9 @@ public final class AppState: ObservableObject {
         // Perform scanner on background thread, deliver result to MainActor
         Task.detached(priority: .userInitiated) { [scanner] in
             let summary = scanner.scan(libraryURL: url)
+            let cacheURL = url.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+            let cache = CachePersistence.load(from: cacheURL)
+
             await MainActor.run {
                 // Ignore result if another scan generation was initiated
                 guard self.scanGeneration == thisGeneration else {
@@ -59,6 +66,14 @@ public final class AppState: ObservableObject {
                 }
 
                 self.scanSummary = summary
+                self.loadedCache = cache
+                self.waveformEditorModel.updateLibraryRoot(url)
+
+                if self.waveformEditorModel.currentTrack == nil,
+                   let firstTrack = cache?.tracks.values.sorted(by: { $0.relativePath < $1.relativePath }).first {
+                    self.waveformEditorModel.loadTrack(firstTrack)
+                    self.selectedTrackPath = firstTrack.relativePath
+                }
 
                 if let currentId = self.selectedCrate?.id,
                    let updatedCrate = summary.crates.first(where: { $0.id == currentId }) {
@@ -81,6 +96,17 @@ public final class AppState: ObservableObject {
     /// Selects a crate for viewing.
     public func selectCrate(_ crate: LibraryCrateInfo) {
         self.selectedCrate = crate
+    }
+
+    /// Selects a track by relative path and loads it into the waveform editor if cached.
+    public func selectTrack(relativePath: String) {
+        self.selectedTrackPath = relativePath
+        if let track = loadedCache?.tracks[relativePath] {
+            self.waveformEditorModel.loadTrack(track)
+            self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
+        } else {
+            self.statusMessage = "Track '\(relativePath)' not yet analyzed in cache"
+        }
     }
 
     /// Reads the newest output meter on the control queue; callers stay on MainActor.

@@ -9,6 +9,8 @@ public struct WaveformEditorView: View {
     @ObservedObject public var model: WaveformEditorModel
     @FocusState private var isWaveformFocused: Bool
     @State private var hoveredCue: CueType? = nil
+    @State private var dragInitialHandle: (cue: CueType, x: CGFloat)? = nil
+    private static let waveformCoordinateSpaceName = "WaveformContainerCoordinateSpace"
 
     public init(model: WaveformEditorModel) {
         self.model = model
@@ -216,6 +218,7 @@ public struct WaveformEditorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .coordinateSpace(name: Self.waveformCoordinateSpaceName)
             .cornerRadius(4)
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
@@ -327,8 +330,17 @@ public struct WaveformEditorView: View {
     // MARK: - Cue Handles Overlay
 
     private func cueHandlesOverlay(width: CGFloat, height: CGFloat) -> some View {
-        ZStack(alignment: .leading) {
-            ForEach(CueType.allCases) { cue in
+        let sortedCues = CueType.allCases.sorted { a, b in
+            let aRank = cueZRank(cue: a)
+            let bRank = cueZRank(cue: b)
+            if aRank != bRank {
+                return aRank < bRank
+            }
+            return a.rawValue < b.rawValue
+        }
+
+        return ZStack(alignment: .leading) {
+            ForEach(sortedCues) { cue in
                 let cueTime = model.cueTime(for: cue)
                 let x = model.timeToX(time: cueTime, viewWidth: width)
                 let isDragging = model.activeDraggingCue == cue
@@ -345,7 +357,20 @@ public struct WaveformEditorView: View {
                     isHovered: isHovered,
                     isSelected: isSelected
                 )
+                .zIndex(cueZRank(cue: cue))
             }
+        }
+    }
+
+    private func cueZRank(cue: CueType) -> Double {
+        if model.activeDraggingCue == cue { return 100 }
+        if model.selectedCue == cue { return 50 }
+        if hoveredCue == cue { return 25 }
+        switch cue {
+        case .startTrim: return 1
+        case .vocalEntry: return 2
+        case .mixOut: return 3
+        case .endTrim: return 4
         }
     }
 
@@ -389,25 +414,37 @@ public struct WaveformEditorView: View {
                 .frame(width: 8, height: 8)
                 .shadow(color: cue.color.opacity(0.8), radius: 3)
         }
-        .frame(width: 32)
-        .position(x: x, y: height / 2.0)
+        .frame(width: 32, height: height)
+        .contentShape(Rectangle())
         .onHover { inside in
             hoveredCue = inside ? cue : (hoveredCue == cue ? nil : hoveredCue)
         }
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.waveformCoordinateSpaceName))
                 .onChanged { value in
                     isWaveformFocused = true
                     if model.activeDraggingCue == nil {
                         model.beginDrag(cue: cue)
+                        dragInitialHandle = (cue: cue, x: x)
                     }
-                    let targetTime = model.xToTime(x: value.location.x, viewWidth: width)
+                    let startX = (dragInitialHandle?.cue == cue) ? dragInitialHandle!.x : x
+                    let targetX = startX + value.translation.width
+                    let targetTime = model.xToTime(x: targetX, viewWidth: width)
                     model.updateDrag(cue: cue, toTime: targetTime)
                 }
                 .onEnded { _ in
+                    dragInitialHandle = nil
                     model.endDrag(cue: cue)
                 }
         )
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded {
+                    isWaveformFocused = true
+                    model.selectedCue = cue
+                }
+        )
+        .position(x: x, y: height / 2.0)
     }
 
     // MARK: - Playhead Scrubber Marker

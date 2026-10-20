@@ -462,8 +462,54 @@ public final class WaveformEditorModel: ObservableObject {
         await inFlightSaveTask?.value
     }
 
+    /// Updates an already-loaded track with fresh cached metadata/analysis from disk while
+    /// strictly preserving interactive view state (zoomLevel, scrollOffsetSeconds, playheadPosition, selectedCue).
+    /// Clamps scroll offset and playhead to valid duration bounds.
+    public func updateLoadedTrack(_ entry: TrackCacheEntry) {
+        guard let current = currentTrack,
+              current.relativePath == entry.relativePath else {
+            loadTrack(entry)
+            return
+        }
+
+        self.currentTrack = entry
+        self.cues = entry.cueMarkers.clamped(toDuration: entry.duration)
+        self.aiTrimBypass = entry.aiTrimBypass
+        self.manualOverrides = entry.manualOverrides
+
+        // Preserve interactive view state, clamping to valid duration bounds
+        if entry.duration > 0 {
+            let visibleDuration = entry.duration / zoomLevel
+            let maxOffset = max(0.0, entry.duration - visibleDuration)
+            self.scrollOffsetSeconds = max(0.0, min(maxOffset, scrollOffsetSeconds))
+            self.playheadPosition = max(0.0, min(entry.duration, playheadPosition))
+        } else {
+            self.zoomLevel = 1.0
+            self.scrollOffsetSeconds = 0.0
+            self.playheadPosition = 0.0
+        }
+
+        let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: entry.relativePath)]
+        self.errorMessage = local?.failureMessage
+        if local?.failureMessage != nil {
+            self.statusMessage = "Unsaved cue changes"
+        } else if local?.hasPendingEdits == true {
+            self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
+        } else {
+            self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
+        }
+    }
+
     /// Loads a real cached track analysis entry into the editor.
-    public func loadTrack(_ entry: TrackCacheEntry) {
+    /// Resets interactive view state (zoom, scroll, playhead, selectedCue) to defaults unless
+    /// preservingViewStateIfSameTrack is true and this same relativePath is already loaded.
+    public func loadTrack(_ entry: TrackCacheEntry, preservingViewStateIfSameTrack: Bool = false) {
+        if preservingViewStateIfSameTrack,
+           let current = currentTrack,
+           current.relativePath == entry.relativePath {
+            updateLoadedTrack(entry)
+            return
+        }
         self.currentTrack = entry
         self.cues = entry.cueMarkers.clamped(toDuration: entry.duration)
         self.aiTrimBypass = entry.aiTrimBypass

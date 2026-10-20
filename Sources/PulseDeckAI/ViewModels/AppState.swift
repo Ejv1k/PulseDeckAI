@@ -21,6 +21,7 @@ public final class AppState: ObservableObject {
     private var scanGeneration: UInt64 = 0
     private var selectionGeneration: UInt64 = 0
     private var loadedCacheRootURL: URL?
+    private let cacheLoader: @Sendable (URL) async -> PulseDeckLibraryCache?
 
     public init() {
         let coordinator = AudioEngineCoordinator()
@@ -39,16 +40,33 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = defaultURL
         let editor = WaveformEditorModel(libraryRootURL: defaultURL)
         self.waveformEditorModel = editor
+        self.cacheLoader = { url in
+            await Task.detached(priority: .userInitiated) {
+                CachePersistence.load(from: url)
+            }.value
+        }
         connectEditorPersistence()
         refreshLibrary()
     }
 
     /// Initializes library/editor state without starting audio hardware; the production selection and save paths are shared.
-    init(libraryRootURL: URL, waveformEditorModel: WaveformEditorModel) {
+    init(
+        libraryRootURL: URL,
+        waveformEditorModel: WaveformEditorModel,
+        loadedCache: PulseDeckLibraryCache? = nil,
+        cacheLoader: (@Sendable (URL) async -> PulseDeckLibraryCache?)? = nil
+    ) {
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
         self.audioCoordinator = nil
         self.audioMetering = nil
+        self.loadedCache = loadedCache
+        self.loadedCacheRootURL = loadedCache != nil ? libraryRootURL.standardizedFileURL : nil
+        self.cacheLoader = cacheLoader ?? { url in
+            await Task.detached(priority: .userInitiated) {
+                CachePersistence.load(from: url)
+            }.value
+        }
         connectEditorPersistence()
     }
 
@@ -154,9 +172,8 @@ public final class AppState: ObservableObject {
 
         // Reload latest cache from disk to ensure freshest state if disk was updated
         return Task { [weak self] in
-            let freshCache = await Task.detached(priority: .userInitiated) {
-                CachePersistence.load(from: rootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
-            }.value
+            let cacheURL = rootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+            let freshCache = await self?.cacheLoader(cacheURL)
             guard let self, self.selectionGeneration == generation,
                   self.libraryRootURL.standardizedFileURL == standardizedRoot,
                   self.selectedTrackPath == relativePath else { return }
@@ -172,7 +189,13 @@ public final class AppState: ObservableObject {
                     libraryRootURL: rootURL
                 )
                 if !isDirtyOrInteracting {
-                    self.waveformEditorModel.loadTrack(track)
+                    let isSameTrack = (self.waveformEditorModel.libraryRootURL.standardizedFileURL == standardizedRoot &&
+                                       self.waveformEditorModel.currentTrack?.relativePath == relativePath)
+                    if isSameTrack {
+                        self.waveformEditorModel.updateLoadedTrack(track)
+                    } else {
+                        self.waveformEditorModel.loadTrack(track)
+                    }
                 }
                 self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
             } else {

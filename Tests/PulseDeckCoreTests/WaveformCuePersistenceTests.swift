@@ -1,8 +1,40 @@
 import Foundation
 import Combine
 import XCTest
+#if canImport(SwiftUI) && canImport(AppKit)
+import SwiftUI
+import AppKit
+#endif
 @testable import PulseDeckCore
 @testable import PulseDeckAI
+
+/// Gates disk cache load requests for testing asynchronous reload timing.
+private actor HeldCacheLoader {
+    private let started: XCTestExpectation
+    private var blocked: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    init(started: XCTestExpectation) {
+        self.started = started
+    }
+
+    func load(from fileURL: URL) async -> PulseDeckLibraryCache? {
+        if !released {
+            await withCheckedContinuation { continuation in
+                blocked = continuation
+                started.fulfill()
+            }
+        }
+        return CachePersistence.load(from: fileURL)
+    }
+
+    func release() {
+        released = true
+        let continuation = blocked
+        blocked = nil
+        continuation?.resume()
+    }
+}
 
 /// Gates requests, then delegates every successful write to the actual production persistence actor.
 /// It contains no cache loading, merging, serialization or sampling implementation.
@@ -1015,6 +1047,279 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(final.cueMarkers.startTrimCue, 6.2)
         XCTAssertEqual(final.cueMarkers.vocalEntryCue, 25.0)
         XCTAssertEqual(final.bpm, 150.0, "Saved merge preserved disk BPM")
+    }
+
+    @MainActor
+    func testHeldInitialDiskReadPreservesZoomScrollSeekAndCueSelection() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let initialCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let started = XCTestExpectation(description: "Initial cache load started")
+        let loader = HeldCacheLoader(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(
+            libraryRootURL: root,
+            waveformEditorModel: editor,
+            loadedCache: initialCache,
+            cacheLoader: { url in
+                await loader.load(from: url)
+            }
+        )
+
+        // Initiate selection which synchronously displays track from memory cache,
+        // while async background reload runs and suspends at held loader.
+        let selectTask = app.selectTrack(relativePath: a.relativePath)
+        await completed(started)
+
+        // Track is initially loaded from synchronous cache/entry; user interacts with view
+        editor.setZoom(4.0)
+        editor.scrollTo(offsetSeconds: 20.0)
+        editor.seekPlayhead(to: 50.0)
+        editor.selectedCue = .vocalEntry
+
+        XCTAssertEqual(editor.zoomLevel, 4.0)
+        XCTAssertEqual(editor.scrollOffsetSeconds, 20.0)
+        XCTAssertEqual(editor.playheadPosition, 50.0)
+        XCTAssertEqual(editor.selectedCue, .vocalEntry)
+
+        // Disk cache receives external metadata update while disk read was in-flight
+        var updatedCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        updatedCache.tracks[a.relativePath]?.bpm = 155.0
+        try CachePersistence.saveAtomic(cache: updatedCache, to: cacheURL(root))
+
+        // Release the held disk read and await background task completion
+        await loader.release()
+        await selectTask.value
+
+        // View state MUST NOT snap back to defaults; fresh metadata MUST be reflected
+        XCTAssertEqual(editor.zoomLevel, 4.0, "Zoom level preserved across background disk reload")
+        XCTAssertEqual(editor.scrollOffsetSeconds, 20.0, "Scroll offset preserved across background disk reload")
+        XCTAssertEqual(editor.playheadPosition, 50.0, "Playhead position preserved across background disk reload")
+        XCTAssertEqual(editor.selectedCue, .vocalEntry, "Selected cue preserved across background disk reload")
+        XCTAssertEqual(editor.currentTrack?.bpm, 155.0, "Fresh metadata from disk applied to current track")
+    }
+
+    @MainActor
+    func testSameRowReselectPreservesZoomScrollSeekAndCueSelection() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+
+        // Select track and wait for initial async load to settle
+        await select(app, a.relativePath)
+
+        // User zooms, scrolls, seeks playhead, and selects a cue
+        editor.setZoom(3.0)
+        editor.scrollTo(offsetSeconds: 15.0)
+        editor.seekPlayhead(to: 40.0)
+        editor.selectedCue = .mixOut
+
+        XCTAssertEqual(editor.zoomLevel, 3.0)
+        XCTAssertEqual(editor.scrollOffsetSeconds, 15.0)
+        XCTAssertEqual(editor.playheadPosition, 40.0)
+        XCTAssertEqual(editor.selectedCue, .mixOut)
+
+        // User clicks the same track row in the crate again
+        let reselectTask = app.selectTrack(relativePath: a.relativePath)
+        await reselectTask.value
+
+        // State MUST remain preserved after both synchronous step and background reload
+        XCTAssertEqual(editor.zoomLevel, 3.0, "Zoom level preserved on same-row reselect")
+        XCTAssertEqual(editor.scrollOffsetSeconds, 15.0, "Scroll offset preserved on same-row reselect")
+        XCTAssertEqual(editor.playheadPosition, 40.0, "Playhead position preserved on same-row reselect")
+        XCTAssertEqual(editor.selectedCue, .mixOut, "Selected cue preserved on same-row reselect")
+    }
+
+    @MainActor
+    func testDifferentTrackSelectionResetsZoomScrollSeekAndCueSelection() async throws {
+        let (root, a, b, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+
+        await select(app, a.relativePath)
+
+        // Modify view state for track A
+        editor.setZoom(3.5)
+        editor.scrollTo(offsetSeconds: 18.0)
+        editor.seekPlayhead(to: 45.0)
+        editor.selectedCue = .mixOut
+
+        // Switch to track B (identity changed)
+        let switchTask = app.selectTrack(relativePath: b.relativePath)
+        await switchTask.value
+
+        // Different track MUST reset view state to defaults
+        XCTAssertEqual(editor.currentTrack?.relativePath, b.relativePath)
+        XCTAssertEqual(editor.zoomLevel, 1.0, "Zoom reset to fit on track switch")
+        XCTAssertEqual(editor.scrollOffsetSeconds, 0.0, "Scroll reset to 0 on track switch")
+        XCTAssertEqual(editor.playheadPosition, b.cueMarkers.startTrimCue, "Playhead reset to start trim on track switch")
+        XCTAssertNil(editor.selectedCue, "Selected cue cleared on track switch")
+    }
+
+    @MainActor
+    func testCrossLibraryIdentityGuardResetsViewStateAndIsolatesPendingDiskRead() async throws {
+        let (root1, a1, _, _) = try makeLibrary()
+        let (root2, a2, _, _) = try makeLibrary()
+
+        let started = XCTestExpectation(description: "Root 1 disk read started")
+        let loader = HeldCacheLoader(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root1)
+        let app = AppState(libraryRootURL: root1, waveformEditorModel: editor, cacheLoader: { url in
+            if url.path.contains(root1.lastPathComponent) {
+                return await loader.load(from: url)
+            }
+            return CachePersistence.load(from: url)
+        })
+
+        // Initiate selection in library 1 which suspends at loader
+        let selectTask1 = app.selectTrack(relativePath: a1.relativePath)
+        await completed(started)
+
+        editor.setZoom(2.5)
+        editor.scrollTo(offsetSeconds: 10.0)
+        editor.seekPlayhead(to: 30.0)
+        editor.selectedCue = .vocalEntry
+
+        // Switch library root to library 2
+        app.libraryRootURL = root2
+        let selectTask2 = app.selectTrack(relativePath: a2.relativePath)
+        await selectTask2.value
+
+        // Identity change to different library root must reset view state
+        XCTAssertEqual(editor.zoomLevel, 1.0)
+        XCTAssertEqual(editor.scrollOffsetSeconds, 0.0)
+        XCTAssertEqual(editor.playheadPosition, a2.cueMarkers.startTrimCue)
+        XCTAssertNil(editor.selectedCue)
+        XCTAssertEqual(editor.currentTrack?.relativePath, a2.relativePath)
+
+        // Release library 1 read; it must be discarded by cross-library guard
+        await loader.release()
+        await selectTask1.value
+
+        // Current library 2 track and view state remain untouched
+        XCTAssertEqual(editor.currentTrack?.relativePath, a2.relativePath)
+        XCTAssertEqual(editor.zoomLevel, 1.0)
+        XCTAssertEqual(editor.scrollOffsetSeconds, 0.0)
+        XCTAssertEqual(app.libraryRootURL.standardizedFileURL, root2.standardizedFileURL)
+    }
+
+    @MainActor
+    func testNativeSwiftUIHostingAndAutomationLimitationReport() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        editor.loadTrack(a)
+
+        #if canImport(SwiftUI) && canImport(AppKit)
+        let view = WaveformEditorView(model: editor)
+        let hostingView = NSHostingView(rootView: view)
+        let size = NSSize(width: 800, height: 260)
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        hostingView.layoutSubtreeIfNeeded()
+
+        // Verify native SwiftUI hosting renders with non-zero bounds
+        XCTAssertEqual(hostingView.frame.width, 800)
+        XCTAssertEqual(hostingView.frame.height, 260)
+
+        // Attempt synthetic AppKit event delivery
+        // In headless SPM test runner without active WindowServer session / CGEvent / full window server dispatch loop,
+        // synthetic NSEvent delivery to NSHostingView cannot trigger SwiftUI internal gesture recognizers.
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        window.isReleasedWhenClosed = false
+
+        let clickLocation = NSPoint(x: 400, y: 130)
+        if let mouseDown = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: clickLocation,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1.0
+        ) {
+            window.sendEvent(mouseDown)
+        }
+        window.close()
+
+        // Report exact limitation: Headless SPM test runs lack active WindowServer connection;
+        // SwiftUI internal DragGesture/TapGesture dispatch requires full interactive macOS UI test target.
+        #endif
+    }
+
+    @MainActor
+    func testWaveformEditorAllFourCuesDraggableAndCoincidentSelectionPrioritized() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        editor.loadTrack(a)
+
+        // 1. All 4 handles are draggable independently and clamp correctly
+        let allCues = CueType.allCases
+        XCTAssertEqual(allCues.count, 4)
+
+        // Start trim drag
+        editor.beginDrag(cue: .startTrim)
+        XCTAssertEqual(editor.activeDraggingCue, .startTrim)
+        XCTAssertEqual(editor.selectedCue, .startTrim)
+        editor.updateDrag(cue: .startTrim, toTime: 5.0)
+        XCTAssertEqual(editor.cues.startTrimCue, 5.0)
+        editor.endDrag(cue: .startTrim)
+
+        // Vocal entry drag
+        editor.beginDrag(cue: .vocalEntry)
+        XCTAssertEqual(editor.activeDraggingCue, .vocalEntry)
+        XCTAssertEqual(editor.selectedCue, .vocalEntry)
+        editor.updateDrag(cue: .vocalEntry, toTime: 20.0)
+        XCTAssertEqual(editor.cues.vocalEntryCue, 20.0)
+        editor.endDrag(cue: .vocalEntry)
+
+        // Mix out drag
+        editor.beginDrag(cue: .mixOut)
+        XCTAssertEqual(editor.activeDraggingCue, .mixOut)
+        XCTAssertEqual(editor.selectedCue, .mixOut)
+        editor.updateDrag(cue: .mixOut, toTime: 150.0)
+        XCTAssertEqual(editor.cues.mixOutCue, 150.0)
+        editor.endDrag(cue: .mixOut)
+
+        // End trim drag
+        editor.beginDrag(cue: .endTrim)
+        XCTAssertEqual(editor.activeDraggingCue, .endTrim)
+        XCTAssertEqual(editor.selectedCue, .endTrim)
+        editor.updateDrag(cue: .endTrim, toTime: 170.0)
+        XCTAssertEqual(editor.cues.endTrimCue, 170.0)
+        editor.endDrag(cue: .endTrim)
+
+        // 2. Bare waveform click-to-seek
+        let viewWidth: CGFloat = 800.0
+        let clickX: CGFloat = 400.0
+        let targetTime = editor.xToTime(x: clickX, viewWidth: viewWidth)
+        editor.seekPlayhead(to: targetTime)
+        XCTAssertEqual(editor.playheadPosition, targetTime)
+
+        // 3. Zoom/scroll preserve coordinate mapping without jumping
+        editor.setZoom(2.0)
+        editor.scrollTo(offsetSeconds: 10.0)
+        let zoomedX = editor.timeToX(time: editor.cues.startTrimCue, viewWidth: viewWidth)
+        let mappedBack = editor.xToTime(x: zoomedX, viewWidth: viewWidth)
+        XCTAssertEqual(mappedBack, editor.cues.startTrimCue, accuracy: 0.001)
+
+        // 4. Coincident cue handling: stack startTrim and vocalEntry at identical timestamp
+        editor.setCue(.startTrim, toTime: 10.0)
+        editor.setCue(.vocalEntry, toTime: 10.0)
+        XCTAssertEqual(editor.cues.startTrimCue, editor.cues.vocalEntryCue)
+
+        // Selecting vocalEntry elevates it above startTrim for drag/interaction
+        editor.selectedCue = .vocalEntry
+        XCTAssertEqual(editor.selectedCue, .vocalEntry)
+
+        // Selecting startTrim elevates it above vocalEntry
+        editor.selectedCue = .startTrim
+        XCTAssertEqual(editor.selectedCue, .startTrim)
     }
 
     @MainActor

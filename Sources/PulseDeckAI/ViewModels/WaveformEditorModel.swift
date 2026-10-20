@@ -294,8 +294,13 @@ public final class WaveformEditorModel: ObservableObject {
         var failureMessage: String? { fieldEdits.values.compactMap(\.failureMessage).first }
     }
     private var localEdits: [TrackIdentity: LocalEdit] = [:]
+    private var cachePublicationGenerations: [URL: UInt64] = [:]
     private var nextRevision: UInt64 = 0
     private var pendingSaveCount = 0
+
+    public func cachePublicationGeneration(for libraryRootURL: URL) -> UInt64 {
+        cachePublicationGenerations[libraryRootURL.standardizedFileURL] ?? 0
+    }
 
     public var hasActiveDrag: Bool {
         activeDraggingCue != nil
@@ -801,6 +806,7 @@ public final class WaveformEditorModel: ObservableObject {
             }
         }
         if case .success(let cache) = result {
+            cachePublicationGenerations[identity.root, default: 0] &+= 1
             let savedTrack = cache.tracks[identity.relativePath] ?? track
             onTrackPersisted?(savedTrack, cache, rootURL)
         }

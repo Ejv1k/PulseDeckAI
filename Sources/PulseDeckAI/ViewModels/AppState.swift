@@ -169,6 +169,7 @@ public final class AppState: ObservableObject {
         selectionGeneration &+= 1
         let generation = selectionGeneration
         let selectionRevision = waveformEditorModel.interactionRevision
+        let expectedCacheGeneration = waveformEditorModel.cachePublicationGeneration(for: rootURL)
 
         // Reload latest cache from disk to ensure freshest state if disk was updated
         return Task { [weak self] in
@@ -177,6 +178,9 @@ public final class AppState: ObservableObject {
             guard let self, self.selectionGeneration == generation,
                   self.libraryRootURL.standardizedFileURL == standardizedRoot,
                   self.selectedTrackPath == relativePath else { return }
+            guard self.waveformEditorModel.cachePublicationGeneration(for: rootURL) == expectedCacheGeneration else {
+                return
+            }
             if let freshCache {
                 self.loadedCache = self.waveformEditorModel.applyingLocalEdits(to: freshCache, libraryRootURL: rootURL)
                 self.loadedCacheRootURL = standardizedRoot

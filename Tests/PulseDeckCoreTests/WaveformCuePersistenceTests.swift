@@ -36,6 +36,40 @@ private actor HeldCacheLoader {
     }
 }
 
+/// Reads and copies the disk cache snapshot before waiting, then delivers that captured copy upon release.
+private actor SnapshotHeldCacheLoader {
+    private let started: XCTestExpectation
+    private var blocked: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    init(started: XCTestExpectation) {
+        self.started = started
+    }
+
+    func load(from fileURL: URL) async -> PulseDeckLibraryCache? {
+        let snapshot: PulseDeckLibraryCache?
+        if let data = try? Data(contentsOf: fileURL) {
+            snapshot = try? JSONDecoder().decode(PulseDeckLibraryCache.self, from: data)
+        } else {
+            snapshot = nil
+        }
+        if !released {
+            await withCheckedContinuation { continuation in
+                blocked = continuation
+                started.fulfill()
+            }
+        }
+        return snapshot
+    }
+
+    func release() {
+        released = true
+        let continuation = blocked
+        blocked = nil
+        continuation?.resume()
+    }
+}
+
 /// Gates requests, then delegates every successful write to the actual production persistence actor.
 /// It contains no cache loading, merging, serialization or sampling implementation.
 private actor HeldWaveformPersistence: WaveformTrackPersisting {
@@ -1320,6 +1354,110 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         // Selecting startTrim elevates it above vocalEntry
         editor.selectedCue = .startTrim
         XCTAssertEqual(editor.selectedCue, .startTrim)
+    }
+
+    @MainActor
+    func testStaleSelectionSnapshotDoesNotRevertSuccessfulCueSaveOrConflictSubsequentEdit() async throws {
+        let (root, a, _, _) = try makeLibrary()
+        let initialCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let started = XCTestExpectation(description: "Snapshot cache read before wait")
+        let loader = SnapshotHeldCacheLoader(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let app = AppState(
+            libraryRootURL: root,
+            waveformEditorModel: editor,
+            loadedCache: initialCache,
+            cacheLoader: { url in
+                await loader.load(from: url)
+            }
+        )
+
+        // Select track: synchronous load sets track in editor; async reload reads cache copy then suspends
+        let selectTask = app.selectTrack(relativePath: a.relativePath)
+        await completed(started)
+
+        XCTAssertEqual(editor.cues.vocalEntryCue, 10.0)
+
+        // User edits vocal entry and saves
+        editor.setCue(.vocalEntry, toTime: 25.0)
+        await saved(editor)
+
+        // Verify save succeeded, disk updated, and dirty state cleared
+        XCTAssertFalse(editor.isSaving)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25.0)
+        XCTAssertEqual(app.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, 25.0)
+        let diskAfterFirstSave = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(diskAfterFirstSave.cueMarkers.vocalEntryCue, 25.0)
+
+        // Release the held loader which returns the stale pre-save copy (vocalEntry = 10.0)
+        await loader.release()
+        await selectTask.value
+
+        // Assert saved cue in editor and loadedCache survived
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25.0, "Saved cue must survive stale selection snapshot")
+        XCTAssertEqual(app.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, 25.0, "Published loadedCache must survive stale selection snapshot")
+
+        // Subsequent edit to the SAME cue must persist without conflict
+        editor.setCue(.vocalEntry, toTime: 30.0)
+        await saved(editor)
+
+        XCTAssertNil(editor.errorMessage, "Subsequent edit to same cue must not conflict")
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(editor.cues.vocalEntryCue, 30.0)
+        let diskAfterSecondSave = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(diskAfterSecondSave.cueMarkers.vocalEntryCue, 30.0)
+    }
+
+    @MainActor
+    func testStaleSelectionSnapshotDoesNotOverwriteDifferentTrackSaveInSameLibrary() async throws {
+        let (root, a, b, _) = try makeLibrary()
+        let initialCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let started = XCTestExpectation(description: "Track A selection read before wait")
+        let loader = SnapshotHeldCacheLoader(started: started)
+        let saveStarted = [XCTestExpectation(description: "Track B save held")]
+        let persistence = HeldWaveformPersistence(started: saveStarted)
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(
+            libraryRootURL: root,
+            waveformEditorModel: editor,
+            loadedCache: initialCache,
+            cacheLoader: { url in
+                await loader.load(from: url)
+            }
+        )
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+
+        // 1. Load and edit track B, queueing a held save
+        editor.loadTrack(b)
+        editor.setCue(.startTrim, toTime: 8.0)
+        await completed(saveStarted[0])
+        XCTAssertTrue(editor.isSaving)
+
+        // 2. Select track A: synchronous step sets track A in editor,
+        // async reload reads pre-save cache snapshot and suspends
+        let selectTask = app.selectTrack(relativePath: a.relativePath)
+        await completed(started)
+
+        // 3. Release track B save and wait for completion
+        await persistence.releaseAll()
+        await saved(editor)
+
+        // Track B save published into loadedCache
+        XCTAssertEqual(app.loadedCache?.tracks[b.relativePath]?.cueMarkers.startTrimCue, 8.0)
+        XCTAssertEqual(try diskEntry(b.relativePath, root: root).cueMarkers.startTrimCue, 8.0)
+
+        // 4. Release track A loader which returns stale cache snapshot (where track B had startTrim = 3.0)
+        await loader.release()
+        await selectTask.value
+
+        // 5. Full published cache MUST survive; track B's saved cue must not be reverted by track A's reload
+        XCTAssertEqual(app.loadedCache?.tracks[b.relativePath]?.cueMarkers.startTrimCue, 8.0,
+                       "Different track save in same library must survive stale selection snapshot")
+        XCTAssertEqual(app.loadedCache?.tracks[a.relativePath]?.cueMarkers.startTrimCue, a.cueMarkers.startTrimCue)
     }
 
     @MainActor

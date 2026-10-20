@@ -155,6 +155,7 @@ final class TransitionExecutionTests: XCTestCase {
         )
 
         _ = try await service.startTransition(request: request)
+        _ = try await service.advance(to: 5.0)
 
         // Initial gain preparation: incoming deck B must be muted at 0.0
         XCTAssertEqual(coordinator.deckBGraph.volume, 0.0)
@@ -312,7 +313,7 @@ final class TransitionExecutionTests: XCTestCase {
 
         // Tick at trigger position (10.0s) -> Fires ONCE!
         let fireCommands = try await service.tick(playheadSeconds: 10.0)
-        XCTAssertFalse(fireCommands.isEmpty)
+        XCTAssertTrue(fireCommands.isEmpty) // Live deck remains at 0s despite the forced trigger tick.
 
         let snapFired = await service.snapshot
         XCTAssertFalse(snapFired.isAutoPilotArmed)
@@ -321,6 +322,9 @@ final class TransitionExecutionTests: XCTestCase {
         } else {
             XCTFail("Expected state to transition to .inProgress after trigger")
         }
+
+        let startCommands = try await service.advance(to: 10.0)
+        XCTAssertFalse(startCommands.isEmpty)
 
         // Additional ticks on same generation do not re-trigger or restart
         let subsequentCommands = try await service.tick(playheadSeconds: 10.5)
@@ -677,6 +681,9 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(snapStart.state, .inProgress(style: request.style, progress: 0.0))
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
 
+        let earlyTick = try await service.advance(to: 0.02)
+        XCTAssertTrue(earlyTick.isEmpty)
+
         // 2. Live tick at 3.52s: must not throw timeRegressed, commands empty, deck B not playing
         let tick1 = try await service.advance(to: 3.52)
         XCTAssertTrue(tick1.isEmpty)
@@ -727,6 +734,10 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(genA, genB)
         XCTAssertGreaterThan(genA, 0)
 
+        // One extra A seek makes A's firing generation equal B's generation after incoming pre-cue.
+        coordinator.deckAGraph.seek(to: 0)
+        let firedGenerationA = coordinator.deckAGraph.scheduleGeneration
+
         // Phase 1: AutoPilot on Deck A (A -> B)
         let descA1 = makeDescriptor(deck: .deckA, duration: 30.0, bpm: 120.0, mixOutCue: 10.0)
         let descB1 = makeDescriptor(deck: .deckB, duration: 30.0, bpm: 120.0, mixOutCue: 25.0)
@@ -740,7 +751,9 @@ final class TransitionExecutionTests: XCTestCase {
 
         try await service.armAutoPilot(request: requestAtoB)
         let fireA = try await service.tick(playheadSeconds: 10.0)
-        XCTAssertFalse(fireA.isEmpty)
+        XCTAssertTrue(fireA.isEmpty)
+        let startA = try await service.advance(to: 10)
+        XCTAssertFalse(startA.isEmpty)
 
         let snapA = await service.snapshot
         if case .inProgress = snapA.state {
@@ -753,6 +766,7 @@ final class TransitionExecutionTests: XCTestCase {
         _ = try await service.advance(to: 12.1)
         let snapAEnd = await service.snapshot
         XCTAssertEqual(snapAEnd.state, .completed)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, firedGenerationA)
 
         // Phase 2: Consecutive AutoPilot on Deck B (B -> A) with the EXACT same numeric generation
         coordinator.deckBGraph.play()
@@ -770,7 +784,9 @@ final class TransitionExecutionTests: XCTestCase {
 
         // Must fire ONCE because identity is (DeckIdentifier, generation), NOT generation alone!
         let fireB = try await service.tick(playheadSeconds: 10.0)
-        XCTAssertFalse(fireB.isEmpty)
+        XCTAssertTrue(fireB.isEmpty)
+        let startB = try await service.advance(to: 10)
+        XCTAssertFalse(startB.isEmpty)
 
         let snapB = await service.snapshot
         if case .inProgress = snapB.state {
@@ -954,4 +970,265 @@ final class TransitionExecutionTests: XCTestCase {
             XCTAssertEqual(error, .incompatibleCrossfaderRouting(deck: .deckA, crossfaderPosition: 1.0))
         }
     }
+
+    func testExplicitFutureTriggersWaitForActualPlayhead() async throws {
+        for style: TransitionStyle in [
+            .filterEchoWash(durationSeconds: 2.0),
+            .hardCutOnDrop(bars: 1, allowFallbackToFilter: false),
+            .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false)
+        ] {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            let service = coordinator.transitionExecutionService
+            let url = try createTestWavFile()
+            defer { try? FileManager.default.removeItem(at: url) }
+            try coordinator.deckAGraph.loadTrack(url: url)
+            try coordinator.deckBGraph.loadTrack(url: url)
+            coordinator.deckAGraph.play()
+            let request = TransitionRequest(
+                outgoingTrack: makeDescriptor(deck: .deckA, duration: 30, bpm: 120, mixOutCue: 10),
+                incomingTrack: makeDescriptor(deck: .deckB, duration: 30, bpm: 120, mixOutCue: 25),
+                style: style, triggerPositionSeconds: 10
+            )
+            let plan = try await service.startTransition(request: request)
+            let initial = await service.snapshot
+            XCTAssertEqual(initial.executedEventCount, 0, "Future trigger executed early: \(style)")
+            XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+            XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+            XCTAssertTrue(coordinator.deckAGraph.masterEchoNode.bypass)
+            do {
+                for time in [0.02, 3.52, 9.99] {
+                    let commands = try await service.advance(to: time)
+                    XCTAssertTrue(commands.isEmpty)
+                }
+                _ = try await service.advance(to: plan.startTimestampSeconds)
+                _ = try await service.advance(to: plan.endTimestampSeconds)
+            } catch {
+                XCTFail("Actual playhead must advance without regression for \(style): \(error)")
+                _ = await service.cancelTransition()
+                continue
+            }
+            let end = await service.snapshot
+            XCTAssertEqual(end.state, .completed)
+            XCTAssertEqual(end.remainingEventCount, 0)
+            XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        }
+    }
+
+    func testPlayingIncomingStaysSilentUntilQuantizedStartAtBothEndpoints() async throws {
+        for outgoing: DeckIdentifier in [.deckA, .deckB] {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            let service = coordinator.transitionExecutionService
+            let out = outgoing == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+            let incoming = outgoing == .deckA ? coordinator.deckBGraph : coordinator.deckAGraph
+            let url = try createTestWavFile()
+            defer { try? FileManager.default.removeItem(at: url) }
+            try out.loadTrack(url: url)
+            try incoming.loadTrack(url: url)
+            out.seek(to: 3.5)
+            out.play()
+            incoming.isCueActive = true
+            incoming.play()
+            coordinator.setCrossfader(position: outgoing == .deckA ? 0 : 1)
+            XCTAssertEqual(incoming.volume, 1)
+            XCTAssertEqual(incoming.effectiveMasterGain, 0)
+            let cueGeneration = incoming.cueScheduleStartSecondsForTesting
+            let request = TransitionRequest(
+                outgoingTrack: makeDescriptor(deck: outgoing, duration: 30, bpm: 120, mixOutCue: 3.5),
+                incomingTrack: makeDescriptor(deck: incoming.deckId, duration: 30, bpm: 120, mixOutCue: 25),
+                style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false),
+                triggerPositionSeconds: 3.5
+            )
+            let plan = try await service.startTransition(request: request)
+            XCTAssertEqual(plan.startTimestampSeconds, 4)
+            XCTAssertEqual(incoming.effectiveMasterGain, 0, "Routing exposed already-playing incoming")
+            XCTAssertEqual(incoming.masterFaderNode.outputVolume, 0)
+            XCTAssertEqual(incoming.cueFaderNode.outputVolume, 1)
+            XCTAssertTrue(incoming.isCueActive)
+            XCTAssertEqual(incoming.cueScheduleStartSecondsForTesting, cueGeneration)
+            for time in [3.52, 3.99] {
+                let commands = try await service.advance(to: time)
+                XCTAssertTrue(commands.isEmpty)
+                XCTAssertEqual(incoming.effectiveMasterGain, 0)
+            }
+            _ = try await service.advance(to: 4)
+            XCTAssertGreaterThan(incoming.effectiveMasterGain, 0)
+            XCTAssertEqual(incoming.cueFaderNode.outputVolume, 1)
+            _ = try await service.advance(to: plan.endTimestampSeconds)
+            XCTAssertEqual(incoming.effectiveMasterGain, 1)
+            XCTAssertEqual(out.effectiveMasterGain, 0)
+        }
+    }
+
+    func testCancellationAfterCompletionLeavesHandoffUntouched() async throws {
+        for outgoing: DeckIdentifier in [.deckA, .deckB] {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            let service = coordinator.transitionExecutionService
+            let out = outgoing == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+            let incoming = outgoing == .deckA ? coordinator.deckBGraph : coordinator.deckAGraph
+            let url = try createTestWavFile(durationSeconds: 20)
+            defer { try? FileManager.default.removeItem(at: url) }
+            try out.loadTrack(url: url)
+            try incoming.loadTrack(url: url)
+            out.play()
+            coordinator.setCrossfader(position: outgoing == .deckA ? 0 : 1)
+            let plan = try await service.startTransition(request: TransitionRequest(
+                outgoingTrack: makeDescriptor(deck: outgoing, duration: 20, bpm: 120, mixOutCue: 2),
+                incomingTrack: makeDescriptor(deck: incoming.deckId, duration: 20, bpm: 120, mixOutCue: 18),
+                style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 2
+            ))
+            _ = try await service.advance(to: plan.endTimestampSeconds)
+            let completed = await service.snapshot
+            let incomingGeneration = incoming.scheduleGeneration
+            let outgoingGeneration = out.scheduleGeneration
+            let crossfader = coordinator.crossfaderPosition
+            for _ in 0..<2 {
+                let commands = await service.cancelTransition()
+                XCTAssertTrue(commands.isEmpty)
+                let cancelled = await service.snapshot
+                XCTAssertEqual(cancelled, completed)
+                XCTAssertEqual(coordinator.crossfaderPosition, crossfader)
+                XCTAssertEqual(incoming.effectiveMasterGain, 1)
+                XCTAssertTrue(incoming.isMasterPlaying)
+                XCTAssertFalse(out.isMasterPlaying)
+                XCTAssertEqual(incoming.scheduleGeneration, incomingGeneration)
+                XCTAssertEqual(out.scheduleGeneration, outgoingGeneration)
+            }
+        }
+    }
+
+    func testAutoPilotArmedWhilePausedFiresAfterCoordinatorResume() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        let master = coordinator.masterAudioEngine.rawEngine
+        try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(
+            .offline, format: format, maximumFrameCount: 4096
+        )
+        try coordinator.start()
+        defer { coordinator.stop() }
+        let url = try createTestWavFile(durationSeconds: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        coordinator.pause()
+        let fired = expectation(description: "Production driver schedules incoming after resume")
+        coordinator.deckBGraph.segmentCompletionObserverForTesting = { role, _ in
+            if role == .master { fired.fulfill() }
+        }
+        try await service.armAutoPilot(request: TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 10, bpm: 120, mixOutCue: 0.1),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 10, bpm: 120, mixOutCue: 8),
+            style: .filterEchoWash(durationSeconds: 1)
+        ))
+        let armed = await service.snapshot
+        XCTAssertTrue(armed.isAutoPilotArmed)
+        XCTAssertFalse(coordinator.masterAudioEngine.isRunning)
+        try coordinator.start()
+        // Render actual source audio past mixOutCue; no forced tick or duplicated driver logic.
+        for _ in 0..<4 { try render(master) }
+        XCTAssertGreaterThan(coordinator.deckAGraph.masterPlayheadSeconds, 0.1)
+        await fulfillment(of: [fired], timeout: 1)
+        let snapshot = await service.snapshot
+        XCTAssertFalse(snapshot.isAutoPilotArmed)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        coordinator.monitor.performOnControlQueue {
+            coordinator.deckBGraph.segmentCompletionObserverForTesting = nil
+        }
+        _ = await service.cancelTransition()
+    }
+
+    func testPausedArmedDriverDoesNotRetainCoordinatorOrService() async throws {
+        weak var releasedCoordinator: AudioEngineCoordinator?
+        weak var releasedService: TransitionExecutionService?
+        let url = try createTestWavFile(durationSeconds: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            let service = coordinator.transitionExecutionService
+            releasedCoordinator = coordinator
+            releasedService = service
+            try coordinator.deckAGraph.loadTrack(url: url)
+            try coordinator.deckBGraph.loadTrack(url: url)
+            try await service.armAutoPilot(request: TransitionRequest(
+                outgoingTrack: makeDescriptor(deck: .deckA, duration: 10, bpm: 120, mixOutCue: 2),
+                incomingTrack: makeDescriptor(deck: .deckB, duration: 10, bpm: 120, mixOutCue: 8),
+                style: .filterEchoWash(durationSeconds: 1)
+            ))
+        }
+        XCTAssertNil(releasedCoordinator)
+        XCTAssertNil(releasedService)
+    }
+
+    func testDisabledPausedAutoPilotDoesNotRestartAfterResume() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        let master = coordinator.masterAudioEngine.rawEngine
+        try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(
+            .offline, format: format, maximumFrameCount: 4096
+        )
+        let url = try createTestWavFile(durationSeconds: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        let unexpectedSchedule = expectation(description: "Disabled driver must not schedule incoming")
+        unexpectedSchedule.isInverted = true
+        coordinator.deckBGraph.segmentCompletionObserverForTesting = { role, _ in
+            if role == .master { unexpectedSchedule.fulfill() }
+        }
+        try await service.armAutoPilot(request: TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 10, bpm: 120, mixOutCue: 0.1),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 10, bpm: 120, mixOutCue: 8),
+            style: .filterEchoWash(durationSeconds: 1)
+        ))
+        await service.disableAutoPilot()
+        try coordinator.start()
+        defer { coordinator.stop() }
+        for _ in 0..<4 { try render(master) }
+        await fulfillment(of: [unexpectedSchedule], timeout: 0.1)
+        let snapshot = await service.snapshot
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+    }
+
+    func testRetainedServiceRejectsNewWorkAfterCoordinatorRelease() async throws {
+        let service: TransitionExecutionService
+        weak var releasedCoordinator: AudioEngineCoordinator?
+        let url = try createTestWavFile(durationSeconds: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            releasedCoordinator = coordinator
+            service = coordinator.transitionExecutionService
+            try coordinator.deckAGraph.loadTrack(url: url)
+            try coordinator.deckBGraph.loadTrack(url: url)
+        }
+        XCTAssertNil(releasedCoordinator)
+        let request = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 10, bpm: 120, mixOutCue: 2),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 10, bpm: 120, mixOutCue: 8),
+            style: .filterEchoWash(durationSeconds: 1)
+        )
+        do {
+            _ = try await service.startTransition(request: request)
+            XCTFail("Starting without a coordinator must fail before graph mutations")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .invalidRequest("Audio engine coordinator is no longer available."))
+        }
+        do {
+            _ = try await service.armAutoPilot(request: request)
+            XCTFail("Arming without a coordinator must fail before committing armed state")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .invalidRequest("Audio engine coordinator is no longer available."))
+        }
+        let commands = try await service.tick()
+        XCTAssertTrue(commands.isEmpty)
+        let snapshot = await service.snapshot
+        XCTAssertEqual(snapshot.state, .idle)
+    }
+
 }

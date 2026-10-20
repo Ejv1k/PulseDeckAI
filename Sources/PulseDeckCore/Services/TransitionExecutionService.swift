@@ -245,6 +245,10 @@ public actor TransitionExecutionService {
 
     @discardableResult
     private func startTransitionInternal(request: TransitionRequest) throws -> [TransitionCommand] {
+        try onAudioControlQueue { try startTransitionOnControlQueue(request: request) }
+    }
+
+    private func startTransitionOnControlQueue(request: TransitionRequest) throws -> [TransitionCommand] {
         guard coordinator != nil else {
             throw TransitionExecutionServiceError.invalidRequest("Audio engine coordinator is no longer available.")
         }
@@ -331,6 +335,7 @@ public actor TransitionExecutionService {
         if case .armed = state {
             armedRequest = nil
             armedTriggerPosition = nil
+            clearExecutionData()
             state = .idle
             return []
         }
@@ -370,6 +375,10 @@ public actor TransitionExecutionService {
     /// - Throws: `TransitionExecutionServiceError` if tracks are invalid or playhead is already past trigger point.
     @discardableResult
     public func armAutoPilot(request: TransitionRequest) throws -> TransitionPlan {
+        try onAudioControlQueue { try armAutoPilotOnControlQueue(request: request) }
+    }
+
+    private func armAutoPilotOnControlQueue(request: TransitionRequest) throws -> TransitionPlan {
         guard coordinator != nil else {
             throw TransitionExecutionServiceError.invalidRequest("Audio engine coordinator is no longer available.")
         }
@@ -387,6 +396,8 @@ public actor TransitionExecutionService {
             throw TransitionExecutionServiceError.playheadPastTrigger(current: currentPos, trigger: trigger)
         }
 
+        // Commit the new armed lifecycle only after every validation succeeds.
+        clearExecutionData()
         executionGeneration &+= 1
         initialOutgoingRate = request.outgoingPlaybackRate
         armedRequest = request
@@ -405,9 +416,19 @@ public actor TransitionExecutionService {
             executionGeneration &+= 1
             armedRequest = nil
             armedTriggerPosition = nil
+            clearExecutionData()
             state = .idle
             stopDriver()
         }
+    }
+
+    private func clearExecutionData() {
+        activePlan = nil
+        stateMachine = nil
+        lastTickedPosition = nil
+        initialCrossfaderPosition = nil
+        initialOutgoingRate = 1
+        lastObservedDeckGeneration.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Timeline Advancement & Deterministic Clock Driving
@@ -420,6 +441,12 @@ public actor TransitionExecutionService {
     /// - Throws: `TransitionExecutionError` or `TransitionExecutionServiceError` on invalid clock progression.
     @discardableResult
     public func tick(playheadSeconds: Double? = nil) throws -> [TransitionCommand] {
+        // Validate identities and dispatch due commands in one serialized control turn.
+        // An external seek/reload cannot slip between the check and an owned scheduling update.
+        try onAudioControlQueue { try tickOnControlQueue(playheadSeconds: playheadSeconds) }
+    }
+
+    private func tickOnControlQueue(playheadSeconds: Double?) throws -> [TransitionCommand] {
         guard coordinator != nil else { return cancelTransition() }
         switch state {
         case .idle, .completed, .cancelled:
@@ -427,6 +454,7 @@ public actor TransitionExecutionService {
 
         case .armed(let request, let triggerPosition):
             if isDeckInvalidated(deck: request.outgoingTrack.deck)
+                || isDeckInvalidated(deck: request.incomingTrack.deck)
                 || isRateInvalidated(deck: request.outgoingTrack.deck) {
                 disableAutoPilot()
                 return []
@@ -466,7 +494,9 @@ public actor TransitionExecutionService {
             }
 
             // Invalidation check: rate change or track change aborts stale transition safely
-            if isRateInvalidated(deck: plan.outgoingDeck) || isDeckInvalidated(deck: plan.outgoingDeck) {
+            if isRateInvalidated(deck: plan.outgoingDeck)
+                || isDeckInvalidated(deck: plan.outgoingDeck)
+                || isDeckInvalidated(deck: plan.incomingDeck) {
                 return cancelTransition()
             }
 
@@ -549,9 +579,11 @@ public actor TransitionExecutionService {
 
         case .seek(let deck, let positionSeconds):
             deckGraph(for: deck).seek(to: positionSeconds)
+            lastObservedDeckGeneration[deck] = deckGeneration(for: deck)
 
         case .play(let deck):
             deckGraph(for: deck).play()
+            lastObservedDeckGeneration[deck] = deckGeneration(for: deck)
 
         case .pause(let deck):
             deckGraph(for: deck).pause()
@@ -563,6 +595,7 @@ public actor TransitionExecutionService {
                 deckGraph(for: deck).pause()
                 deckGraph(for: deck).seek(to: 0.0)
             }
+            lastObservedDeckGeneration[deck] = deckGeneration(for: deck)
         }
     }
 

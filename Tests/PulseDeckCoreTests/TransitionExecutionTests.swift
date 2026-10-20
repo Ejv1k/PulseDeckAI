@@ -1231,4 +1231,225 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(snapshot.state, .idle)
     }
 
+    func testIncomingScheduleChangesCancelBeforeOutgoingCompletion() async throws {
+        enum IncomingChange: CaseIterable {
+            case reloadSameURL, reloadDifferentURL, seek
+        }
+        let url = try createTestWavFile(durationSeconds: 12)
+        let replacementURL = try createTestWavFile(durationSeconds: 12)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: replacementURL)
+        }
+        for outgoing: DeckIdentifier in [.deckA, .deckB] {
+            for change in IncomingChange.allCases {
+                let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+                let service = coordinator.transitionExecutionService
+                let out = outgoing == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+                let incoming = outgoing == .deckA ? coordinator.deckBGraph : coordinator.deckAGraph
+                try out.loadTrack(url: url)
+                try incoming.loadTrack(url: url)
+                out.seek(to: 2)
+                out.play()
+                let endpoint: Float = outgoing == .deckA ? 0 : 1
+                coordinator.setCrossfader(position: endpoint)
+                let incomingBeforeSetup = incoming.scheduleGeneration
+                let outgoingGeneration = out.scheduleGeneration
+                let plan = try await service.startTransition(request: TransitionRequest(
+                    outgoingTrack: makeDescriptor(deck: outgoing, duration: 12, bpm: 120, mixOutCue: 2),
+                    incomingTrack: makeDescriptor(deck: incoming.deckId, duration: 12, bpm: 120, mixOutCue: 10),
+                    style: .filterEchoWash(durationSeconds: 4), triggerPositionSeconds: 2
+                ))
+                XCTAssertGreaterThan(incoming.scheduleGeneration, incomingBeforeSetup)
+                XCTAssertTrue(incoming.isMasterPlaying)
+                _ = try await service.advance(to: 3)
+                XCTAssertGreaterThan(incoming.effectiveMasterGain, 0)
+                let incomingBeforeChange = incoming.scheduleGeneration
+                switch change {
+                case .reloadSameURL:
+                    try incoming.loadTrack(url: url)
+                    XCTAssertEqual(incoming.loadedTrackURL, url)
+                case .reloadDifferentURL:
+                    try incoming.loadTrack(url: replacementURL)
+                    XCTAssertEqual(incoming.loadedTrackURL, replacementURL)
+                case .seek:
+                    incoming.seek(to: 1.25)
+                }
+                XCTAssertGreaterThan(incoming.scheduleGeneration, incomingBeforeChange)
+                // A skipped tick reaching completion must invalidate before fading/stopping outgoing audio.
+                let commands = try await service.advance(to: plan.endTimestampSeconds)
+                let snapshot = await service.snapshot
+                XCTAssertEqual(snapshot.state, .cancelled, "Incoming change must cancel: \(change)")
+                XCTAssertFalse(commands.contains(.stop(deck: outgoing)))
+                XCTAssertTrue(out.isMasterPlaying)
+                XCTAssertEqual(out.scheduleGeneration, outgoingGeneration)
+                XCTAssertEqual(out.effectiveMasterGain, 1)
+                XCTAssertEqual(out.masterFaderNode.outputVolume, 1)
+                XCTAssertEqual(coordinator.crossfaderPosition, endpoint)
+                XCTAssertEqual(incoming.effectiveMasterGain, 0)
+                XCTAssertFalse(incoming.isMasterPlaying)
+                let repeatedCancel = await service.cancelTransition()
+                XCTAssertTrue(repeatedCancel.isEmpty)
+            }
+        }
+    }
+
+    func testCompletedTransitionArmsReverseAndDisarmsWithCleanSnapshots() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let url = try createTestWavFile(durationSeconds: 20)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.seek(to: 2)
+        coordinator.deckAGraph.play()
+        coordinator.setCrossfader(position: 0)
+        let plan = try await service.startTransition(request: TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 20, bpm: 120, mixOutCue: 2),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 20, bpm: 120, mixOutCue: 18),
+            style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 2
+        ))
+        _ = try await service.advance(to: plan.endTimestampSeconds)
+        let completed = await service.snapshot
+        XCTAssertEqual(completed.state, .completed)
+        XCTAssertEqual(completed.progress, 1)
+        let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
+        let outgoingGeneration = coordinator.deckAGraph.scheduleGeneration
+        let reverse = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckB, duration: 20, bpm: 120, mixOutCue: 10),
+            incomingTrack: makeDescriptor(deck: .deckA, duration: 20, bpm: 120, mixOutCue: 18),
+            style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 10
+        )
+        let invalidDuration = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckB, duration: 19, bpm: 120, mixOutCue: 10),
+            incomingTrack: reverse.incomingTrack, style: reverse.style, triggerPositionSeconds: 10
+        )
+        do {
+            _ = try await service.armAutoPilot(request: invalidDuration)
+            XCTFail("Failed arming must preserve completed data")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .trackMismatch(deck: .deckB, expectedDuration: 19, actualDuration: 20))
+        }
+        let afterInvalidDuration = await service.snapshot
+        XCTAssertEqual(afterInvalidDuration, completed)
+        let pastTrigger = TransitionRequest(
+            outgoingTrack: reverse.outgoingTrack, incomingTrack: reverse.incomingTrack,
+            style: reverse.style, triggerPositionSeconds: 0
+        )
+        do {
+            _ = try await service.armAutoPilot(request: pastTrigger)
+            XCTFail("Trigger validation must finish before clearing completed data")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .playheadPastTrigger(current: 0, trigger: 0))
+        }
+        let afterPastTrigger = await service.snapshot
+        XCTAssertEqual(afterPastTrigger, completed)
+        _ = try await service.armAutoPilot(request: reverse)
+        let armed = await service.snapshot
+        XCTAssertEqual(armed.state, .armed(request: reverse, triggerPosition: 10))
+        XCTAssertEqual(armed.outgoingDeck, .deckB)
+        XCTAssertEqual(armed.incomingDeck, .deckA)
+        XCTAssertNil(armed.activePlan)
+        XCTAssertEqual(armed.progress, 0)
+        XCTAssertEqual(armed.executedEventCount, 0)
+        XCTAssertEqual(armed.remainingEventCount, 0)
+        XCTAssertEqual(armed.currentPlayheadSeconds, coordinator.deckBGraph.masterPlayheadSeconds)
+        XCTAssertEqual(armed.armedRequest, reverse)
+        XCTAssertTrue(armed.isAutoPilotArmed)
+        do {
+            _ = try await service.armAutoPilot(request: invalidDuration)
+            XCTFail("Failed rearming must preserve valid armed request")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .trackMismatch(deck: .deckB, expectedDuration: 19, actualDuration: 20))
+        }
+        let afterInvalidRearm = await service.snapshot
+        XCTAssertEqual(afterInvalidRearm, armed)
+        await service.disableAutoPilot()
+        let idle = await service.snapshot
+        XCTAssertEqual(idle.state, .idle)
+        XCTAssertNil(idle.activePlan)
+        XCTAssertNil(idle.outgoingDeck)
+        XCTAssertNil(idle.incomingDeck)
+        XCTAssertNil(idle.currentPlayheadSeconds)
+        XCTAssertNil(idle.armedRequest)
+        XCTAssertFalse(idle.isAutoPilotArmed)
+        XCTAssertEqual(idle.progress, 0)
+        XCTAssertEqual(idle.executedEventCount, 0)
+        XCTAssertEqual(idle.remainingEventCount, 0)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 1)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        let idleCancel = await service.cancelTransition()
+        XCTAssertTrue(idleCancel.isEmpty)
+        let afterCancel = await service.snapshot
+        XCTAssertEqual(afterCancel, idle)
+        _ = try await service.armAutoPilot(request: reverse)
+        let armedCancelCommands = await service.cancelTransition()
+        XCTAssertTrue(armedCancelCommands.isEmpty)
+        let afterArmedCancel = await service.snapshot
+        XCTAssertEqual(afterArmedCancel.state, .idle)
+        XCTAssertNil(afterArmedCancel.activePlan)
+        XCTAssertNil(afterArmedCancel.armedRequest)
+        XCTAssertNil(afterArmedCancel.outgoingDeck)
+        XCTAssertEqual(afterArmedCancel.progress, 0)
+        XCTAssertEqual(afterArmedCancel.executedEventCount, 0)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 1)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1)
+    }
+
+    func testIncomingReloadWhileArmedDisarmsWithoutConsumingOutgoingOneShot() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let url = try createTestWavFile(durationSeconds: 10)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        coordinator.setCrossfader(position: 0)
+        let outgoingGeneration = coordinator.deckAGraph.scheduleGeneration
+        let request = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 10, bpm: 120, mixOutCue: 2),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 10, bpm: 120, mixOutCue: 8),
+            style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 2
+        )
+        _ = try await service.armAutoPilot(request: request)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        let invalidatedCommands = try await service.tick(playheadSeconds: 2)
+        XCTAssertTrue(invalidatedCommands.isEmpty)
+        let invalidated = await service.snapshot
+        XCTAssertEqual(invalidated.state, .idle)
+        XCTAssertNil(invalidated.activePlan)
+        XCTAssertNil(invalidated.armedRequest)
+        XCTAssertNil(invalidated.outgoingDeck)
+        XCTAssertEqual(coordinator.crossfaderPosition, 0)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+
+        // Rearm at the same outgoing generation: invalidation must not consume its one-shot identity.
+        _ = try await service.armAutoPilot(request: request)
+        _ = try await service.tick(playheadSeconds: 2)
+        let started = await service.snapshot
+        XCTAssertFalse(started.isAutoPilotArmed)
+        XCTAssertNotNil(started.activePlan)
+        let incomingBeforeOwnedSeek = coordinator.deckBGraph.scheduleGeneration
+        _ = try await service.advance(to: 2)
+        XCTAssertGreaterThan(coordinator.deckBGraph.scheduleGeneration, incomingBeforeOwnedSeek)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        let masterGenerationBeforeCueSeek = coordinator.deckBGraph.scheduleGeneration
+        coordinator.deckBGraph.seekCue(to: 1)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, masterGenerationBeforeCueSeek)
+        _ = try await service.advance(to: 3)
+        _ = try await service.advance(to: 4)
+        let completed = await service.snapshot
+        XCTAssertEqual(completed.state, .completed)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 1)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+    }
+
 }

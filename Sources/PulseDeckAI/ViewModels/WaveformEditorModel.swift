@@ -126,6 +126,7 @@ public struct WaveformCoordinateMapper: Sendable, Equatable {
 public enum WaveformEditorError: LocalizedError, Equatable {
     case invalidExistingCache(String)
     case conflictingEdit(relativePath: String, field: String)
+    case incompatibleCueBounds(relativePath: String, field: String)
 
     public var errorDescription: String? {
         switch self {
@@ -133,6 +134,8 @@ public enum WaveformEditorError: LocalizedError, Equatable {
             return "Existing cache file '\(fileName)' failed schema validation or is unreadable. Aborting save to preserve file."
         case .conflictingEdit(let relativePath, let field):
             return "Track '\(relativePath)' has a newer \(field) edit on disk. Aborting save to preserve it."
+        case .incompatibleCueBounds(let relativePath, let field):
+            return "Track '\(relativePath)' cannot save \(field) at the requested timestamp within current disk cue bounds and duration. Resolve the bounds and retry."
         }
     }
 }
@@ -197,13 +200,17 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             guard acceptedPreviousValues.contains(cueValue(cue, in: disk.cueMarkers)) else {
                 throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "\(cue.displayName)")
             }
-            var cues = disk.cueMarkers
-            cues = WaveformCoordinateMapper(
+            let submittedTime = cueValue(cue, in: track.cueMarkers)
+            let cues = WaveformCoordinateMapper(
                 duration: disk.duration,
                 zoomLevel: 1,
                 scrollOffsetSeconds: 0,
                 totalBins: 0
-            ).validateAndClamp(cue: cue, newTime: cueValue(cue, in: track.cueMarkers), currentCues: cues)
+            ).validateAndClamp(cue: cue, newTime: submittedTime, currentCues: disk.cueMarkers)
+            // A failed prerequisite or fresh disk bounds must never turn a different timestamp into an acknowledged save.
+            guard cueValue(cue, in: cues) == submittedTime else {
+                throw WaveformEditorError.incompatibleCueBounds(relativePath: track.relativePath, field: cue.displayName)
+            }
             merged.cueMarkers = cues
             if !mergedFields.contains("cueMarkers") { mergedFields.append("cueMarkers") }
         case .aiTrimBypass(let acceptedPreviousValues):

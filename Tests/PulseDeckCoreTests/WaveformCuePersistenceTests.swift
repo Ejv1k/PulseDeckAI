@@ -47,6 +47,107 @@ private actor HeldWaveformPersistence: WaveformTrackPersisting {
 
 final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     @MainActor
+    func testFirstDependentCueSaveFailureRetainsExactTargetsThroughUnrelatedSuccessAndOrderedRetry() async throws {
+        try await assertDependentCueFailureRetainsTargets(failedRequest: 1)
+    }
+
+    @MainActor
+    func testMiddleDependentCueSaveFailureRetainsExactTargetsThroughUnrelatedSuccessAndOrderedRetry() async throws {
+        try await assertDependentCueFailureRetainsTargets(failedRequest: 2)
+    }
+
+    @MainActor
+    private func assertDependentCueFailureRetainsTargets(failedRequest: Int) async throws {
+        let (root, a, b, untouched) = try makeLibrary()
+        let started = (1...3).map { XCTestExpectation(description: "Dependent save \($0) started") }
+        let persistence = HeldWaveformPersistence(started: started, failures: [failedRequest])
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+
+        await select(app, a.relativePath)
+        editor.setCue(.mixOut, toTime: 170)
+        await completed(started[0])
+        editor.setCue(.vocalEntry, toTime: 168)
+        editor.setCue(.startTrim, toTime: 165)
+        let targets = editor.cues
+        XCTAssertEqual(targets, CueMarkers(startTrimCue: 165, vocalEntryCue: 168, mixOutCue: 170, endTrimCue: 175))
+
+        var externalCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        externalCache.tracks[a.relativePath]?.bpm = 149
+        externalCache.tracks[a.relativePath]?.musicalKey = "12A"
+        externalCache.tracks[a.relativePath]?.manualOverrides.notes = "Preserve fresh external notes"
+        try CachePersistence.saveAtomic(cache: externalCache, to: cacheURL(root))
+
+        await persistence.releaseNext()
+        await completed(started[1])
+        XCTAssertEqual(editor.cues, targets)
+        await persistence.releaseNext()
+        await completed(started[2])
+        XCTAssertEqual(editor.cues, targets)
+        XCTAssertNotNil(editor.errorMessage)
+
+        await persistence.releaseAll()
+        await saved(editor)
+        XCTAssertEqual(editor.cues, targets, "Failed dependent saves must retain submitted targets")
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertTrue(editor.errorMessage?.contains("cannot save START TRIM at the requested timestamp") == true)
+        var persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers.startTrimCue, 2, "Rejected dependent save must not write a clamped value")
+        XCTAssertEqual(persisted.cueMarkers.vocalEntryCue, 10, "Failed prerequisite must not permit a clamped dependent save")
+        XCTAssertEqual(persisted.cueMarkers.mixOutCue, failedRequest == 1 ? 160 : 170)
+
+        // An unrelated success must neither acknowledge failed targets nor hide their errors.
+        editor.toggleAITrimBypass()
+        await saved(editor)
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues, targets)
+        XCTAssertTrue(editor.aiTrimBypass)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNotNil(editor.errorMessage)
+        XCTAssertEqual(editor.currentTrack?.bpm, 149)
+        XCTAssertEqual(editor.currentTrack?.musicalKey, "12A")
+        XCTAssertEqual(editor.manualOverrides.notes, "Preserve fresh external notes")
+
+        if failedRequest == 1 {
+            editor.setCue(.mixOut, toTime: editor.cueTime(for: .mixOut))
+            await saved(editor)
+            XCTAssertEqual(editor.cues, targets)
+            XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+            XCTAssertNotNil(editor.errorMessage, "Prerequisite retry cannot clear dependent errors")
+        }
+        editor.setCue(.vocalEntry, toTime: editor.cueTime(for: .vocalEntry))
+        await saved(editor)
+        XCTAssertEqual(editor.cues, targets)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNotNil(editor.errorMessage, "Vocal retry cannot clear failed start trim")
+        editor.setCue(.startTrim, toTime: editor.cueTime(for: .startTrim))
+        await saved(editor)
+
+        persisted = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(persisted.cueMarkers, targets)
+        XCTAssertTrue(persisted.aiTrimBypass)
+        XCTAssertEqual(persisted.bpm, 149)
+        XCTAssertEqual(persisted.musicalKey, "12A")
+        XCTAssertEqual(persisted.manualOverrides.notes, "Preserve fresh external notes")
+        XCTAssertEqual(try diskEntry(untouched.relativePath, root: root), untouched)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNil(editor.errorMessage)
+
+        let reloadedEditor = WaveformEditorModel(libraryRootURL: root)
+        let reloadedApp = AppState(libraryRootURL: root, waveformEditorModel: reloadedEditor)
+        await select(reloadedApp, a.relativePath)
+        XCTAssertEqual(reloadedEditor.cues, targets)
+        XCTAssertTrue(reloadedEditor.aiTrimBypass)
+        try SharedCacheContract().validate(data: Data(contentsOf: cacheURL(root)))
+    }
+
+    @MainActor
     func testHeldSaveDependentCueMovesSurviveReselectionAndSubsequentEditReleaseReload() async throws {
         let (root, a, b, untouched) = try makeLibrary()
         let started = [XCTestExpectation(description: "First save started")]
@@ -821,7 +922,7 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
 
     @MainActor
     func testConcurrentEditToSameCueAbortsWithoutOverwritingDisk() async throws {
-        let (root, a, _, _) = try makeLibrary()
+        let (root, a, b, _) = try makeLibrary()
         let editor = WaveformEditorModel(libraryRootURL: root)
         let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
         await select(app, a.relativePath)
@@ -837,6 +938,33 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.startTrimCue, 3.0)
         XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, a.cueMarkers.vocalEntryCue)
         XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+
+        editor.toggleAITrimBypass()
+        await saved(editor)
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.startTrimCue, 4)
+        XCTAssertTrue(editor.aiTrimBypass)
+        XCTAssertTrue(editor.errorMessage?.contains("newer START TRIM edit on disk") == true)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+
+        editor.setCue(.startTrim, toTime: editor.cueTime(for: .startTrim))
+        await saved(editor)
+        XCTAssertEqual(editor.cues.startTrimCue, 4)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.startTrimCue, 3)
+        XCTAssertTrue(editor.errorMessage?.contains("newer START TRIM edit on disk") == true)
+        XCTAssertTrue(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+
+        // Once the external conflict is resolved, explicit retry persists the retained target.
+        externalCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        externalCache.tracks[a.relativePath]?.cueMarkers.startTrimCue = a.cueMarkers.startTrimCue
+        try CachePersistence.saveAtomic(cache: externalCache, to: cacheURL(root))
+        editor.setCue(.startTrim, toTime: editor.cueTime(for: .startTrim))
+        await saved(editor)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.startTrimCue, 4)
+        XCTAssertTrue(try diskEntry(a.relativePath, root: root).aiTrimBypass)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertNil(editor.errorMessage)
     }
 
     @MainActor

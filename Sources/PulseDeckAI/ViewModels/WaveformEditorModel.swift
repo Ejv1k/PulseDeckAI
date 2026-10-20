@@ -342,19 +342,7 @@ public final class WaveformEditorModel: ObservableObject {
 
     private func applying(_ local: LocalEdit, to persisted: TrackCacheEntry) -> TrackCacheEntry {
         var merged = persisted
-        let mapper = WaveformCoordinateMapper(
-            duration: persisted.duration,
-            zoomLevel: 1,
-            scrollOffsetSeconds: 0,
-            totalBins: 0
-        )
-        for cue in CueType.allCases where local.fieldEdits[.cue(cue)] != nil {
-            merged.cueMarkers = mapper.validateAndClamp(
-                cue: cue,
-                newTime: cueValue(cue, in: local.track.cueMarkers),
-                currentCues: merged.cueMarkers
-            )
-        }
+        merged.cueMarkers = reconcileCues(local: local, persisted: persisted)
         if local.fieldEdits[.aiTrimBypass] != nil {
             merged.aiTrimBypass = local.track.aiTrimBypass
         }
@@ -375,6 +363,73 @@ public final class WaveformEditorModel: ObservableObject {
         }
         merged.manualOverrides = overrides
         return merged
+    }
+
+    /// Reconciles all dirty local cue targets jointly before enforcing bounds and ordering
+    /// against unrelated fresh disk cues and track duration.
+    private func reconcileCues(local: LocalEdit, persisted: TrackCacheEntry) -> CueMarkers {
+        let duration = persisted.duration
+        guard duration > 0 else { return persisted.cueMarkers }
+
+        let allCues = CueType.allCases
+        var cueValues = allCues.map { cueValue($0, in: persisted.cueMarkers) }
+        let isDirty = allCues.map { local.fieldEdits[.cue($0)] != nil }
+
+        var index = 0
+        while index < allCues.count {
+            if !isDirty[index] {
+                index += 1
+                continue
+            }
+
+            let startIndex = index
+            while index < allCues.count && isDirty[index] {
+                index += 1
+            }
+            let endIndex = index - 1
+
+            let rawLowerBound = startIndex > 0 ? cueValues[startIndex - 1] : 0.0
+            let rawUpperBound = endIndex < allCues.count - 1 ? cueValues[endIndex + 1] : duration
+            let effectiveUpperBound = max(0.0, min(duration, rawUpperBound))
+            let effectiveLowerBound = max(0.0, min(effectiveUpperBound, rawLowerBound))
+
+            var dirtyTargets = (startIndex...endIndex).map { cueValue(allCues[$0], in: local.track.cueMarkers) }
+
+            // 1. Jointly order dirty cues among themselves
+            for i in 0..<dirtyTargets.count {
+                dirtyTargets[i] = max(effectiveLowerBound, min(effectiveUpperBound, dirtyTargets[i]))
+                if i > 0 {
+                    dirtyTargets[i] = max(dirtyTargets[i - 1], dirtyTargets[i])
+                }
+            }
+
+            // 2. Clamp against upper bound from right to left
+            dirtyTargets[dirtyTargets.count - 1] = min(effectiveUpperBound, dirtyTargets[dirtyTargets.count - 1])
+            if dirtyTargets.count > 1 {
+                for i in stride(from: dirtyTargets.count - 2, through: 0, by: -1) {
+                    dirtyTargets[i] = min(dirtyTargets[i + 1], dirtyTargets[i])
+                }
+            }
+
+            // 3. Clamp against lower bound from left to right
+            dirtyTargets[0] = max(effectiveLowerBound, dirtyTargets[0])
+            if dirtyTargets.count > 1 {
+                for i in 1..<dirtyTargets.count {
+                    dirtyTargets[i] = max(dirtyTargets[i - 1], dirtyTargets[i])
+                }
+            }
+
+            for (offset, target) in dirtyTargets.enumerated() {
+                cueValues[startIndex + offset] = target
+            }
+        }
+
+        return CueMarkers(
+            startTrimCue: cueValues[0],
+            vocalEntryCue: cueValues[1],
+            mixOutCue: cueValues[2],
+            endTrimCue: cueValues[3]
+        ).clamped(toDuration: duration)
     }
 
     func finishActiveDrag() {

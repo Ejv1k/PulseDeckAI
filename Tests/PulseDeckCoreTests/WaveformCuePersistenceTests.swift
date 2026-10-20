@@ -47,6 +47,67 @@ private actor HeldWaveformPersistence: WaveformTrackPersisting {
 
 final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     @MainActor
+    func testHeldSaveDependentCueMovesSurviveReselectionAndSubsequentEditReleaseReload() async throws {
+        let (root, a, b, untouched) = try makeLibrary()
+        let started = [XCTestExpectation(description: "First save started")]
+        let persistence = HeldWaveformPersistence(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+
+        await select(app, a.relativePath)
+        editor.setCue(.mixOut, toTime: 170)
+        await completed(started[0])
+        editor.setCue(.vocalEntry, toTime: 168)
+        editor.setCue(.startTrim, toTime: 165)
+        XCTAssertTrue(editor.isSaving)
+
+        // Switch to B and back to A while saves remain held
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+
+        XCTAssertEqual(editor.cues.startTrimCue, 165, "Start trim must not be clamped against stale persisted neighbors")
+        XCTAssertEqual(editor.cues.vocalEntryCue, 168, "Vocal entry must not be clamped against stale persisted neighbors")
+        XCTAssertEqual(editor.cues.mixOutCue, 170, "Mix out must match local edit")
+        XCTAssertEqual(editor.cues.endTrimCue, 175, "End trim must retain untouched persisted value")
+
+        // Repeat selection back to B and back to A (second overlay pass)
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+
+        XCTAssertEqual(editor.cues.startTrimCue, 165, "Start trim must survive repeated selection overlay")
+        XCTAssertEqual(editor.cues.vocalEntryCue, 168, "Vocal entry must survive repeated selection overlay")
+        XCTAssertEqual(editor.cues.mixOutCue, 170, "Mix out must survive repeated selection overlay")
+        XCTAssertEqual(editor.cues.endTrimCue, 175, "End trim must retain untouched persisted value")
+
+        // Subsequent edit while earlier saves still held
+        editor.setCue(.mixOut, toTime: 172)
+
+        // Release all held saves and await completion
+        await persistence.releaseAll()
+        await saved(editor)
+
+        let finalA = try diskEntry(a.relativePath, root: root)
+        XCTAssertEqual(finalA.cueMarkers.startTrimCue, 165)
+        XCTAssertEqual(finalA.cueMarkers.vocalEntryCue, 168)
+        XCTAssertEqual(finalA.cueMarkers.mixOutCue, 172)
+        XCTAssertEqual(finalA.cueMarkers.endTrimCue, 175)
+        XCTAssertEqual(try diskEntry(untouched.relativePath, root: root), untouched)
+
+        // Reload fresh editor/app from disk
+        let reloadedEditor = WaveformEditorModel(libraryRootURL: root)
+        let reloadedApp = AppState(libraryRootURL: root, waveformEditorModel: reloadedEditor)
+        await select(reloadedApp, a.relativePath)
+        XCTAssertEqual(reloadedEditor.cues.startTrimCue, 165)
+        XCTAssertEqual(reloadedEditor.cues.vocalEntryCue, 168)
+        XCTAssertEqual(reloadedEditor.cues.mixOutCue, 172)
+        XCTAssertEqual(reloadedEditor.cues.endTrimCue, 175)
+    }
+
+    @MainActor
     func testExplicitSelectionSurvivesConcurrentRefreshAndOlderSelections() async throws {
         let (root, a, b, _) = try makeLibrary()
         let editor = WaveformEditorModel(libraryRootURL: root)

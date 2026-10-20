@@ -169,6 +169,12 @@ public actor TransitionExecutionService {
     private var driverTask: Task<Void, Never>?
     private var driverGeneration: UInt64 = 0
     private var lastTickedPosition: Double?
+    private var driverErrorObserverForTesting: (@Sendable (any Error) -> Void)?
+
+    /// Observes driver errors after lifecycle cleanup, without replacing production clock or dispatch behavior.
+    func setDriverErrorObserverForTesting(_ observer: (@Sendable (any Error) -> Void)?) {
+        driverErrorObserverForTesting = observer
+    }
 
     /// Initializes a new `TransitionExecutionService`.
     ///
@@ -480,11 +486,12 @@ public actor TransitionExecutionService {
                     disableAutoPilot()
                     return []
                 }
-                autoPilotFiredHistory.insert(key)
-
                 // One-shot AutoPilot fire!
-                disableAutoPilot()
-                return try startTransitionInternal(request: request)
+                // Startup and history commit share this synchronous actor/control-queue turn.
+                // If startup throws, preserve the armed state for driver error cleanup and allow a later retry.
+                let commands = try startTransitionInternal(request: request)
+                autoPilotFiredHistory.insert(key)
+                return commands
             }
             return []
 
@@ -787,6 +794,7 @@ public actor TransitionExecutionService {
         case .idle, .completed, .cancelled:
             break
         }
+        driverErrorObserverForTesting?(error)
     }
 
     private func stopDriver() {

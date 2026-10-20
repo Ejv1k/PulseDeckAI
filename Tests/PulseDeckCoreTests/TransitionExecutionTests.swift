@@ -1452,4 +1452,173 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
     }
 
+    func testFailedAutoPilotStartCanRearmSameOutgoingGenerationAndComplete() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let url = try createTestWavFile(durationSeconds: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        coordinator.setCrossfader(position: 0)
+        let outgoingGeneration = coordinator.deckAGraph.scheduleGeneration
+        let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
+        let outgoing = makeDescriptor(deck: .deckA, duration: 30, bpm: 120, mixOutCue: 10)
+        let incoming = makeDescriptor(deck: .deckB, duration: 30, bpm: 120, mixOutCue: 25)
+        let first = TransitionRequest(
+            outgoingTrack: outgoing, incomingTrack: incoming,
+            style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 10
+        )
+        _ = try await service.armAutoPilot(request: first)
+        let armedBeforeFailure = await service.snapshot
+        coordinator.setCrossfader(position: 1)
+        do {
+            _ = try await service.tick(playheadSeconds: 10)
+            XCTFail("Muted outgoing routing must reject startup")
+        } catch let error as TransitionExecutionServiceError {
+            XCTAssertEqual(error, .incompatibleCrossfaderRouting(deck: .deckA, crossfaderPosition: 1))
+        }
+        let failed = await service.snapshot
+        XCTAssertEqual(failed, armedBeforeFailure, "Startup must preserve coherent armed state until driver error cleanup")
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1)
+
+        coordinator.setCrossfader(position: 0)
+        let retry = TransitionRequest(
+            outgoingTrack: outgoing, incomingTrack: incoming,
+            style: first.style, triggerPositionSeconds: 14
+        )
+        let plan = try await service.armAutoPilot(request: retry)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        _ = try await service.tick(playheadSeconds: 14)
+        let started = await service.snapshot
+        XCTAssertNotNil(started.activePlan, "Failed startup must not consume the outgoing generation")
+        XCTAssertFalse(started.isAutoPilotArmed)
+        if case .inProgress(let style, _) = started.state {
+            XCTAssertEqual(style, retry.style)
+        } else {
+            XCTFail("Retry must start the transition")
+        }
+        _ = try await service.advance(to: 14)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        let incomingAfterStart = coordinator.deckBGraph.scheduleGeneration
+        let repeated = try await service.tick(playheadSeconds: 14)
+        XCTAssertTrue(repeated.isEmpty)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingAfterStart)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        _ = try await service.advance(to: plan.endTimestampSeconds)
+        let completed = await service.snapshot
+        XCTAssertEqual(completed.state, .completed)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 1)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1)
+    }
+
+    func testDriverStartupFailureDisarmsAndAllowsRetryWithoutDoubleFire() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        let master = coordinator.masterAudioEngine.rawEngine
+        try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 44100)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(
+            .offline, format: format, maximumFrameCount: 44100
+        )
+        let url = try createTestWavFile(durationSeconds: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        try coordinator.start()
+        defer { coordinator.stop() }
+        coordinator.deckAGraph.play()
+        coordinator.setCrossfader(position: 0)
+        let outgoingGeneration = coordinator.deckAGraph.scheduleGeneration
+        let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
+        let outgoing = makeDescriptor(deck: .deckA, duration: 30, bpm: 120, mixOutCue: 10)
+        let incoming = makeDescriptor(deck: .deckB, duration: 30, bpm: 120, mixOutCue: 25)
+        let first = TransitionRequest(
+            outgoingTrack: outgoing, incomingTrack: incoming,
+            style: .filterEchoWash(durationSeconds: 2), triggerPositionSeconds: 10
+        )
+        let failed = expectation(description: "Actual driver catches incompatible routing and cleans up")
+        await service.setDriverErrorObserverForTesting { error in
+            XCTAssertEqual(
+                error as? TransitionExecutionServiceError,
+                .incompatibleCrossfaderRouting(deck: .deckA, crossfaderPosition: 1)
+            )
+            failed.fulfill()
+        }
+        _ = try await service.armAutoPilot(request: first)
+        coordinator.setCrossfader(position: 1)
+        // Advance the real source clock across 10s while preventing interleaved render/control mutations.
+        try coordinator.monitor.performOnControlQueue {
+            for _ in 0..<11 { try render(master, frames: 44100) }
+        }
+        XCTAssertGreaterThan(coordinator.deckAGraph.masterPlayheadSeconds, 10)
+        XCTAssertLessThan(coordinator.deckAGraph.masterPlayheadSeconds, 14)
+        await fulfillment(of: [failed], timeout: 2)
+        await service.setDriverErrorObserverForTesting(nil)
+        let afterFailure = await service.snapshot
+        XCTAssertEqual(afterFailure.state, .idle)
+        XCTAssertNil(afterFailure.activePlan)
+        XCTAssertNil(afterFailure.armedRequest)
+        XCTAssertEqual(afterFailure.executedEventCount, 0)
+        XCTAssertFalse(afterFailure.isAutoPilotArmed)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+
+        coordinator.setCrossfader(position: 0)
+        let retry = TransitionRequest(
+            outgoingTrack: outgoing, incomingTrack: incoming,
+            style: first.style, triggerPositionSeconds: 14
+        )
+        let started = expectation(description: "Actual driver starts same-generation retry at 14s")
+        coordinator.monitor.performOnControlQueue {
+            coordinator.deckBGraph.segmentCompletionObserverForTesting = { role, _ in
+                if role == .master { started.fulfill() }
+            }
+        }
+        _ = try await service.armAutoPilot(request: retry)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        try coordinator.monitor.performOnControlQueue {
+            for _ in 0..<4 { try render(master, frames: 44100) }
+        }
+        XCTAssertGreaterThan(coordinator.deckAGraph.masterPlayheadSeconds, 14)
+        XCTAssertLessThan(coordinator.deckAGraph.masterPlayheadSeconds, 16)
+        await fulfillment(of: [started], timeout: 2)
+        let inProgress = await service.snapshot
+        XCTAssertNotNil(inProgress.activePlan)
+        XCTAssertFalse(inProgress.isAutoPilotArmed)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        coordinator.monitor.performOnControlQueue {
+            coordinator.deckBGraph.segmentCompletionObserverForTesting = nil
+        }
+        // A successful start consumes its shot even if cancelled before outgoing transport changes generation.
+        _ = await service.cancelTransition()
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        let incomingAfterCancel = coordinator.deckBGraph.scheduleGeneration
+        _ = try await service.armAutoPilot(request: TransitionRequest(
+            outgoingTrack: outgoing, incomingTrack: incoming,
+            style: first.style, triggerPositionSeconds: 18
+        ))
+        let blocked = try await service.tick(playheadSeconds: 18)
+        XCTAssertTrue(blocked.isEmpty)
+        let afterSuccessfulShot = await service.snapshot
+        XCTAssertEqual(afterSuccessfulShot.state, .idle)
+        XCTAssertNil(afterSuccessfulShot.activePlan)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingAfterCancel)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1)
+        XCTAssertEqual(coordinator.crossfaderPosition, 0)
+    }
+
 }

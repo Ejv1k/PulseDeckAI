@@ -91,12 +91,13 @@ public final class AppState: ObservableObject {
         self.scanGeneration &+= 1
         let thisGeneration = self.scanGeneration
         let url = self.libraryRootURL
+        let expectedCacheGeneration = waveformEditorModel.cachePublicationGeneration(for: url)
 
         // Perform scanner on background thread, deliver result to MainActor
-        Task.detached(priority: .userInitiated) { [scanner] in
+        Task.detached(priority: .userInitiated) { [scanner, cacheLoader] in
             let summary = scanner.scan(libraryURL: url)
             let cacheURL = url.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
-            let cache = CachePersistence.load(from: cacheURL)
+            let cache = await cacheLoader(cacheURL)
 
             await MainActor.run {
                 // Ignore result if another scan generation was initiated
@@ -109,8 +110,12 @@ public final class AppState: ObservableObject {
                 }
 
                 self.scanSummary = summary
-                self.loadedCache = cache.map { self.waveformEditorModel.applyingLocalEdits(to: $0, libraryRootURL: url) }
-                self.loadedCacheRootURL = url.standardizedFileURL
+                // A completed save can publish newer cache data while this refresh read is in flight.
+                // Discard only the stale cache snapshot; filesystem scan results still complete normally.
+                if self.waveformEditorModel.cachePublicationGeneration(for: url) == expectedCacheGeneration {
+                    self.loadedCache = cache.map { self.waveformEditorModel.applyingLocalEdits(to: $0, libraryRootURL: url) }
+                    self.loadedCacheRootURL = url.standardizedFileURL
+                }
                 self.waveformEditorModel.updateLibraryRoot(url)
 
                 if self.selectedTrackPath == nil, self.waveformEditorModel.currentTrack == nil,

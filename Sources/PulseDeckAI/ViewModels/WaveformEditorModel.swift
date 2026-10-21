@@ -827,12 +827,22 @@ public final class WaveformEditorModel: ObservableObject {
             statusMessage = local?.failureMessage == nil
                 ? "Saved cues to .pulsedeck_ai_cache.json"
                 : "Unsaved cue changes"
-            guard interactionRevision == submittedInteractionRevision else { return }
+            guard interactionRevision == submittedInteractionRevision || hasActiveDrag else { return }
             if let savedTrack = cache.tracks[identity.relativePath] {
                 let displayedTrack = local.map { applying($0, to: savedTrack) } ?? savedTrack
+                var displayedCues = displayedTrack.cueMarkers
+                // The active target is not a committed field yet. Keep it in the UI while adopting
+                // the saved baseline used by endDrag's conflict check, even if the pointer moved.
+                switch activeDraggingCue {
+                case .startTrim: displayedCues.startTrimCue = cues.startTrimCue
+                case .vocalEntry: displayedCues.vocalEntryCue = cues.vocalEntryCue
+                case .mixOut: displayedCues.mixOutCue = cues.mixOutCue
+                case .endTrim: displayedCues.endTrimCue = cues.endTrimCue
+                case nil: break
+                }
                 self.currentTrack = displayedTrack
                 self.manualOverrides = displayedTrack.manualOverrides
-                self.cues = displayedTrack.cueMarkers
+                self.cues = displayedCues
                 self.aiTrimBypass = displayedTrack.aiTrimBypass
             }
         case .failure(let error):

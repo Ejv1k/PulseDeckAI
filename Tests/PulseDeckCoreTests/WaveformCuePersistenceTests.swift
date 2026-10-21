@@ -1461,6 +1461,111 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testStaleRefreshSnapshotCannotReplaceAcknowledgedSaveAndScanStillCompletes() async throws {
+        let (root, a, b, _) = try makeLibrary()
+        let initialCache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+        let snapshotRead = XCTestExpectation(description: "Refresh copied cache before save")
+        let refreshLoader = SnapshotHeldCacheLoader(started: snapshotRead)
+        let editor = WaveformEditorModel(libraryRootURL: root)
+        let refreshApp = AppState(libraryRootURL: root, waveformEditorModel: editor,
+                                  loadedCache: initialCache,
+                                  cacheLoader: { await refreshLoader.load(from: $0) })
+        let crate = root.appendingPathComponent("01_New")
+        try FileManager.default.createDirectory(at: crate, withIntermediateDirectories: true)
+        try Data().write(to: crate.appendingPathComponent("new.wav"))
+        editor.loadTrack(a)
+        let scanned = XCTestExpectation(description: "Refresh completes bookkeeping")
+        let observation = refreshApp.$isScanning.dropFirst().filter { !$0 }.sink { _ in scanned.fulfill() }
+        defer { observation.cancel() }
+        refreshApp.refreshLibrary()
+        await completed(snapshotRead)
+        editor.setCue(.vocalEntry, toTime: 25)
+        await saved(editor)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(refreshApp.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, 25)
+        await refreshLoader.release()
+        await completed(scanned)
+        XCTAssertEqual(refreshApp.scanSummary?.totalAudioTracks, 1)
+        XCTAssertNotNil(refreshApp.selectedCrate)
+        XCTAssertEqual(refreshApp.statusMessage, "Library Verified: 1 Crates, 1 Tracks")
+        XCTAssertEqual(refreshApp.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, 25)
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25)
+
+        // Switch and edit synchronously before selection reloads can repair a stale baseline.
+        let away = refreshApp.selectTrack(relativePath: b.relativePath)
+        let back = refreshApp.selectTrack(relativePath: a.relativePath)
+        XCTAssertEqual(editor.cues.vocalEntryCue, 25)
+        editor.setCue(.vocalEntry, toTime: 30)
+        await saved(editor)
+        await away.value
+        await back.value
+        XCTAssertNil(editor.errorMessage)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, 30)
+        await select(refreshApp, a.relativePath)
+        XCTAssertEqual(editor.cues.vocalEntryCue, 30)
+    }
+
+    @MainActor
+    func testHotkeySaveDuringStationaryDragPreservesTargetThroughCompletionAndReload() async throws {
+        try await assertSaveDuringDrag(bypass: false, moveAfterSubmission: false)
+    }
+
+    @MainActor
+    func testBypassSaveDuringStationaryDragPreservesTargetThroughCompletionAndReload() async throws {
+        try await assertSaveDuringDrag(bypass: true, moveAfterSubmission: false)
+    }
+
+    @MainActor
+    func testHotkeySaveDuringMovingDragPreservesTargetAndPersistedBaseline() async throws {
+        try await assertSaveDuringDrag(bypass: false, moveAfterSubmission: true)
+    }
+
+    @MainActor
+    private func assertSaveDuringDrag(bypass: Bool, moveAfterSubmission: Bool) async throws {
+        let (root, a, b, _) = try makeLibrary()
+        let started = XCTestExpectation(description: "Unrelated save during drag")
+        let persistence = HeldWaveformPersistence(started: [started])
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+        await select(app, a.relativePath)
+        editor.beginDrag(cue: .vocalEntry)
+        editor.updateDrag(cue: .vocalEntry, toTime: 25)
+        if bypass { editor.toggleAITrimBypass() }
+        else { editor.setCue(.startTrim, toTime: 6) }
+        await completed(started)
+        if moveAfterSubmission { editor.updateDrag(cue: .vocalEntry, toTime: 27) }
+        let target = moveAfterSubmission ? 27.0 : 25.0
+        await persistence.releaseAll()
+        await saved(editor)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(editor.activeDraggingCue, .vocalEntry)
+        XCTAssertEqual(editor.selectedCue, bypass ? .vocalEntry : .startTrim)
+        XCTAssertNil(editor.errorMessage)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(app.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, 10)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, 10)
+        editor.endDrag(cue: .vocalEntry)
+        await saved(editor)
+        XCTAssertNil(editor.errorMessage)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, target)
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(editor.aiTrimBypass, bypass)
+        XCTAssertEqual(editor.cues.startTrimCue, bypass ? 2 : 6)
+        editor.setCue(.vocalEntry, toTime: 30)
+        await saved(editor)
+        XCTAssertNil(editor.errorMessage)
+        XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, 30)
+    }
+
+    @MainActor
     private func select(_ app: AppState, _ relativePath: String) async {
         let task = app.selectTrack(relativePath: relativePath)
         let done = XCTestExpectation(description: "Selection \(relativePath) completes while saves may be held")

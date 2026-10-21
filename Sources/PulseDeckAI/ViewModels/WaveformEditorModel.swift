@@ -715,7 +715,13 @@ public final class WaveformEditorModel: ObservableObject {
         acceptedPreviousValues.insert(previousValue)
 
         // Update track's cues
-        track.cueMarkers = self.cues
+        // Commit only this field; another cue's active drag must not replace its persisted baseline.
+        switch cue {
+        case .startTrim: track.cueMarkers.startTrimCue = cues.startTrimCue
+        case .vocalEntry: track.cueMarkers.vocalEntryCue = cues.vocalEntryCue
+        case .mixOut: track.cueMarkers.mixOutCue = cues.mixOutCue
+        case .endTrim: track.cueMarkers.endTrimCue = cues.endTrimCue
+        }
 
         // Update provenance metadata
         var overrides = self.manualOverrides

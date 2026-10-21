@@ -1566,6 +1566,88 @@ final class WaveformCuePersistenceTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testStationaryDragMouseupBeforeHeldHotkeySavePreservesBaselineThroughRetryAndReselection() async throws {
+        try await assertMouseupBeforeHeldSave(moveAfterSubmission: false)
+    }
+
+    @MainActor
+    func testMovingDragMouseupBeforeHeldHotkeySavePreservesBaselineThroughRetryAndReselection() async throws {
+        try await assertMouseupBeforeHeldSave(moveAfterSubmission: true)
+    }
+
+    @MainActor
+    func testHeldMouseupRejectsExternalEditMatchingUncommittedDragTarget() async throws {
+        try await assertMouseupBeforeHeldSave(moveAfterSubmission: true, externalEdit: true)
+    }
+
+    @MainActor
+    private func assertMouseupBeforeHeldSave(moveAfterSubmission: Bool, externalEdit: Bool = false) async throws {
+        let (root, a, b, untouched) = try makeLibrary()
+        let started = [XCTestExpectation(description: "Unrelated hotkey save held"),
+                       XCTestExpectation(description: "Mouseup save held")]
+        let persistence = HeldWaveformPersistence(started: started)
+        let editor = WaveformEditorModel(libraryRootURL: root, persistence: persistence)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: editor)
+        addTeardownBlock {
+            await persistence.releaseAll()
+            await editor.waitForPendingSaves()
+        }
+        await select(app, a.relativePath)
+        editor.beginDrag(cue: .vocalEntry)
+        editor.updateDrag(cue: .vocalEntry, toTime: 25)
+        editor.setCue(.startTrim, toTime: 6)
+        await completed(started[0])
+        if moveAfterSubmission { editor.updateDrag(cue: .vocalEntry, toTime: 27) }
+        let target = moveAfterSubmission ? 27.0 : 25.0
+        editor.endDrag(cue: .vocalEntry)
+        XCTAssertNil(editor.activeDraggingCue)
+        XCTAssertTrue(editor.isSaving)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, 10)
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(editor.cues.startTrimCue, 6)
+
+        if externalEdit {
+            var cache = try XCTUnwrap(CachePersistence.load(from: cacheURL(root)))
+            // 25s was displayed but never committed. It must not become an accepted disk baseline.
+            cache.tracks[a.relativePath]?.cueMarkers.vocalEntryCue = 25
+            try CachePersistence.saveAtomic(cache: cache, to: cacheURL(root))
+        }
+        await persistence.releaseNext()
+        await completed(started[1])
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.startTrimCue, 6)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, externalEdit ? 25 : 10)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(app.loadedCache?.tracks[a.relativePath]?.cueMarkers.vocalEntryCue, target)
+        await persistence.releaseAll()
+        await saved(editor)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, externalEdit ? 25 : target)
+        XCTAssertEqual(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root), externalEdit)
+        XCTAssertEqual(editor.errorMessage != nil, externalEdit)
+
+        await select(app, b.relativePath)
+        await select(app, a.relativePath)
+        XCTAssertEqual(editor.cues.vocalEntryCue, target)
+        editor.setCue(.vocalEntry, toTime: target)
+        await saved(editor)
+        XCTAssertEqual(editor.errorMessage != nil, externalEdit, "Retry must succeed only when disk has an accepted baseline")
+        XCTAssertEqual(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root), externalEdit)
+        XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, externalEdit ? 25 : target)
+        if !externalEdit {
+            editor.setCue(.vocalEntry, toTime: 30)
+            await saved(editor)
+            XCTAssertNil(editor.errorMessage)
+            XCTAssertFalse(editor.hasDirtyEdits(for: a.relativePath, libraryRootURL: root))
+            XCTAssertEqual(try diskEntry(a.relativePath, root: root).cueMarkers.vocalEntryCue, 30)
+        }
+        XCTAssertEqual(try diskEntry(b.relativePath, root: root), b)
+        XCTAssertEqual(try diskEntry(untouched.relativePath, root: root), untouched)
+    }
+
+    @MainActor
     private func select(_ app: AppState, _ relativePath: String) async {
         let task = app.selectTrack(relativePath: relativePath)
         let done = XCTestExpectation(description: "Selection \(relativePath) completes while saves may be held")

@@ -56,6 +56,221 @@ final class OutputRoutingStudioTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    private func makeOfflineApp(startCoordinator: Bool = false) throws -> AppState {
+        let audio = try XCTUnwrap(coordinator)
+        try audio.monitor.performOnControlQueue {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+            try audio.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+            try audio.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
+                        audioCoordinator: audio, startCoordinator: startCoordinator)
+    }
+
+    @MainActor
+    func testPlayRetryClearsInitializerStartupFailureAfterMasterRuns() throws {
+        coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "initialStart")
+        let app = try makeOfflineApp(startCoordinator: true)
+        XCTAssertNotNil(app.coordinatorErrorMessage)
+        XCTAssertTrue(app.statusMessage.hasPrefix("Audio Startup Error:"))
+        XCTAssertFalse(coordinator.masterAudioEngine.isRunning)
+        XCTAssertFalse(app.isDeckAPlaying)
+
+        coordinator.masterAudioEngine.startErrorForTesting = nil
+        app.toggleDeckPlay(deck: .deckA)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(app.isDeckAPlaying)
+        XCTAssertFalse(app.isDeckBPlaying)
+        XCTAssertNil(app.coordinatorErrorMessage)
+        XCTAssertFalse(app.statusMessage.hasPrefix("Audio Startup Error:"))
+    }
+
+    @MainActor
+    func testPlayRetryClearsOnDemandStartupFailureForDeckB() throws {
+        let app = try makeOfflineApp()
+        coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "retryStart")
+        app.toggleDeckPlay(deck: .deckB)
+        XCTAssertNotNil(app.coordinatorErrorMessage)
+        XCTAssertTrue(app.statusMessage.hasPrefix("Audio Start Error:"))
+        XCTAssertFalse(app.isDeckBPlaying)
+        XCTAssertFalse(coordinator.masterAudioEngine.isRunning)
+
+        coordinator.masterAudioEngine.startErrorForTesting = nil
+        app.toggleDeckPlay(deck: .deckB)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(app.isDeckBPlaying)
+        XCTAssertFalse(app.isDeckAPlaying)
+        XCTAssertNil(app.coordinatorErrorMessage)
+        XCTAssertFalse(app.statusMessage.hasPrefix("Audio Start Error:"))
+    }
+
+    @MainActor
+    func testPlayRetryAcknowledgesStartupErrorWithoutReplacingUnrelatedStatus() throws {
+        coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "initialStart")
+        let app = try makeOfflineApp(startCoordinator: true)
+        XCTAssertNotNil(app.coordinatorErrorMessage)
+        let unrelated = "Library Verified: 2 Crates, 4 Tracks"
+        app.statusMessage = unrelated
+        coordinator.masterAudioEngine.startErrorForTesting = nil
+        app.toggleDeckPlay(deck: .deckA)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(app.isDeckAPlaying)
+        XCTAssertNil(app.coordinatorErrorMessage)
+        XCTAssertEqual(app.statusMessage, unrelated)
+    }
+
+    @MainActor
+    func testCueActivationFailureRejectsBothDecksAndSuccessfulRetryRecovers() throws {
+        let app = try makeOfflineApp()
+        coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueStart")
+        for deck in [DeckIdentifier.deckA, .deckB] {
+            app.setDeckCueActive(deck: deck, active: true)
+            XCTAssertFalse(coordinator.cueAudioEngine.isRunning)
+            XCTAssertFalse(coordinator.masterAudioEngine.isRunning)
+            XCTAssertFalse(coordinator.deckA.isCueActive)
+            XCTAssertFalse(coordinator.deckB.isCueActive)
+            XCTAssertFalse(app.isDeckACueActive)
+            XCTAssertFalse(app.isDeckBCueActive)
+            XCTAssertNotNil(app.coordinatorErrorMessage)
+        }
+        coordinator.cueAudioEngine.startErrorForTesting = nil
+        app.setDeckCueActive(deck: .deckB, active: true)
+        XCTAssertTrue(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.deckB.isCueActive)
+        XCTAssertTrue(app.isDeckBCueActive)
+        XCTAssertFalse(coordinator.deckA.isCueActive)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertNil(app.coordinatorErrorMessage)
+    }
+
+    @MainActor
+    func testCueActivationStartsStoppedCoordinatorAndKeepsDecksIndependent() throws {
+        let app = try makeOfflineApp()
+        XCTAssertFalse(coordinator.masterAudioEngine.isRunning)
+        XCTAssertFalse(coordinator.cueAudioEngine.isRunning)
+        app.setDeckCueActive(deck: .deckA, active: true)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.monitor.isMonitoringActive)
+        XCTAssertTrue(app.isDeckACueActive)
+        XCTAssertTrue(coordinator.deckA.isCueActive)
+        XCTAssertFalse(app.isDeckBCueActive)
+        XCTAssertFalse(coordinator.deckB.isCueActive)
+        app.setDeckCueActive(deck: .deckB, active: true)
+        app.setDeckCueActive(deck: .deckA, active: false)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertFalse(coordinator.deckA.isCueActive)
+        XCTAssertTrue(app.isDeckBCueActive)
+        XCTAssertTrue(coordinator.deckB.isCueActive)
+    }
+
+    @MainActor
+    func testCueOnlyRecoveryStartsCueWithoutRestartingLiveMaster() throws {
+        let app = try makeOfflineApp(startCoordinator: true)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        coordinator.cueAudioEngine.stop()
+        // A broad coordinator start would touch this healthy master and throw before starting cue.
+        coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "mustNotRestartMaster")
+        app.setDeckCueActive(deck: .deckB, active: true)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.monitor.isMonitoringActive)
+        XCTAssertTrue(coordinator.deckB.isCueActive)
+        XCTAssertTrue(app.isDeckBCueActive)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertNil(app.coordinatorErrorMessage)
+    }
+
+    @MainActor
+    func testCueOnlyFailurePreservesMasterPlaybackAndIntendedRunningState() throws {
+        let app = try makeOfflineApp(startCoordinator: true)
+        let audio = try XCTUnwrap(coordinator)
+        let master = audio.masterAudioEngine.rawEngine
+        let format = master.manualRenderingFormat
+        let url = app.libraryRootURL.appendingPathComponent("master.wav")
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+            pcm.frameLength = 44100
+            let channels = try XCTUnwrap(pcm.floatChannelData)
+            for channel in 0..<Int(format.channelCount) {
+                for frame in 0..<Int(pcm.frameLength) { channels[channel][frame] = 0.25 }
+            }
+            try file.write(from: pcm)
+        }
+        try audio.deckAGraph.loadTrack(url: url)
+        app.toggleDeckPlay(deck: .deckA)
+        let rendered = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        XCTAssertEqual(try master.renderOffline(4096, to: rendered), .success)
+        let sampleTime = master.manualRenderingSampleTime
+        audio.cueAudioEngine.stop()
+        audio.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueOnlyStart")
+
+        app.setDeckCueActive(deck: .deckA, active: true)
+        XCTAssertTrue(audio.masterAudioEngine.isRunning)
+        XCTAssertTrue(audio.monitor.isMonitoringActive)
+        XCTAssertTrue(app.isDeckAPlaying)
+        XCTAssertTrue(audio.deckAGraph.isMasterPlaying)
+        XCTAssertTrue(audio.deckAGraph.masterPlayerNode.isPlaying)
+        XCTAssertEqual(master.manualRenderingSampleTime, sampleTime)
+        XCTAssertFalse(audio.cueAudioEngine.isRunning)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertFalse(audio.deckA.isCueActive)
+        XCTAssertNotNil(app.coordinatorErrorMessage)
+        XCTAssertEqual(try master.renderOffline(4096, to: rendered), .success)
+        let samples = try XCTUnwrap(rendered.floatChannelData)[0]
+        XCTAssertGreaterThan((0..<Int(rendered.frameLength)).map { abs(samples[$0]) }.max() ?? 0, 0.01)
+        XCTAssertGreaterThan(master.manualRenderingSampleTime, sampleTime)
+
+        // Simulate a configuration pause without cancelling the monitor's real running intent.
+        audio.monitor.performOnControlQueue { master.pause() }
+        XCTAssertFalse(master.isRunning)
+        audio.handleDeviceConfigurationChange()
+        XCTAssertTrue(master.isRunning, "Cue failure must preserve master recovery intent")
+        XCTAssertFalse(audio.cueAudioEngine.isRunning)
+    }
+
+    @MainActor
+    func testCueDeactivationClearsBothDecksAfterCueEngineStops() throws {
+        let app = try makeOfflineApp(startCoordinator: true)
+        app.setDeckCueActive(deck: .deckA, active: true)
+        app.setDeckCueActive(deck: .deckB, active: true)
+        coordinator.cueAudioEngine.stop()
+        coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "mustNotStartWhenDeactivating")
+        app.setDeckCueActive(deck: .deckA, active: false)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertFalse(coordinator.deckA.isCueActive)
+        XCTAssertTrue(app.isDeckBCueActive)
+        app.setDeckCueActive(deck: .deckB, active: false)
+        XCTAssertFalse(app.isDeckBCueActive)
+        XCTAssertFalse(coordinator.deckB.isCueActive)
+        XCTAssertFalse(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertNil(app.coordinatorErrorMessage)
+    }
+
+    @MainActor
+    func testCueToggleWithoutCoordinatorKeepsIndependentPublishedState() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let app = AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root))
+        XCTAssertNil(app.audioCoordinator)
+        app.setDeckCueActive(deck: .deckA, active: true)
+        XCTAssertTrue(app.isDeckACueActive)
+        XCTAssertFalse(app.isDeckBCueActive)
+        app.setDeckCueActive(deck: .deckB, active: true)
+        app.setDeckCueActive(deck: .deckA, active: false)
+        XCTAssertFalse(app.isDeckACueActive)
+        XCTAssertTrue(app.isDeckBCueActive)
+        app.setDeckCueActive(deck: .deckB, active: false)
+        XCTAssertFalse(app.isDeckBCueActive)
+    }
+
     // MARK: - Tests
 
     @MainActor

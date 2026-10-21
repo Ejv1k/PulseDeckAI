@@ -400,6 +400,9 @@ public final class AppState: ObservableObject {
             self.statusMessage = "Audio engine is not running"
             return
         }
+        if coordinator.cueAudioEngine.isRunning {
+            acknowledgeAudioStartupRecovery()
+        }
 
         switch deck {
         case .deckA:
@@ -432,13 +435,51 @@ public final class AppState: ObservableObject {
             }
             return
         }
+        var cueActive = active
+        if active {
+            do {
+                // Keep the startup decision on the AV control queue. A cue-only failure must
+                // never enter coordinator.start()'s rollback path while master is live.
+                cueActive = try coordinator.monitor.performOnControlQueue {
+                    if !coordinator.cueAudioEngine.isRunning {
+                        if coordinator.masterAudioEngine.isRunning {
+                            try coordinator.cueAudioEngine.start()
+                        } else {
+                            try coordinator.start()
+                        }
+                    }
+                    return coordinator.cueAudioEngine.isRunning
+                }
+                if cueActive {
+                    if coordinator.masterAudioEngine.isRunning {
+                        acknowledgeAudioStartupRecovery()
+                    }
+                } else {
+                    coordinatorErrorMessage = "Cue audio engine is not running"
+                    statusMessage = "Audio Cue Start Error: Cue audio engine is not running"
+                }
+            } catch {
+                cueActive = false
+                coordinatorErrorMessage = "Failed to start cue audio engine: \(error.localizedDescription)"
+                statusMessage = "Audio Cue Start Error: \(error.localizedDescription)"
+            }
+        }
         switch deck {
         case .deckA:
-            coordinator.deckA.isCueActive = active
-            isDeckACueActive = active
+            coordinator.deckA.isCueActive = cueActive
+            isDeckACueActive = cueActive
         case .deckB:
-            coordinator.deckB.isCueActive = active
-            isDeckBCueActive = active
+            coordinator.deckB.isCueActive = cueActive
+            isDeckBCueActive = cueActive
+        }
+    }
+
+    private func acknowledgeAudioStartupRecovery() {
+        coordinatorErrorMessage = nil
+        if statusMessage.hasPrefix("Audio Startup Error:") ||
+            statusMessage.hasPrefix("Audio Start Error:") ||
+            statusMessage.hasPrefix("Audio Cue Start Error:") {
+            statusMessage = "Audio engines running"
         }
     }
 

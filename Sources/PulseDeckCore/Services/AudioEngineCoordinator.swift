@@ -148,16 +148,14 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     /// Resolves the currently bound output device descriptor for an engine role, or nil if missing/unbound.
     public func boundDevice(for role: AudioEngineRole) -> AudioDeviceDescriptor? {
         let engine = (role == .master) ? masterAudioEngine : cueAudioEngine
-        if let current = engine.currentDevice {
+        guard let boundUID = monitor.boundDeviceUID(for: role) else {
+            return nil
+        }
+        if let current = engine.currentDevice, current.id == boundUID {
             return current
         }
         let devices = enumerateOutputDevices()
-        if let boundUID = monitor.boundDeviceUID(for: role) {
-            if let matched = devices.first(where: { $0.id == boundUID }) {
-                return matched
-            }
-        }
-        return devices.first(where: { $0.isDefault })
+        return devices.first(where: { $0.id == boundUID })
     }
 
     /// True if the engine for this role is currently routed to a fallback device rather than its desired target.
@@ -190,6 +188,8 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
         do {
             try monitor.start()
             monitorStarted = true
+
+            monitor.reconcileImmediately()
 
             try masterAudioEngine.start()
             masterStarted = true

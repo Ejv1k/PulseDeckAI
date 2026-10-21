@@ -10,28 +10,48 @@ public struct OutputRoutingView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
-            selectorCard(
-                role: .master,
-                title: "MASTER OUTPUT (FOH)",
-                color: DJTheme.master,
-                selectedUID: appState.masterOutputUID,
-                descriptor: appState.masterDeviceDescriptor,
-                isFallback: appState.isMasterFallback,
-                warning: appState.masterWarning,
-                error: appState.masterRoutingError
-            )
+        VStack(spacing: 8) {
+            if let startupError = appState.coordinatorErrorMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(Color.red)
+                    Text("Audio Engine Notice: \(startupError)")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.red)
+                    Spacer()
+                }
+                .padding(6)
+                .background(Color.red.opacity(0.12))
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                )
+            }
 
-            selectorCard(
-                role: .cue,
-                title: "HEADPHONES / CUE",
-                color: DJTheme.cue,
-                selectedUID: appState.cueOutputUID,
-                descriptor: appState.cueDeviceDescriptor,
-                isFallback: appState.isCueFallback,
-                warning: appState.cueWarning,
-                error: appState.cueRoutingError
-            )
+            HStack(spacing: 12) {
+                selectorCard(
+                    role: .master,
+                    title: "MASTER OUTPUT (FOH)",
+                    color: DJTheme.master,
+                    selectedUID: appState.masterOutputUID,
+                    descriptor: appState.masterDeviceDescriptor,
+                    isFallback: appState.isMasterFallback,
+                    warning: appState.masterWarning,
+                    error: appState.masterRoutingError
+                )
+
+                selectorCard(
+                    role: .cue,
+                    title: "HEADPHONES / CUE",
+                    color: DJTheme.cue,
+                    selectedUID: appState.cueOutputUID,
+                    descriptor: appState.cueDeviceDescriptor,
+                    isFallback: appState.isCueFallback,
+                    warning: appState.cueWarning,
+                    error: appState.cueRoutingError
+                )
+            }
         }
     }
 

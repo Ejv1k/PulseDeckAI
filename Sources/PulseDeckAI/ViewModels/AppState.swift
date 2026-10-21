@@ -11,6 +11,7 @@ public final class AppState: ObservableObject {
     @Published public var isScanning: Bool = false
     @Published public var statusMessage: String = "Phase 0 Operational Shell Initialized"
     @Published public private(set) var meteringErrorMessage: String?
+    @Published public private(set) var coordinatorErrorMessage: String?
     @Published public private(set) var loadedCache: PulseDeckLibraryCache?
     @Published public var selectedTrackPath: String?
 
@@ -56,6 +57,12 @@ public final class AppState: ObservableObject {
         } catch {
             meteringErrorMessage = "Audio meters unavailable: \(error)"
         }
+        do {
+            try coordinator.start()
+        } catch {
+            coordinatorErrorMessage = "Audio engine startup failed: \(error.localizedDescription)"
+            statusMessage = "Audio Startup Error: \(error.localizedDescription)"
+        }
 
         // Resolve library folder relative to current working directory or bundle
         let cwd = FileManager.default.currentDirectoryPath
@@ -80,7 +87,8 @@ public final class AppState: ObservableObject {
         waveformEditorModel: WaveformEditorModel,
         loadedCache: PulseDeckLibraryCache? = nil,
         cacheLoader: (@Sendable (URL) async -> PulseDeckLibraryCache?)? = nil,
-        audioCoordinator: AudioEngineCoordinator? = nil
+        audioCoordinator: AudioEngineCoordinator? = nil,
+        startCoordinator: Bool = true
     ) {
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
@@ -92,6 +100,14 @@ public final class AppState: ObservableObject {
             await Task.detached(priority: .userInitiated) {
                 CachePersistence.load(from: url)
             }.value
+        }
+        if startCoordinator, let coordinator = self.audioCoordinator {
+            do {
+                try coordinator.start()
+            } catch {
+                self.coordinatorErrorMessage = "Audio engine startup failed: \(error.localizedDescription)"
+                self.statusMessage = "Audio Startup Error: \(error.localizedDescription)"
+            }
         }
         connectEditorPersistence()
         connectAudioCoordinator()
@@ -368,6 +384,23 @@ public final class AppState: ObservableObject {
             }
             return
         }
+
+        // Start coordinator on-demand if stopped; do not publish true against stopped engine
+        if !coordinator.masterAudioEngine.isRunning {
+            do {
+                try coordinator.start()
+            } catch {
+                self.coordinatorErrorMessage = "Failed to start audio engine: \(error.localizedDescription)"
+                self.statusMessage = "Audio Start Error: \(error.localizedDescription)"
+                return
+            }
+        }
+
+        guard coordinator.masterAudioEngine.isRunning else {
+            self.statusMessage = "Audio engine is not running"
+            return
+        }
+
         switch deck {
         case .deckA:
             if isDeckAPlaying {

@@ -167,6 +167,53 @@ final class OutputRoutingStudioTests: XCTestCase {
         // Cue engine should now indicate fallback because desired device is missing
         XCTAssertTrue(coordinator.isFallbackActive(for: .cue))
         XCTAssertTrue(appState.isCueFallback)
+        // Must publish the actual fallback device UID, not the stale removed device
+        XCTAssertEqual(appState.cueOutputUID, "builtin_speakers_uid")
+        XCTAssertEqual(appState.cueDeviceDescriptor?.id, "builtin_speakers_uid")
+    }
+
+    @MainActor
+    func testUnboundRoleDoesNotFabricateDefaultDescriptor() {
+        // Coordinator freshly created without registration binding
+        // When monitor has no bound UID, boundDevice must return nil, not fake the default
+        let unmanagedCoordinator = AudioEngineCoordinator(hal: mockHAL)
+        XCTAssertNil(unmanagedCoordinator.boundDevice(for: .cue))
+    }
+
+    @MainActor
+    func testToggleDeckPlayRequiresRunningEngine() {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Simulate engine start failure
+        coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "simulatedStartFailure")
+
+        let editor = WaveformEditorModel(libraryRootURL: tempDir)
+        let appState = AppState(
+            libraryRootURL: tempDir,
+            waveformEditorModel: editor,
+            audioCoordinator: coordinator,
+            startCoordinator: false
+        )
+
+        // toggleDeckPlay should not report playing if engine cannot run
+        appState.toggleDeckPlay(deck: .deckA)
+        XCTAssertFalse(appState.isDeckAPlaying, "toggleDeckPlay must not publish true against stopped engine")
+        XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
+    }
+
+    @MainActor
+    func testDefaultAppStateStartsCoordinatorAndMonitorsTopology() {
+        let appState = AppState()
+        guard let coord = appState.audioCoordinator else {
+            XCTFail("AppState must instantiate audio coordinator")
+            return
+        }
+        defer { coord.stop() }
+        XCTAssertTrue(coord.monitor.isMonitoringActive, "Production AppState must activate monitor listeners on startup")
+        XCTAssertTrue(coord.masterAudioEngine.isRunning, "Production AppState must start master engine on startup")
+        XCTAssertTrue(coord.cueAudioEngine.isRunning, "Production AppState must start cue engine on startup")
     }
 
     @MainActor

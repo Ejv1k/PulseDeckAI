@@ -164,6 +164,19 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         deliver(events)
     }
 
+    /// Restores a registration removed by shutdown without changing a surviving registration's
+    /// desired binding, running intent, recovery budget, or configuration observer.
+    func ensureEngineRegistration(
+        _ engine: AVAudioEngine,
+        role: AudioEngineRole,
+        desiredDeviceUID: String?
+    ) {
+        syncControl {
+            guard !registeredEngines.contains(where: { $0.engine === engine }) else { return }
+            registerEngine(engine, role: role, desiredDeviceUID: desiredDeviceUID)
+        }
+    }
+
     /// Registers an `AVAudioEngine` for automatic device recovery and configuration observation.
     ///
     /// The configuration observer does not retain `engine`. After registration, this monitor is the exclusive

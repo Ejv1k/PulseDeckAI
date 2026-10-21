@@ -183,27 +183,35 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
     /// Starts both audio engines and activates hardware monitoring.
     public func start() throws {
-        var monitorStarted = false
-        var masterStarted = false
-        do {
-            try monitor.start()
-            monitorStarted = true
+        try monitor.performOnControlQueue {
+            // Rollback and normal shutdown remove registrations. Restore them before reconciliation;
+            // currentDevice records the last explicit preference, not a recovered fallback binding.
+            monitor.ensureEngineRegistration(masterAudioEngine.rawEngine, role: .master,
+                                             desiredDeviceUID: masterAudioEngine.currentDevice?.id)
+            monitor.ensureEngineRegistration(cueAudioEngine.rawEngine, role: .cue,
+                                             desiredDeviceUID: cueAudioEngine.currentDevice?.id)
+            var monitorStarted = false
+            var masterStarted = false
+            do {
+                try monitor.start()
+                monitorStarted = true
 
-            monitor.reconcileImmediately()
+                monitor.reconcileImmediately()
 
-            try masterAudioEngine.start()
-            masterStarted = true
+                try masterAudioEngine.start()
+                masterStarted = true
 
-            try cueAudioEngine.start()
-        } catch {
-            if masterStarted {
-                masterAudioEngine.stop()
+                try cueAudioEngine.start()
+            } catch {
+                if masterStarted {
+                    masterAudioEngine.stop()
+                }
+                cueAudioEngine.stop()
+                if monitorStarted {
+                    monitor.stop()
+                }
+                throw error
             }
-            cueAudioEngine.stop()
-            if monitorStarted {
-                monitor.stop()
-            }
-            throw error
         }
     }
 

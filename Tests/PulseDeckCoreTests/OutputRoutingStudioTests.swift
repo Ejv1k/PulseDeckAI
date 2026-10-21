@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import CoreAudio
 import AVFoundation
 @testable import PulseDeckCore
@@ -72,7 +73,7 @@ final class OutputRoutingStudioTests: XCTestCase {
     }
 
     @MainActor
-    func testPlayRetryClearsInitializerStartupFailureAfterMasterRuns() throws {
+    func testPlayRetryClearsInitializerStartupFailureAfterMasterRuns() async throws {
         coordinator.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "initialStart")
         let app = try makeOfflineApp(startCoordinator: true)
         XCTAssertNotNil(app.coordinatorErrorMessage)
@@ -88,6 +89,7 @@ final class OutputRoutingStudioTests: XCTestCase {
         XCTAssertFalse(app.isDeckBPlaying)
         XCTAssertNil(app.coordinatorErrorMessage)
         XCTAssertFalse(app.statusMessage.hasPrefix("Audio Startup Error:"))
+        await assertRetryRestoresDeviceLifecycle(app)
     }
 
     @MainActor
@@ -125,7 +127,7 @@ final class OutputRoutingStudioTests: XCTestCase {
     }
 
     @MainActor
-    func testCueActivationFailureRejectsBothDecksAndSuccessfulRetryRecovers() throws {
+    func testCueActivationFailureRejectsBothDecksAndSuccessfulRetryRecovers() async throws {
         let app = try makeOfflineApp()
         coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueStart")
         for deck in [DeckIdentifier.deckA, .deckB] {
@@ -147,6 +149,7 @@ final class OutputRoutingStudioTests: XCTestCase {
         XCTAssertFalse(coordinator.deckA.isCueActive)
         XCTAssertFalse(app.isDeckACueActive)
         XCTAssertNil(app.coordinatorErrorMessage)
+        await assertRetryRestoresDeviceLifecycle(app)
     }
 
     @MainActor
@@ -269,6 +272,147 @@ final class OutputRoutingStudioTests: XCTestCase {
         XCTAssertTrue(app.isDeckBCueActive)
         app.setDeckCueActive(deck: .deckB, active: false)
         XCTAssertFalse(app.isDeckBCueActive)
+    }
+
+    @MainActor
+    private func expectRoutePublication(
+        _ app: AppState, master: String?, cue: String?, trigger: () -> Void
+    ) async {
+        let published = XCTestExpectation(description: "Actual monitor event publishes master and cue routing")
+        let observation = Publishers.CombineLatest(app.$masterOutputUID, app.$cueOutputUID)
+            .dropFirst()
+            .filter { $0.0 == master && $0.1 == cue }
+            .prefix(1)
+            .sink { _ in published.fulfill() }
+        trigger()
+        let result = await XCTWaiter.fulfillment(of: [published], timeout: 2)
+        XCTAssertEqual(result, .completed)
+        withExtendedLifetime(observation) {}
+        XCTAssertEqual(app.masterOutputUID, master)
+        XCTAssertEqual(app.cueOutputUID, cue)
+    }
+
+    @MainActor
+    private func assertRetryRestoresDeviceLifecycle(_ app: AppState) async {
+        let audio = coordinator!
+        app.refreshOutputDevices()
+        XCTAssertEqual(app.masterOutputUID, "builtin_speakers_uid")
+        XCTAssertEqual(app.cueOutputUID, "builtin_speakers_uid")
+        app.selectOutputDevice(role: .master, uid: "wired_headphones_uid")
+        app.selectOutputDevice(role: .cue, uid: "bluetooth_headphones_uid")
+        XCTAssertNil(app.masterRoutingError)
+        XCTAssertNil(app.cueRoutingError)
+        XCTAssertEqual(app.masterOutputUID, "wired_headphones_uid")
+        XCTAssertEqual(app.cueOutputUID, "bluetooth_headphones_uid")
+        XCTAssertEqual(audio.monitor.desiredDeviceUID(for: .master), "wired_headphones_uid")
+        XCTAssertEqual(audio.monitor.desiredDeviceUID(for: .cue), "bluetooth_headphones_uid")
+
+        // Stop only cue through its real API so recovery must keep its intended state false.
+        app.setDeckCueActive(deck: .deckA, active: false)
+        app.setDeckCueActive(deck: .deckB, active: false)
+        audio.cueAudioEngine.stop()
+        await expectRoutePublication(app, master: "builtin_speakers_uid", cue: "builtin_speakers_uid") {
+            mockHAL.removeDevice(id: 102)
+            mockHAL.removeDevice(id: 103)
+            mockHAL.triggerDevicesChange()
+        }
+        XCTAssertTrue(app.isMasterFallback)
+        XCTAssertTrue(app.isCueFallback)
+        XCTAssertTrue(audio.masterAudioEngine.isRunning)
+        XCTAssertFalse(audio.cueAudioEngine.isRunning)
+
+        // Remove the fallback too, then replug preferred UIDs under new numeric IDs.
+        await expectRoutePublication(app, master: nil, cue: nil) {
+            mockHAL.removeDevice(id: 101)
+            mockHAL.setDefaultOutputID(nil)
+            mockHAL.triggerDevicesChange()
+        }
+        XCTAssertFalse(audio.masterAudioEngine.isRunning)
+        XCTAssertFalse(audio.cueAudioEngine.isRunning)
+        await expectRoutePublication(app, master: "wired_headphones_uid", cue: "bluetooth_headphones_uid") {
+            mockHAL.addDevice(id: 112, uid: "wired_headphones_uid", name: "External Headphones", outputChannels: 2)
+            mockHAL.addDevice(id: 113, uid: "bluetooth_headphones_uid", name: "HD 250BT Headphones", outputChannels: 2)
+            mockHAL.setDefaultOutputID(112)
+            mockHAL.triggerDevicesChange()
+        }
+        XCTAssertFalse(app.isMasterFallback)
+        XCTAssertFalse(app.isCueFallback)
+        XCTAssertEqual(audio.monitor.boundDeviceIDForTesting(of: audio.masterAudioEngine.rawEngine), 112)
+        XCTAssertEqual(audio.monitor.boundDeviceIDForTesting(of: audio.cueAudioEngine.rawEngine), 113)
+        XCTAssertTrue(audio.masterAudioEngine.isRunning, "Missing-output recovery must retain master's running intent")
+        XCTAssertFalse(audio.cueAudioEngine.isRunning, "Replug must not restart deliberately stopped cue")
+
+        audio.monitor.performOnControlQueue { audio.masterAudioEngine.rawEngine.pause() }
+        XCTAssertFalse(audio.masterAudioEngine.isRunning)
+        let observersBefore = audio.monitor.configurationObserverFireCountForTesting()
+        await expectRoutePublication(app, master: "wired_headphones_uid", cue: "bluetooth_headphones_uid") {
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: audio.masterAudioEngine.rawEngine)
+            XCTAssertEqual(audio.monitor.configurationObserverFireCountForTesting(), observersBefore + 2,
+                           "Both engine observers must exist exactly once")
+        }
+        XCTAssertTrue(audio.masterAudioEngine.isRunning, "Real configuration notification must recover master")
+        XCTAssertFalse(audio.cueAudioEngine.isRunning)
+        XCTAssertEqual(mockHAL.devicesListeners.count, 1)
+        XCTAssertEqual(mockHAL.defaultListeners.count, 1)
+    }
+
+    @MainActor
+    func testRepeatedStartupRollbackAndShutdownRestartRestoreDesiredRoutesWithoutDuplicateObservers() async throws {
+        let app = try makeOfflineApp()
+        let audio = coordinator!
+        app.selectOutputDevice(role: .master, uid: "wired_headphones_uid")
+        app.selectOutputDevice(role: .cue, uid: "bluetooth_headphones_uid")
+        for attempt in 0..<3 {
+            audio.masterAudioEngine.startErrorForTesting = attempt == 1
+                ? CoreAudioError.osStatus(-1, operation: "masterRetry") : nil
+            audio.cueAudioEngine.startErrorForTesting = attempt == 1
+                ? nil : CoreAudioError.osStatus(-10868, operation: "cueRetry")
+            app.toggleDeckPlay(deck: .deckB)
+            XCTAssertNotNil(app.coordinatorErrorMessage)
+            XCTAssertFalse(app.isDeckBPlaying)
+            XCTAssertFalse(audio.masterAudioEngine.isRunning)
+            XCTAssertFalse(audio.cueAudioEngine.isRunning)
+            XCTAssertFalse(audio.monitor.isMonitoringActive)
+            XCTAssertTrue(mockHAL.devicesListeners.isEmpty)
+            XCTAssertTrue(mockHAL.defaultListeners.isEmpty)
+        }
+        audio.masterAudioEngine.startErrorForTesting = nil
+        audio.cueAudioEngine.startErrorForTesting = nil
+        await expectRoutePublication(app, master: "wired_headphones_uid", cue: "bluetooth_headphones_uid") {
+            app.toggleDeckPlay(deck: .deckB)
+        }
+        XCTAssertNil(app.coordinatorErrorMessage)
+        XCTAssertTrue(app.isDeckBPlaying)
+        XCTAssertEqual(audio.monitor.desiredDeviceUID(for: .master), "wired_headphones_uid")
+        XCTAssertEqual(audio.monitor.desiredDeviceUID(for: .cue), "bluetooth_headphones_uid")
+        try audio.start()
+        try audio.start()
+        XCTAssertEqual(mockHAL.devicesListeners.count, 1)
+        XCTAssertEqual(mockHAL.defaultListeners.count, 1)
+
+        audio.stop()
+        XCTAssertFalse(audio.monitor.isMonitoringActive)
+        XCTAssertNil(audio.monitor.boundDeviceUID(for: .master))
+        XCTAssertNil(audio.monitor.boundDeviceUID(for: .cue))
+        XCTAssertTrue(mockHAL.devicesListeners.isEmpty)
+        XCTAssertTrue(mockHAL.defaultListeners.isEmpty)
+        let stoppedObserverCount = audio.monitor.configurationObserverFireCountForTesting()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: audio.masterAudioEngine.rawEngine)
+        XCTAssertEqual(audio.monitor.configurationObserverFireCountForTesting(), stoppedObserverCount,
+                       "Normal shutdown must remove configuration observers")
+        app.refreshOutputDevices()
+        await expectRoutePublication(app, master: "wired_headphones_uid", cue: "bluetooth_headphones_uid") {
+            app.toggleDeckPlay(deck: .deckA)
+        }
+        XCTAssertTrue(audio.masterAudioEngine.isRunning)
+        XCTAssertTrue(audio.cueAudioEngine.isRunning)
+        let restartedObserverCount = audio.monitor.configurationObserverFireCountForTesting()
+        await expectRoutePublication(app, master: "wired_headphones_uid", cue: "bluetooth_headphones_uid") {
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: audio.cueAudioEngine.rawEngine)
+            XCTAssertEqual(audio.monitor.configurationObserverFireCountForTesting(), restartedObserverCount + 2)
+        }
+        XCTAssertEqual(mockHAL.devicesListeners.count, 1)
+        XCTAssertEqual(mockHAL.defaultListeners.count, 1)
     }
 
     // MARK: - Tests

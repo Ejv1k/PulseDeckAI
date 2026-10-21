@@ -79,6 +79,11 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
         return _currentDevice
     }
 
+    /// True if the underlying audio engine is currently running.
+    public var isRunning: Bool {
+        rawEngine.isRunning
+    }
+
     public var hardwareLatencyMs: Double {
         stateLock.lock()
         defer { stateLock.unlock() }

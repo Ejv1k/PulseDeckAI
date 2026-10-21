@@ -22,7 +22,7 @@ public struct StatusHeaderView: View {
                         .font(.system(size: 20, weight: .black, design: .monospaced))
                         .foregroundColor(DJTheme.textPrimary)
 
-                    Text("PHASE 0")
+                    Text("PHASE 3B STUDIO")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

@@ -133,6 +133,54 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
         monitor.reconcileImmediately()
     }
 
+    /// Observes output device topology changes on the monitor callback queue.
+    public var onDevicesChanged: (@Sendable () -> Void)? {
+        get { monitor.onTopologyChange }
+        set { monitor.onTopologyChange = newValue }
+    }
+
+    /// Observes monitor/hardware errors on the monitor callback queue.
+    public var onDeviceError: (@Sendable (CoreAudioError) -> Void)? {
+        get { monitor.onMonitorError }
+        set { monitor.onMonitorError = newValue }
+    }
+
+    /// Resolves the currently bound output device descriptor for an engine role, or nil if missing/unbound.
+    public func boundDevice(for role: AudioEngineRole) -> AudioDeviceDescriptor? {
+        let engine = (role == .master) ? masterAudioEngine : cueAudioEngine
+        if let current = engine.currentDevice {
+            return current
+        }
+        let devices = enumerateOutputDevices()
+        if let boundUID = monitor.boundDeviceUID(for: role) {
+            if let matched = devices.first(where: { $0.id == boundUID }) {
+                return matched
+            }
+        }
+        return devices.first(where: { $0.isDefault })
+    }
+
+    /// True if the engine for this role is currently routed to a fallback device rather than its desired target.
+    public func isFallbackActive(for role: AudioEngineRole) -> Bool {
+        guard let desired = monitor.desiredDeviceUID(for: role) else {
+            return false
+        }
+        guard let bound = monitor.boundDeviceUID(for: role) else {
+            return true
+        }
+        return desired != bound
+    }
+
+    /// Routes the specified engine role to a physical output device by UID.
+    public func setOutputDevice(role: AudioEngineRole, uid: String) throws {
+        switch role {
+        case .master:
+            try masterAudioEngine.setOutputDevice(id: uid)
+        case .cue:
+            try cueAudioEngine.setOutputDevice(id: uid)
+        }
+    }
+
     // MARK: - Lifecycle Controls
 
     /// Starts both audio engines and activates hardware monitoring.

@@ -12,6 +12,8 @@ public struct ContentView: View {
 
             AudioMeterStatusView(appState: appState)
 
+            WaveformEditorView(model: appState.waveformEditorModel)
+
             LibraryBrowserView(appState: appState)
                 .frame(maxHeight: .infinity)
 

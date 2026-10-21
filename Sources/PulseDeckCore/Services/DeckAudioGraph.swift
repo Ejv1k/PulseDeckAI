@@ -465,6 +465,28 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
+    /// Prepares incoming master playback without advancing it or disturbing independent cue transport.
+    /// The transition's scheduled play command owns when master playback resumes.
+    func prepareMasterPlayback(at seconds: Double) {
+        guard seconds.isFinite else { return }
+
+        executeOnControlQueue {
+            self.stateLock.lock()
+            guard let masterFile = self._masterAudioFile else {
+                self.stateLock.unlock()
+                return
+            }
+            let clampedSeconds = min(max(seconds, 0.0), self._trackDurationSeconds)
+            self._currentSeekPositionSeconds = clampedSeconds
+            self._isMasterPlaying = false
+            self.stateLock.unlock()
+
+            self.invalidateSchedule(for: .master)
+            self.masterPlayerNode.stop()
+            self.scheduleMasterSegment(file: masterFile, startSeconds: clampedSeconds)
+        }
+    }
+
     public func seek(to seconds: Double) {
         guard seconds.isFinite else { return }
 

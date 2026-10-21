@@ -1621,4 +1621,145 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(coordinator.crossfaderPosition, 0)
     }
 
+    func testHardCutHoldsPlayingIncomingAtSelectedDownbeatUntilAudibleCut() async throws {
+        let sampleRate = 44100.0
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2))
+        func makeTrack(incomingMarker: Bool) throws -> URL {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("cut_onset_\(UUID().uuidString).wav")
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let frames = AVAudioFrameCount(sampleRate * 8)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+            buffer.frameLength = frames
+            let channels = try XCTUnwrap(buffer.floatChannelData)
+            for frame in 0..<Int(frames) {
+                let time = Double(frame) / sampleRate
+                // Only the selected 2s downbeat has a loud onset. A 0.5s-late cut exposes the quiet region.
+                let amplitude = time >= 2 && time < 2.04 ? 0.65 : 0.04
+                let sample: Float = incomingMarker ? Float(sin(2 * .pi * 880 * time) * amplitude) : 0
+                channels[0][frame] = sample
+                channels[1][frame] = sample
+            }
+            try file.write(from: buffer)
+            return url
+        }
+        func renderPeak(_ engine: AVAudioEngine, frames: AVAudioFrameCount) throws -> Float {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: frames))
+            XCTAssertEqual(try engine.renderOffline(frames, to: buffer), .success)
+            let channels = try XCTUnwrap(buffer.floatChannelData)
+            var peak: Float = 0
+            for frame in 0..<Int(buffer.frameLength) { peak = max(peak, abs(channels[0][frame])) }
+            return peak
+        }
+        func cueSampleTime(_ deck: DeckAudioGraph) throws -> AVAudioFramePosition {
+            let renderTime = try XCTUnwrap(deck.cuePlayerNode.lastRenderTime)
+            return try XCTUnwrap(deck.cuePlayerNode.playerTime(forNodeTime: renderTime)).sampleTime
+        }
+        let outgoingURL = try makeTrack(incomingMarker: false)
+        let incomingURL = try makeTrack(incomingMarker: true)
+        defer {
+            try? FileManager.default.removeItem(at: outgoingURL)
+            try? FileManager.default.removeItem(at: incomingURL)
+        }
+        for outgoing: DeckIdentifier in [.deckA, .deckB] {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            let service = coordinator.transitionExecutionService
+            let master = coordinator.masterAudioEngine.rawEngine
+            let cue = coordinator.cueAudioEngine.rawEngine
+            try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 44100)
+            try cue.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 44100)
+            try coordinator.start()
+            defer { coordinator.stop() }
+            let out = outgoing == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+            let incoming = outgoing == .deckA ? coordinator.deckBGraph : coordinator.deckAGraph
+            try out.loadTrack(url: outgoingURL)
+            try incoming.loadTrack(url: incomingURL)
+            coordinator.setCrossfader(position: outgoing == .deckA ? 0 : 1)
+            incoming.seek(to: 0.5)
+            incoming.isCueActive = true
+            incoming.play()
+            incoming.seekCue(to: 4.5)
+            incoming.playCue()
+            try coordinator.monitor.performOnControlQueue {
+                _ = try renderPeak(master, frames: 4096)
+                _ = try renderPeak(cue, frames: 4096)
+            }
+            XCTAssertGreaterThan(incoming.masterPlayheadSeconds, 0.5, "Incoming must actually render before preparation")
+            let cueStart = incoming.cueScheduleStartSecondsForTesting
+            let cueBefore = try cueSampleTime(incoming)
+            out.seek(to: 3.5)
+            out.play()
+            let plan = try await service.startTransition(request: TransitionRequest(
+                outgoingTrack: makeDescriptor(deck: outgoing, duration: 8, bpm: 120, mixOutCue: 3.5),
+                incomingTrack: makeDescriptor(deck: incoming.deckId, duration: 8, bpm: 120, mixOutCue: 6, startTrimCue: 2),
+                style: .hardCutOnDrop(bars: 1, allowFallbackToFilter: false), triggerPositionSeconds: 3.5
+            ))
+            XCTAssertEqual(plan.startTimestampSeconds, 3.5)
+            XCTAssertEqual(plan.endTimestampSeconds, 4)
+            let selectedPosition = try XCTUnwrap(plan.events.compactMap { event -> Double? in
+                if case .seek(let deck, let position) = event.command, deck == incoming.deckId { return position }
+                return nil
+            }.first)
+            XCTAssertEqual(selectedPosition, 2)
+            // Keep control-plane ticks outside this render interval so the before-cut measurements are deterministic.
+            let held = try coordinator.monitor.performOnControlQueue {
+                let silentPeak = try renderPeak(master, frames: 22050)
+                let cuePeak = try renderPeak(cue, frames: 22050)
+                return (incoming.masterPlayheadSeconds, incoming.isMasterPlaying,
+                        out.masterPlayheadSeconds, silentPeak, cuePeak,
+                        incoming.cueScheduleStartSecondsForTesting, try cueSampleTime(incoming))
+            }
+            XCTAssertEqual(held.0, selectedPosition, accuracy: 1 / sampleRate, "Incoming source drifted during quantization hold")
+            XCTAssertFalse(held.1)
+            XCTAssertGreaterThanOrEqual(held.2, plan.endTimestampSeconds, "Actual source clock must reach the quantized cut")
+            XCTAssertLessThan(held.3, 0.0001, "Incoming must stay inaudible before cut")
+            XCTAssertGreaterThan(held.4, 0.02, "Independent cue must keep rendering")
+            XCTAssertEqual(held.5, cueStart, "Preparing master must not reposition independent cue")
+            XCTAssertGreaterThan(held.6 - cueBefore, 17640, "Independent cue must advance during the master hold")
+            _ = try await service.advance(to: 4)
+            let completed = await service.snapshot
+            XCTAssertEqual(completed.state, .completed)
+            XCTAssertTrue(incoming.isMasterPlaying)
+            XCTAssertFalse(out.isMasterPlaying)
+            let readAheadPlayhead = incoming.masterPlayheadSeconds
+            let audiblePeak = try coordinator.monitor.performOnControlQueue {
+                try renderPeak(master, frames: 8820)
+            }
+            print("Hard-cut evidence \(outgoing): selected=\(selectedPosition), held=\(held.0), readAhead=\(readAheadPlayhead), peak=\(audiblePeak)")
+            XCTAssertGreaterThan(audiblePeak, 0.3, "Cut must expose the selected loud downbeat, not the quiet source 0.5s later")
+            XCTAssertEqual(incoming.effectiveMasterGain, 1)
+        }
+    }
+
+    func testExternalIncomingSeekDuringHardCutHoldStillCancelsSafely() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let url = try createTestWavFile(durationSeconds: 12)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        try coordinator.deckBGraph.loadTrack(url: url)
+        coordinator.deckAGraph.seek(to: 3.5)
+        coordinator.deckAGraph.play()
+        coordinator.deckBGraph.play()
+        coordinator.setCrossfader(position: 0)
+        _ = try await service.startTransition(request: TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 12, bpm: 120, mixOutCue: 3.5),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 12, bpm: 120, mixOutCue: 10),
+            style: .hardCutOnDrop(bars: 1, allowFallbackToFilter: false), triggerPositionSeconds: 3.5
+        ))
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        let ownedGeneration = coordinator.deckBGraph.scheduleGeneration
+        let outgoingGeneration = coordinator.deckAGraph.scheduleGeneration
+        coordinator.deckBGraph.seek(to: 1)
+        XCTAssertGreaterThan(coordinator.deckBGraph.scheduleGeneration, ownedGeneration)
+        _ = try await service.advance(to: 4)
+        let cancelled = await service.snapshot
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1)
+        XCTAssertEqual(coordinator.crossfaderPosition, 0)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 0)
+    }
+
 }

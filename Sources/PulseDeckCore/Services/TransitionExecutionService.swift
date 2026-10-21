@@ -585,7 +585,12 @@ public actor TransitionExecutionService {
             }
 
         case .seek(let deck, let positionSeconds):
-            deckGraph(for: deck).seek(to: positionSeconds)
+            if deck == activePlan?.incomingDeck, let graph = concreteDeckGraph(for: deck) {
+                // Preparation must not consume source audio before the plan's scheduled play event.
+                graph.prepareMasterPlayback(at: positionSeconds)
+            } else {
+                deckGraph(for: deck).seek(to: positionSeconds)
+            }
             lastObservedDeckGeneration[deck] = deckGeneration(for: deck)
 
         case .play(let deck):

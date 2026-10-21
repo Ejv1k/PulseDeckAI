@@ -1,0 +1,43 @@
+name: CI
+
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Environment info
+        run: |
+          swift --version
+          python3 --version
+
+      - name: Run Python tests
+        run: python3 -m unittest discover -s scripts/tests -q
+
+      - name: Swift build
+        run: swift build -q
+
+      - name: Swift test
+        run: swift test -q

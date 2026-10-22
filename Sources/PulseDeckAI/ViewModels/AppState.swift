@@ -557,10 +557,7 @@ public final class AppState: ObservableObject {
         let beforePreparation = beforePreviewFilePreparation
         return Task { [weak self] in
             do {
-                let file = try await Task.detached(priority: .userInitiated) {
-                    await beforePreparation?(fileURL)
-                    return try AVAudioFile(forReading: fileURL)
-                }.value
+                let file = try await Self.preparePreviewFile(url: fileURL, beforePreparation: beforePreparation)
 
                 guard let self,
                       self.previewGeneration == generation,
@@ -599,6 +596,16 @@ public final class AppState: ObservableObject {
                 self.previewErrorMessage = "Preview load failed: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Nonisolated async work runs on the generic executor, then transfers unique file ownership.
+    /// `sending` also supports SDKs where AVAudioFile has no Sendable conformance.
+    nonisolated private static func preparePreviewFile(
+        url: URL,
+        beforePreparation: (@Sendable (URL) async -> Void)?
+    ) async throws -> sending AVAudioFile {
+        await beforePreparation?(url)
+        return try AVAudioFile(forReading: url)
     }
 
     /// Toggles play / pause state for the headphone audition preview player.

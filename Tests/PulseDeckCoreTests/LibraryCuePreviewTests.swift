@@ -46,7 +46,10 @@ final class LibraryCuePreviewTests: XCTestCase {
     // MARK: - Test Helpers
 
     @MainActor
-    private func makeOfflineAppState(startCoordinator: Bool = true) throws -> (AppState, URL) {
+    private func makeOfflineAppState(
+        startCoordinator: Bool = true,
+        beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil
+    ) throws -> (AppState, URL) {
         let audio = try XCTUnwrap(coordinator)
         try audio.monitor.performOnControlQueue {
             let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
@@ -61,12 +64,13 @@ final class LibraryCuePreviewTests: XCTestCase {
             libraryRootURL: tempDir,
             waveformEditorModel: WaveformEditorModel(libraryRootURL: tempDir),
             audioCoordinator: audio,
-            startCoordinator: startCoordinator
+            startCoordinator: startCoordinator,
+            beforePreviewFilePreparation: beforePreviewFilePreparation
         )
         return (app, tempDir)
     }
 
-    private func makeSyntheticAudioFile(url: URL, durationSeconds: Double = 2.0, sampleRate: Double = 44100.0) throws {
+    private func makeSyntheticAudioFile(url: URL, durationSeconds: Double = 2.0, sampleRate: Double = 44100.0, signal: Float? = nil) throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else {
             throw NSError(domain: "TestAudio", code: -1)
         }
@@ -79,7 +83,7 @@ final class LibraryCuePreviewTests: XCTestCase {
         let channels = try XCTUnwrap(pcm.floatChannelData)
         for ch in 0..<Int(format.channelCount) {
             for fr in 0..<Int(frameCount) {
-                channels[ch][fr] = Float(sin(Double(fr) * 0.05)) * 0.3
+                channels[ch][fr] = signal ?? (Float(sin(Double(fr) * 0.05)) * 0.3)
             }
         }
         try file.write(from: pcm)
@@ -461,6 +465,223 @@ final class LibraryCuePreviewTests: XCTestCase {
         XCTAssertEqual(app.previewDurationSeconds, 0.0)
     }
 
+
+    private actor PreparationGate {
+        private var entered = false
+        private var released = false
+        private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+        private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func hold() async {
+            entered = true
+            entryWaiters.forEach { $0.resume() }
+            entryWaiters.removeAll()
+            if !released {
+                await withCheckedContinuation { releaseWaiters.append($0) }
+            }
+        }
+
+        func waitUntilEntered() async {
+            if !entered {
+                await withCheckedContinuation { entryWaiters.append($0) }
+            }
+        }
+
+        func release() {
+            released = true
+            releaseWaiters.forEach { $0.resume() }
+            releaseWaiters.removeAll()
+        }
+    }
+
+    @MainActor
+    private func assertCueSignal(_ expected: Float, file: StaticString = #filePath, line: UInt = #line) throws {
+        let engine = try XCTUnwrap(coordinator).cueAudioEngine.rawEngine
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: 4096))
+        XCTAssertEqual(try engine.renderOffline(4096, to: buffer), .success, file: file, line: line)
+        let channels = try XCTUnwrap(buffer.floatChannelData)
+        let samples = (512..<Int(buffer.frameLength)).map { channels[0][$0] }
+        XCTAssertFalse(samples.isEmpty, file: file, line: line)
+        let maximumError = samples.map { abs($0 - expected) }.max() ?? .infinity
+        XCTAssertLessThan(maximumError, 0.015, "Actual Cue PCM must match the requested file", file: file, line: line)
+    }
+
+    @MainActor
+    func testImmediateLibraryCueSequenceStartsOnlyRequestedAudioAfterLoad() async throws {
+        let (app, root) = try makeOfflineAppState()
+        let audio = try XCTUnwrap(coordinator)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("first.wav"), signal: 0.2)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("next.wav"), durationSeconds: 3, signal: -0.3)
+
+        // Exact synchronous library CUE button sequence: no sleep or yield before Play.
+        let first = app.loadPreviewTrack(relativePath: "first.wav")
+        app.togglePreviewPlay()
+        await first.value
+        XCTAssertTrue(app.isPreviewPlaying)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(0.2)
+
+        let next = app.loadPreviewTrack(relativePath: "next.wav")
+        app.togglePreviewPlay()
+        await next.value
+        XCTAssertTrue(app.isPreviewPlaying)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        XCTAssertEqual(audio.cuePreview.trackDurationSeconds, 3, accuracy: 0.001)
+        try assertCueSignal(-0.3)
+        app.stopPreview()
+    }
+
+    @MainActor
+    func testOutOfOrderPreparationCannotReplaceCurrentPreviewAudio() async throws {
+        let gate = PreparationGate()
+        let (app, root) = try makeOfflineAppState(beforePreviewFilePreparation: { url in
+            if url.lastPathComponent == "old.wav" { await gate.hold() }
+        })
+        let audio = try XCTUnwrap(coordinator)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("old.wav"), durationSeconds: 2, signal: 0.2)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("current.wav"), durationSeconds: 4, signal: -0.3)
+        let old = app.loadPreviewTrack(relativePath: "old.wav")
+        await gate.waitUntilEntered()
+        let current = app.loadPreviewTrack(relativePath: "current.wav")
+        await current.value
+        app.togglePreviewPlay()
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(-0.3)
+        await gate.release()
+        await old.value
+
+        XCTAssertEqual(app.previewTrackPath, "current.wav")
+        XCTAssertEqual(app.previewDurationSeconds, 4, accuracy: 0.001)
+        XCTAssertEqual(audio.cuePreview.trackDurationSeconds, 4, accuracy: 0.001)
+        XCTAssertTrue(audio.cuePreview.isPlaying, "Stale preparation must not stop the current player")
+        XCTAssertTrue(app.isPreviewPlaying)
+        try assertCueSignal(-0.3)
+        app.stopPreview()
+    }
+
+    @MainActor
+    func testPendingOldRootCannotInstallOrStopNewRootAudio() async throws {
+        let gate = PreparationGate()
+        let (app, root) = try makeOfflineAppState(beforePreviewFilePreparation: { url in
+            if url.lastPathComponent == "old.wav" { await gate.hold() }
+        })
+        let audio = try XCTUnwrap(coordinator)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("old.wav"), durationSeconds: 2, signal: 0.2)
+        let old = app.loadPreviewTrack(relativePath: "old.wav")
+        await gate.waitUntilEntered()
+        let newRoot = root.appendingPathComponent("newRoot", isDirectory: true)
+        try FileManager.default.createDirectory(at: newRoot, withIntermediateDirectories: true)
+        try makeSyntheticAudioFile(url: newRoot.appendingPathComponent("new.wav"), durationSeconds: 5, signal: -0.3)
+        app.updateLibraryRootURL(newRoot)
+        let current = app.loadPreviewTrack(relativePath: "new.wav")
+        await current.value
+        app.togglePreviewPlay()
+        try assertCueSignal(-0.3)
+        await gate.release()
+        await old.value
+
+        XCTAssertEqual(app.previewTrackPath, "new.wav")
+        XCTAssertEqual(audio.cuePreview.trackDurationSeconds, 5, accuracy: 0.001)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(-0.3)
+        app.stopPreview()
+    }
+
+
+    @MainActor
+    func testPendingPlayIntentCanBeCancelledAndRootRoundTripInvalidatesPreparation() async throws {
+        let firstGate = PreparationGate()
+        let secondGate = PreparationGate()
+        let (app, root) = try makeOfflineAppState(beforePreviewFilePreparation: { url in
+            if url.lastPathComponent == "first.wav" { await firstGate.hold() }
+            if url.lastPathComponent == "second.wav" { await secondGate.hold() }
+        })
+        let audio = try XCTUnwrap(coordinator)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("first.wav"), signal: 0.2)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("second.wav"), durationSeconds: 4, signal: -0.3)
+        let first = app.loadPreviewTrack(relativePath: "first.wav")
+        app.togglePreviewPlay()
+        app.togglePreviewPlay()
+        await firstGate.waitUntilEntered()
+        await firstGate.release()
+        await first.value
+        XCTAssertFalse(app.isPreviewPlaying)
+        XCTAssertFalse(audio.cuePreview.isPlaying)
+        app.togglePreviewPlay()
+        XCTAssertTrue(app.isPreviewPlaying)
+        try assertCueSignal(0.2)
+
+        let pending = app.loadPreviewTrack(relativePath: "second.wav")
+        app.togglePreviewPlay()
+        await secondGate.waitUntilEntered()
+        app.stopPreview()
+        // Direct root assignments also invalidate identity, including a round trip to the same root/path.
+        app.libraryRootURL = root.appendingPathComponent("otherRoot")
+        app.libraryRootURL = root
+        await secondGate.release()
+        await pending.value
+        XCTAssertNil(app.previewTrackPath)
+        XCTAssertEqual(app.previewDurationSeconds, 0)
+        XCTAssertFalse(app.isPreviewPlaying)
+        XCTAssertFalse(audio.cuePreview.isPlaying)
+        XCTAssertEqual(audio.cuePreview.trackDurationSeconds, 2, accuracy: 0.001,
+                       "Invalidated preparation must not replace the previous installed file")
+        try assertCueSignal(0)
+    }
+
+    @MainActor
+    func testFailedAndStalePreparationsNeverPlayPreviousFile() async throws {
+        let gate = PreparationGate()
+        let (app, root) = try makeOfflineAppState(beforePreviewFilePreparation: { url in
+            if url.lastPathComponent == "stale-missing.wav" { await gate.hold() }
+        })
+        let audio = try XCTUnwrap(coordinator)
+        try makeSyntheticAudioFile(url: root.appendingPathComponent("good.wav"), signal: 0.2)
+        let good = app.loadPreviewTrack(relativePath: "good.wav")
+        app.togglePreviewPlay()
+        await good.value
+        XCTAssertTrue(app.isPreviewPlaying)
+        let failed = app.loadPreviewTrack(relativePath: "missing.wav")
+        app.togglePreviewPlay()
+        XCTAssertFalse(audio.cuePreview.isPlaying, "A pending request cannot play the previous file")
+        await failed.value
+        XCTAssertNotNil(app.previewErrorMessage)
+        XCTAssertFalse(app.isPreviewPlaying)
+        app.togglePreviewPlay()
+        XCTAssertFalse(audio.cuePreview.isPlaying, "A failed request cannot play the previous file on retry")
+        try assertCueSignal(0)
+
+        let stale = app.loadPreviewTrack(relativePath: "stale-missing.wav")
+        app.togglePreviewPlay()
+        await gate.waitUntilEntered()
+        let retry = app.loadPreviewTrack(relativePath: "good.wav")
+        app.togglePreviewPlay()
+        await retry.value
+        await gate.release()
+        await stale.value
+        XCTAssertNil(app.previewErrorMessage)
+        XCTAssertEqual(app.previewTrackPath, "good.wav")
+        XCTAssertTrue(app.isPreviewPlaying)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(0.2)
+        app.stopPreview()
+    }
+
+    @MainActor
+    func testPlayerRejectsPreparedFileAfterStopInvalidatesSerializedRequest() throws {
+        let (_, root) = try makeOfflineAppState()
+        let preview = try XCTUnwrap(coordinator).cuePreview
+        let url = root.appendingPathComponent("prepared.wav")
+        try makeSyntheticAudioFile(url: url, signal: 0.2)
+        let request = preview.beginLoad()
+        let file = try AVAudioFile(forReading: url)
+        preview.stop()
+        XCTAssertFalse(preview.load(file: file, requestID: request))
+        XCTAssertEqual(preview.trackDurationSeconds, 0)
+        XCTAssertFalse(preview.isPlaying)
+        try assertCueSignal(0)
+    }
+
     // MARK: - Master Engine Isolation
 
     @MainActor
@@ -483,6 +704,11 @@ final class LibraryCuePreviewTests: XCTestCase {
         // Render initial 4096 frames on Master engine
         let buffer1 = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
         XCTAssertEqual(try master.renderOffline(4096, to: buffer1), .success)
+        let masterGeneration = audio.deckAGraph.scheduleGeneration
+        let otherGeneration = audio.deckBGraph.scheduleGeneration
+        let masterVolume = audio.deckAGraph.volume
+        let masterGain = audio.deckAGraph.masterFaderNode.outputVolume
+        let crossfader = app.crossfaderPosition
         let initialSampleTime = master.manualRenderingSampleTime
         XCTAssertEqual(initialSampleTime, 4096)
 
@@ -513,6 +739,11 @@ final class LibraryCuePreviewTests: XCTestCase {
 
         // Master playhead must advance monotonically unaffected
         XCTAssertEqual(secondSampleTime, 8192)
+        XCTAssertEqual(audio.deckAGraph.scheduleGeneration, masterGeneration)
+        XCTAssertEqual(audio.deckBGraph.scheduleGeneration, otherGeneration)
+        XCTAssertEqual(audio.deckAGraph.volume, masterVolume)
+        XCTAssertEqual(audio.deckAGraph.masterFaderNode.outputVolume, masterGain)
+        XCTAssertEqual(app.crossfaderPosition, crossfader)
 
         // Verify second block also contains genuine Master audio signal
         let channels2 = try XCTUnwrap(buffer2.floatChannelData)
@@ -528,8 +759,11 @@ final class LibraryCuePreviewTests: XCTestCase {
     }
 
     @MainActor
-    func testCueFailureDoesNotInterruptRunningMasterEngine() throws {
-        let (app, tempDir) = try makeOfflineAppState(startCoordinator: true)
+    func testCueFailureDoesNotInterruptRunningMasterEngine() async throws {
+        let gate = PreparationGate()
+        let (app, tempDir) = try makeOfflineAppState(startCoordinator: true, beforePreviewFilePreparation: { _ in
+            await gate.hold()
+        })
         let audio = try XCTUnwrap(coordinator)
         let master = audio.masterAudioEngine.rawEngine
         let format = master.manualRenderingFormat
@@ -552,10 +786,14 @@ final class LibraryCuePreviewTests: XCTestCase {
         audio.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueStartFailure")
 
         // Attempting to toggle preview play fails gracefully on cue without stopping master
-        app.loadPreviewTrack(relativePath: "any_track.wav")
+        try makeSyntheticAudioFile(url: tempDir.appendingPathComponent("any_track.wav"))
+        let pending = app.loadPreviewTrack(relativePath: "any_track.wav")
+        await gate.waitUntilEntered()
         app.togglePreviewPlay()
-
         XCTAssertNotNil(app.previewErrorMessage)
+        await gate.release()
+        await pending.value
+        XCTAssertNotNil(app.previewErrorMessage, "File completion must not acknowledge a failed cue startup")
         XCTAssertFalse(app.isPreviewPlaying)
 
         // Master audio engine MUST still be running and advancing

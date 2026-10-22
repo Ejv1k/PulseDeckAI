@@ -805,4 +805,52 @@ final class LibraryCuePreviewTests: XCTestCase {
         XCTAssertEqual(try master.renderOffline(4096, to: bufferAfter), .success)
         XCTAssertEqual(master.manualRenderingSampleTime, 8192)
     }
+
+    @MainActor
+    func testPlayRequestForFailedTrackReloadsAndArmsPlayback() async throws {
+        let (app, tempDir) = try makeOfflineAppState(startCoordinator: true)
+        let audio = try XCTUnwrap(coordinator)
+
+        // 1. Initial attempt to load non-existent track fails
+        let missingPath = "initially_missing.wav"
+        let failedTask = app.loadPreviewTrack(relativePath: missingPath, playWhenReady: true)
+        await failedTask.value
+
+        XCTAssertNotNil(app.previewErrorMessage)
+        XCTAssertEqual(app.previewTrackPath, missingPath)
+        XCTAssertFalse(app.isPreviewPlaying)
+        XCTAssertFalse(audio.cuePreview.isPlaying)
+        try assertCueSignal(0)
+
+        // 2. File now becomes available on disk
+        let fileURL = tempDir.appendingPathComponent(missingPath)
+        try makeSyntheticAudioFile(url: fileURL, durationSeconds: 2.0, signal: 0.25)
+
+        // 3. Play request for the current failed path reloads and arms playback
+        let retryTask = app.togglePreviewPlay()
+        XCTAssertNotNil(retryTask, "Play request for unready track must return an active reload task")
+        await retryTask?.value
+
+        XCTAssertNil(app.previewErrorMessage)
+        XCTAssertEqual(app.previewTrackPath, missingPath)
+        XCTAssertTrue(app.isPreviewPlaying)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(0.25)
+
+        // 4. Paused preview whose file is already installed toggles play without reloading
+        let pauseTask = app.togglePreviewPlay()
+        XCTAssertNil(pauseTask, "Pausing an installed preview must not re-trigger loading")
+        XCTAssertFalse(app.isPreviewPlaying)
+        XCTAssertFalse(audio.cuePreview.isPlaying)
+        try assertCueSignal(0)
+
+        // 5. Resuming play toggles play without reloading
+        let resumeTask = app.togglePreviewPlay()
+        XCTAssertNil(resumeTask, "Resuming an installed preview must not re-trigger loading")
+        XCTAssertTrue(app.isPreviewPlaying)
+        XCTAssertTrue(audio.cuePreview.isPlaying)
+        try assertCueSignal(0.25)
+
+        app.stopPreview()
+    }
 }

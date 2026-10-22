@@ -15,18 +15,26 @@ Relevant merged work:
 
 ## Open PR14 and verified code
 
-Original source branch: `feat/phase-3b-library-cue-preview`. Implementation owner: `pulsedeckai-48`; coordinating orchestrator: `pulsedeckai-7`. Prior owner work remains held, with existing branches and worktrees preserved.
+Original source branch: `feat/phase-3b-library-cue-preview`. Implementation owner: `pulsedeckai-78` (`gemini-3.8-flash-high`); coordinating orchestrator: `pulsedeckai-77`. Prior owner work remains held, with existing branches and worktrees preserved.
 
 Tested **code** head: `6446b82e8f251e90ce6f48cd24a8cff0200cee9b`. [Actual CI run 39757702690](https://github.com/Ejv1k/PulseDeckAI/actions/runs/39757702690) succeeded: build, **247 Swift tests**, including **17 preview / 37 waveform / 21 routing**, and **40 Python tests**. The downloaded checkout log identifies `4c001744292a7fb9bb73c0930f3fcfcdfc20e825`, parents `9bb69ca3534cea1e5b298bbbcab6e743e80179a5` and the tested code head. Its tree `51eb6609fe5631d98c4a7a92482cf9a340013fdd` equals the code source and fresh-main merge tree.
 
-The final closeout extends that tested code head with Markdown-only status/handoff changes. Its current head is available on PR14; it is distinct from the tested code head above. All non-Markdown tracked files are byte-identical to that code head. Any automatic CI for the documentation head is reported separately in the PR body; the code run above is not relabeled as documentation-head CI.
+Documentation head: `111e994a4b26b7905a2a689f939418abfbccc847`. [Actual CI run 39793773350](https://github.com/Ejv1k/PulseDeckAI/actions/runs/39793773350) succeeded on synthetic checkout `21d99e0` (parents `9bb69ca` and `111e994`): build, 247 Swift tests, 40 Python tests.
 
-Both required findings from [review 5611901550](https://github.com/Ejv1k/PulseDeckAI/pull/14#pullrequestreview-5611901550) are fixed and their provider threads resolved:
+Review findings fixed and their provider threads resolved:
 
 - [4346578316](https://github.com/Ejv1k/PulseDeckAI/pull/14#discussion_r4346578316), `PRRT_kwDOVJOZu86vHy1f`: immediate CUE playback now waits for successful current-request installation. Pending intent can be cancelled; failures cannot play the previous file or publish false playing state.
 - [4346578333](https://github.com/Ejv1k/PulseDeckAI/pull/14#discussion_r4346578333), `PRRT_kwDOVJOZu86vHy1s`: file preparation performs no player mutation. MainActor identity checks and serialized player request tokens reject stale selection/root/stop completions before installation. Production regressions verify actual Cue PCM and Master transport/fader isolation.
+- [4349752755](https://github.com/Ejv1k/PulseDeckAI/pull/14#discussion_r4349752755), `PRRT_kwDOVJOZu86vPYjb`: play requests for an unready or failed track path trigger file reloading and arm playback upon completion. Paused preview whose file is already installed toggles play without reloading. Player stays silent until the requested file installs. Tested in `testPlayRequestForFailedTrackReloadsAndArmsPlayback`.
 
 Negative proof preceded behavioral repair: all three primary production regressions failed with 11 assertions at the old code behavior. The PR body retains that evidence, prior feature history, and the necessary older-Swift ownership fixes. Resolved findings and passing CI do not constitute final independent approval.
+
+## Next concrete slice: Phase 4A UI & AutoPilot integration
+
+Immediately following green PR14 review and merge to `main`:
+1. UI Controls: macro transition selector (Bass Swap, Filter Echo Wash, Hard Cut), phrase length selector (8, 16, 32 bars), 1-click execution trigger, and AutoPilot arm/disarm toggle.
+2. AppState binding: integrate `TransitionExecutionService` actor with `@MainActor` state publications (`isAutoPilotArmed`, `transitionProgress`, `activeTransitionState`).
+3. Regression coverage: full suite in `Tests/PulseDeckCoreTests/` or `Tests/PulseDeckAITests/`.
 
 ## Stop boundary and remaining limits
 

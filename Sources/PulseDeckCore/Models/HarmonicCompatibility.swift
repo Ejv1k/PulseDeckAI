@@ -237,26 +237,26 @@ public struct TrackCompatibility: Sendable, Equatable {
         return .clash
     }
 
-    /// Verifies authentic measured beat grid exists (rejecting 1.0s unknown-tempo sentinels or empty grids).
+    /// Verifies authentic measured beat grid exists (rejecting 1.0s unknown-tempo sentinels, empty grids, or invalid values).
+    /// Accepts realistic audio analysis transient jitter while preserving monotonicity and bounds.
     public static func isAuthenticMeasuredGrid(track: TrackCacheEntry) -> Bool {
         let grid = track.beatGrid
         guard track.duration.isFinite, track.duration > 0,
               track.bpm.isFinite, track.bpm > 0,
               track.confidence.isFinite, (0...1).contains(track.confidence), track.confidence > 0,
-              grid.firstBeatOffsetSeconds.isFinite, grid.firstBeatOffsetSeconds >= 0,
+              grid.firstBeatOffsetSeconds.isFinite, grid.firstBeatOffsetSeconds >= 0, grid.firstBeatOffsetSeconds <= track.duration,
               grid.beatIntervalSeconds.isFinite, grid.beatIntervalSeconds > 0,
               grid.beatTimestamps.count >= 2 else {
             return false
         }
-        let tolerance = max(1e-7, grid.beatIntervalSeconds * 1e-6)
+        let tolerance = max(1e-4, grid.beatIntervalSeconds * 0.01)
         guard abs(grid.beatIntervalSeconds - 60.0 / track.bpm) <= tolerance else {
             return false
         }
         var previous = -Double.infinity
-        for (index, timestamp) in grid.beatTimestamps.enumerated() {
-            let expected = grid.firstBeatOffsetSeconds + Double(index) * grid.beatIntervalSeconds
+        for timestamp in grid.beatTimestamps {
             guard timestamp.isFinite, timestamp >= 0, timestamp <= track.duration,
-                  timestamp > previous, expected.isFinite, abs(timestamp - expected) <= tolerance else {
+                  timestamp > previous else {
                 return false
             }
             previous = timestamp

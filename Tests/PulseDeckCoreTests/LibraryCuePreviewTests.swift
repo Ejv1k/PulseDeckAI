@@ -853,4 +853,185 @@ final class LibraryCuePreviewTests: XCTestCase {
 
         app.stopPreview()
     }
+
+    @MainActor
+    func testAuthenticMeasuredGridAcceptsRealisticJitterAndEnablesBeatSteppingAndCompatibility() async throws {
+        let (app, tempDir) = try makeOfflineAppState(startCoordinator: true)
+
+        let bpm = 120.0
+        let beatInterval = 60.0 / bpm
+        let duration = 10.0
+        let cacheURL = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+
+        // 1. Realistic beat grid with tens of ms jitter (typical librosa / vDSP transient variance)
+        let jitterTimestamps: [Double] = [
+            0.100,  // Beat 0: 100ms
+            0.625,  // Beat 1: +525ms (+25ms jitter)
+            1.082,  // Beat 2: +457ms (-43ms jitter)
+            1.635,  // Beat 3: +553ms (+53ms jitter)
+            2.095,  // Beat 4: +460ms (-40ms jitter)
+            2.610,  // Beat 5: +515ms (+15ms jitter)
+            3.105   // Beat 6: +495ms (-5ms jitter)
+        ]
+
+        let jitterTrack = TrackCacheEntry(
+            relativePath: "jitter.wav",
+            fileFingerprint: "fp-jitter",
+            fileSizeBytes: 2048,
+            fileModificationTime: "2026-10-22T00:00:00Z",
+            duration: duration,
+            sampleRate: 44100.0,
+            channels: 2,
+            bitDepth: 16,
+            bpm: bpm,
+            musicalKey: "8A",
+            confidence: 0.88,
+            waveformMetadata: WaveformMetadata(
+                sampleCount: 10,
+                downsampleFactor: 1,
+                peakValues: [0.5],
+                lowBandPeaks: [0.5],
+                midBandPeaks: [0.5],
+                highBandPeaks: [0.5]
+            ),
+            beatGrid: BeatGrid(
+                firstBeatOffsetSeconds: 0.100,
+                beatIntervalSeconds: beatInterval,
+                beatTimestamps: jitterTimestamps
+            ),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "1.0.0",
+            analysisTimestamp: "2026-10-22T00:00:00Z"
+        )
+
+        // Verifies authentic grid accepts realistic jitter
+        XCTAssertTrue(TrackCompatibility.isAuthenticMeasuredGrid(track: jitterTrack),
+                      "Realistic jitter of tens of ms must be accepted as authentic measured grid")
+
+        // Verifies compatibility evaluation uses valid BPM
+        let refTrack = makeTrackEntry(relativePath: "ref.wav", duration: 10.0, bpm: 120.0, musicalKey: "8A")
+        let comp = TrackCompatibility.evaluate(candidate: jitterTrack, reference: refTrack)
+        XCTAssertEqual(comp.tempo, .compatible(deltaPercent: 0.0))
+        XCTAssertTrue(comp.isOverallCompatible)
+
+        // Verifies AppState.previewHasUsableBeatGrid and beat stepping follow valid BPM
+        let jitterURL = tempDir.appendingPathComponent("jitter.wav")
+        try makeSyntheticAudioFile(url: jitterURL, durationSeconds: duration)
+
+        let cache = PulseDeckLibraryCache(libraryRoot: "root", tracks: ["jitter.wav": jitterTrack])
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+        app.refreshLibrary()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        app.loadPreviewTrack(relativePath: "jitter.wav")
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertTrue(app.previewHasUsableBeatGrid,
+                      "previewHasUsableBeatGrid must be true for track with authentic measured grid and jitter")
+
+        // Beat stepping should advance by beatInterval (0.5s)
+        app.stepPreview(beats: 1.0)
+        XCTAssertEqual(app.previewPositionSeconds, 0.5, accuracy: 0.05)
+
+        // 2. Strict rejection of invalid/sentinel cases
+        let zeroBpmTrack = makeTrackEntry(relativePath: "zero.wav", bpm: 0.0, hasValidGrid: false)
+        XCTAssertFalse(TrackCompatibility.isAuthenticMeasuredGrid(track: zeroBpmTrack))
+
+        let singleBeatTrack = TrackCacheEntry(
+            relativePath: "single.wav",
+            fileFingerprint: "fp",
+            fileSizeBytes: 100,
+            fileModificationTime: "",
+            duration: 10.0,
+            sampleRate: 44100,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "8A",
+            confidence: 0.9,
+            waveformMetadata: WaveformMetadata(sampleCount: 1, downsampleFactor: 1, peakValues: [0], lowBandPeaks: [0], midBandPeaks: [0], highBandPeaks: [0]),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.5]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "1.0",
+            analysisTimestamp: ""
+        )
+        XCTAssertFalse(TrackCompatibility.isAuthenticMeasuredGrid(track: singleBeatTrack))
+
+        let nonMonotonicTrack = TrackCacheEntry(
+            relativePath: "non_mono.wav",
+            fileFingerprint: "fp",
+            fileSizeBytes: 100,
+            fileModificationTime: "",
+            duration: 10.0,
+            sampleRate: 44100,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "8A",
+            confidence: 0.9,
+            waveformMetadata: WaveformMetadata(sampleCount: 1, downsampleFactor: 1, peakValues: [0], lowBandPeaks: [0], midBandPeaks: [0], highBandPeaks: [0]),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.5, 0.4, 0.9]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "1.0",
+            analysisTimestamp: ""
+        )
+        XCTAssertFalse(TrackCompatibility.isAuthenticMeasuredGrid(track: nonMonotonicTrack))
+
+        let outOfBoundsTrack = TrackCacheEntry(
+            relativePath: "oob.wav",
+            fileFingerprint: "fp",
+            fileSizeBytes: 100,
+            fileModificationTime: "",
+            duration: 10.0,
+            sampleRate: 44100,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "8A",
+            confidence: 0.9,
+            waveformMetadata: WaveformMetadata(sampleCount: 1, downsampleFactor: 1, peakValues: [0], lowBandPeaks: [0], midBandPeaks: [0], highBandPeaks: [0]),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.5, 12.0]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "1.0",
+            analysisTimestamp: ""
+        )
+        XCTAssertFalse(TrackCompatibility.isAuthenticMeasuredGrid(track: outOfBoundsTrack))
+
+        let inconsistentIntervalTrack = TrackCacheEntry(
+            relativePath: "inconsistent.wav",
+            fileFingerprint: "fp",
+            fileSizeBytes: 100,
+            fileModificationTime: "",
+            duration: 10.0,
+            sampleRate: 44100,
+            channels: 2,
+            bitDepth: 16,
+            bpm: 120.0,
+            musicalKey: "8A",
+            confidence: 0.9,
+            waveformMetadata: WaveformMetadata(sampleCount: 1, downsampleFactor: 1, peakValues: [0], lowBandPeaks: [0], midBandPeaks: [0], highBandPeaks: [0]),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1.0, beatTimestamps: [0.0, 1.0]),
+            structure: TrackStructure(sections: [], vocalSegments: []),
+            cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
+            aiTrimBypass: false,
+            manualOverrides: ManualOverrides(),
+            analyzerVersion: "1.0",
+            analysisTimestamp: ""
+        )
+        XCTAssertFalse(TrackCompatibility.isAuthenticMeasuredGrid(track: inconsistentIntervalTrack))
+
+        app.stopPreview()
+    }
 }

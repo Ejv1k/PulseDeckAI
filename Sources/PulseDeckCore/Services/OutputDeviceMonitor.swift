@@ -86,6 +86,9 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     private let coalescingDelayMs: Int
     private let onChange: (@Sendable () -> Void)?
     private let onError: (@Sendable (CoreAudioError) -> Void)?
+    private let callbackLock = NSLock()
+    private var _onTopologyChange: (@Sendable () -> Void)?
+    private var _onMonitorError: (@Sendable (CoreAudioError) -> Void)?
 
     private var isMonitoring: Bool = false
     private var isShuttingDown: Bool = false
@@ -159,6 +162,19 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     public func stop() {
         let events = syncControl { self.stopLocked() }
         deliver(events)
+    }
+
+    /// Restores a registration removed by shutdown without changing a surviving registration's
+    /// desired binding, running intent, recovery budget, or configuration observer.
+    func ensureEngineRegistration(
+        _ engine: AVAudioEngine,
+        role: AudioEngineRole,
+        desiredDeviceUID: String?
+    ) {
+        syncControl {
+            guard !registeredEngines.contains(where: { $0.engine === engine }) else { return }
+            registerEngine(engine, role: role, desiredDeviceUID: desiredDeviceUID)
+        }
     }
 
     /// Registers an `AVAudioEngine` for automatic device recovery and configuration observation.
@@ -360,6 +376,48 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         return configurationObserverFireCount
     }
 
+    /// Callback triggered on topology changes.
+    public var onTopologyChange: (@Sendable () -> Void)? {
+        get {
+            callbackLock.lock()
+            defer { callbackLock.unlock() }
+            return _onTopologyChange
+        }
+        set {
+            callbackLock.lock()
+            _onTopologyChange = newValue
+            callbackLock.unlock()
+        }
+    }
+
+    /// Callback triggered on monitor errors.
+    public var onMonitorError: (@Sendable (CoreAudioError) -> Void)? {
+        get {
+            callbackLock.lock()
+            defer { callbackLock.unlock() }
+            return _onMonitorError
+        }
+        set {
+            callbackLock.lock()
+            _onMonitorError = newValue
+            callbackLock.unlock()
+        }
+    }
+
+    /// Returns the active bound device UID for the specified role, or nil if unbound/missing.
+    public func boundDeviceUID(for role: AudioEngineRole) -> String? {
+        syncControl {
+            self.registeredEngines.first { $0.role == role }?.boundDeviceUID
+        }
+    }
+
+    /// Returns the desired/preferred device UID for the specified role, or nil if none configured.
+    public func desiredDeviceUID(for role: AudioEngineRole) -> String? {
+        syncControl {
+            self.registeredEngines.first { $0.role == role }?.desiredDeviceUID
+        }
+    }
+
     /// Returns the UID stored for `engine`, or `nil` when that engine is not registered.
     func boundDeviceUIDForTesting(of engine: AVAudioEngine) -> String? {
         syncControl {
@@ -430,8 +488,12 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             switch event {
             case .failure(let error):
                 onError?(error)
+                let customError = self.onMonitorError
+                customError?(error)
             case .topologyChanged:
                 onChange?()
+                let customChange = self.onTopologyChange
+                customChange?()
             }
         }
     }

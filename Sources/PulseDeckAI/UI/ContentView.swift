@@ -7,10 +7,14 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             StatusHeaderView(appState: appState)
 
+            OutputRoutingView(appState: appState)
+
             AudioMeterStatusView(appState: appState)
+
+            DeckStudioView(appState: appState)
 
             WaveformEditorView(model: appState.waveformEditorModel)
 

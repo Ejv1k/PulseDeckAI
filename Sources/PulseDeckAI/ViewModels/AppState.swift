@@ -528,34 +528,33 @@ public final class AppState: ObservableObject {
             return
         }
 
-        Task.detached(priority: .userInitiated) { [weak self, coordinator] in
+        Task { [weak self] in
             do {
-                try coordinator.cuePreview.load(url: fileURL)
-                let duration = coordinator.cuePreview.trackDurationSeconds
-                await MainActor.run {
-                    guard let self,
-                          self.previewGeneration == generation,
-                          self.libraryRootURL.standardizedFileURL == standardizedRoot,
-                          self.previewTrackPath == relativePath else {
-                        return
-                    }
-                    self.previewDurationSeconds = duration
-                    self.previewPositionSeconds = 0.0
-                    self.previewErrorMessage = nil
+                let duration = try await Task.detached(priority: .userInitiated) { [coordinator] () -> Double in
+                    try coordinator.cuePreview.load(url: fileURL)
+                    return coordinator.cuePreview.trackDurationSeconds
+                }.value
+
+                guard let self,
+                      self.previewGeneration == generation,
+                      self.libraryRootURL.standardizedFileURL == standardizedRoot,
+                      self.previewTrackPath == relativePath else {
+                    return
                 }
+                self.previewDurationSeconds = duration
+                self.previewPositionSeconds = 0.0
+                self.previewErrorMessage = nil
             } catch {
-                await MainActor.run {
-                    guard let self,
-                          self.previewGeneration == generation,
-                          self.libraryRootURL.standardizedFileURL == standardizedRoot,
-                          self.previewTrackPath == relativePath else {
-                        return
-                    }
-                    self.previewDurationSeconds = 0.0
-                    self.previewPositionSeconds = 0.0
-                    self.isPreviewPlaying = false
-                    self.previewErrorMessage = "Preview load failed: \(error.localizedDescription)"
+                guard let self,
+                      self.previewGeneration == generation,
+                      self.libraryRootURL.standardizedFileURL == standardizedRoot,
+                      self.previewTrackPath == relativePath else {
+                    return
                 }
+                self.previewDurationSeconds = 0.0
+                self.previewPositionSeconds = 0.0
+                self.isPreviewPlaying = false
+                self.previewErrorMessage = "Preview load failed: \(error.localizedDescription)"
             }
         }
     }

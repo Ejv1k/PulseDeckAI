@@ -322,8 +322,7 @@ public struct LibraryBrowserView: View {
                                         if isPreviewing {
                                             appState.togglePreviewPlay()
                                         } else {
-                                            appState.loadPreviewTrack(relativePath: relPath)
-                                            appState.togglePreviewPlay()
+                                            appState.loadPreviewTrack(relativePath: relPath, playWhenReady: true)
                                         }
                                     }) {
                                         HStack(spacing: 3) {

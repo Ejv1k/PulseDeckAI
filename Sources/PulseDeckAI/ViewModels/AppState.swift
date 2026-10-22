@@ -525,7 +525,7 @@ public final class AppState: ObservableObject {
     /// Loads a library track into the headphone audition preview player on the Cue audio engine.
     /// Runs audio file I/O off the MainActor to prevent UI hitches, and tracks generation to drop stale loads.
     @discardableResult
-    public func loadPreviewTrack(relativePath: String) -> Task<Void, Never> {
+    public func loadPreviewTrack(relativePath: String, playWhenReady: Bool = false) -> Task<Void, Never> {
         let rootURL = self.libraryRootURL
         let standardizedRoot = rootURL.standardizedFileURL
         let fileURL = rootURL.appendingPathComponent(relativePath)
@@ -537,7 +537,7 @@ public final class AppState: ObservableObject {
         self.previewPositionSeconds = 0.0
         self.previewDurationSeconds = 0.0
         previewLoadIsPending = false
-        previewPlayRequested = false
+        previewPlayRequested = playWhenReady
         previewIsReady = false
         stopPreviewPolling()
 
@@ -609,10 +609,12 @@ public final class AppState: ObservableObject {
     }
 
     /// Toggles play / pause state for the headphone audition preview player.
-    public func togglePreviewPlay() {
+    /// If the current preview track failed or is not ready, re-triggers file loading and arms playback on completion.
+    @discardableResult
+    public func togglePreviewPlay() -> Task<Void, Never>? {
         guard let coordinator = self.audioCoordinator else {
             isPreviewPlaying.toggle()
-            return
+            return nil
         }
 
         if isPreviewPlaying {
@@ -620,7 +622,7 @@ public final class AppState: ObservableObject {
             isPreviewPlaying = false
             stopPreviewPolling()
             previewPositionSeconds = coordinator.cuePreview.currentPositionSeconds
-            return
+            return nil
         }
 
         // Start Cue audio engine safely if stopped without interrupting live Master engine
@@ -637,20 +639,25 @@ public final class AppState: ObservableObject {
                 }
             } catch {
                 self.previewErrorMessage = "Failed to start cue output: \(error.localizedDescription)"
-                return
+                return nil
             }
         }
 
         guard coordinator.cueAudioEngine.isRunning else {
             self.previewErrorMessage = "Cue output engine is not running"
-            return
+            return nil
         }
 
         if previewLoadIsPending {
             previewPlayRequested.toggle()
-            return
+            return nil
         }
-        guard previewIsReady else { return }
+        guard previewIsReady else {
+            if let path = self.previewTrackPath {
+                return loadPreviewTrack(relativePath: path, playWhenReady: true)
+            }
+            return nil
+        }
 
         coordinator.cuePreview.play()
         let playing = coordinator.cuePreview.isPlaying
@@ -659,6 +666,7 @@ public final class AppState: ObservableObject {
             self.previewErrorMessage = nil
             startPreviewPolling()
         }
+        return nil
     }
 
     /// Stops headphone audition preview playback and resets playhead to 0.

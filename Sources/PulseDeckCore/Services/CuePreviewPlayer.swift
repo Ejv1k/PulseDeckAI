@@ -111,7 +111,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     /// Installs an already opened file only if this request still owns the serialized player.
     /// File preparation performs no player mutation; stop and later requests invalidate this token.
     @discardableResult
-    public func load(file: AVAudioFile, requestID: UInt64) -> Bool {
+    public func load(file: sending AVAudioFile, requestID: UInt64) -> Bool {
         executeOnControlQueue {
             self.stateLock.lock()
             let isCurrent = self._loadGeneration == requestID
@@ -286,7 +286,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         stateLock.unlock()
     }
 
-    private func executeOnControlQueue<T: Sendable>(_ block: @Sendable () throws -> T) rethrows -> T {
+    private func executeOnControlQueue<T: Sendable>(_ block: () throws -> T) rethrows -> T {
         if let monitor {
             return try monitor.performOnControlQueue(block)
         } else {

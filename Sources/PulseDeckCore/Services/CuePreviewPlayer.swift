@@ -208,6 +208,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         let duration = _trackDurationSeconds
 
         if let nodeTime = playerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = playerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate.isFinite && sampleRate > 0.0 {

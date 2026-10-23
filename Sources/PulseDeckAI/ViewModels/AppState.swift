@@ -3,6 +3,14 @@ import Combine
 import AVFoundation
 import PulseDeckCore
 
+public enum TransitionMacroStyle: String, CaseIterable, Hashable, Identifiable, Sendable {
+    case beatSyncedBassSwap = "BASS SWAP"
+    case filterEchoWash = "FILTER ECHO"
+    case hardCutOnDrop = "HARD CUT"
+
+    public var id: String { rawValue }
+}
+
 @MainActor
 public final class AppState: ObservableObject {
     @Published public var appVersion: String = PulseDeckCoreConfig.version
@@ -48,6 +56,12 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isDeckACueActive: Bool = false
     @Published public private(set) var isDeckBCueActive: Bool = false
     @Published public var crossfaderPosition: Float = 0.5
+    @Published public var transitionMacroStyle: TransitionMacroStyle = .beatSyncedBassSwap
+    @Published public var transitionPhraseBars: Int = 16
+    @Published public private(set) var transitionProgress: Double = 0.0
+    @Published public private(set) var activeTransitionState: TransitionExecutionState = .idle
+    @Published public private(set) var isAutoPilotArmed: Bool = false
+    @Published public private(set) var transitionErrorMessage: String?
 
     // Library Audition & Compatibility State
     @Published public private(set) var previewTrackPath: String?
@@ -70,9 +84,82 @@ public final class AppState: ObservableObject {
     private var previewPlayRequested = false
     private var previewIsReady = false
     private var previewPollingTask: Task<Void, Never>?
+    private var transitionObservationTask: Task<Void, Never>?
     private let beforePreviewFilePreparation: (@Sendable (URL) async -> Void)?
     private var loadedCacheRootURL: URL?
     private let cacheLoader: @Sendable (URL) async -> PulseDeckLibraryCache?
+
+    public var isTransitionBusy: Bool {
+        switch activeTransitionState {
+        case .armed, .inProgress:
+            return true
+        case .idle, .completed, .cancelled:
+            return false
+        }
+    }
+
+    public var transitionIsReady: Bool {
+        transitionReadinessMessage == nil
+    }
+
+    public var transitionReadinessMessage: String? {
+        readinessMessage(autoPilot: false)
+    }
+
+    public var autoPilotReadinessMessage: String? {
+        readinessMessage(autoPilot: true)
+    }
+
+    private func readinessMessage(autoPilot: Bool) -> String? {
+        guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
+        guard coordinator.masterAudioEngine.isRunning else { return "Master output is stopped" }
+        guard let trackA = trackEntry(for: .deckA), let trackB = trackEntry(for: .deckB) else {
+            return "Load a track on both decks"
+        }
+        guard let pathA = coordinator.deckAGraph.loadedTrackURL,
+              pathA.standardizedFileURL == libraryRootURL.appendingPathComponent(trackA.relativePath).standardizedFileURL else {
+            return "Deck A audio does not match its loaded track"
+        }
+        guard let pathB = coordinator.deckBGraph.loadedTrackURL,
+              pathB.standardizedFileURL == libraryRootURL.appendingPathComponent(trackB.relativePath).standardizedFileURL else {
+            return "Deck B audio does not match its loaded track"
+        }
+
+        let aPlaying = coordinator.deckAGraph.isMasterPlaying
+        let bPlaying = coordinator.deckBGraph.isMasterPlaying
+        guard aPlaying != bPlaying else { return "Play exactly one outgoing deck" }
+        let outgoingWeight = aPlaying ? coordinator.deckAGraph.crossfaderWeight : coordinator.deckBGraph.crossfaderWeight
+        guard outgoingWeight > 1e-3 else { return "Move the crossfader toward the playing deck" }
+        let planner = TransitionPlanner()
+        let outgoingDescriptor = TrackTransitionDescriptor(deck: aPlaying ? .deckA : .deckB, cacheEntry: aPlaying ? trackA : trackB)
+        let incomingDescriptor = TrackTransitionDescriptor(deck: aPlaying ? .deckB : .deckA, cacheEntry: aPlaying ? trackB : trackA)
+        switch transitionMacroStyle {
+        case .beatSyncedBassSwap where !planner.isUsableBeatGrid(descriptor: outgoingDescriptor):
+            return "Bass Swap needs a measured beat grid on the outgoing deck"
+        case .beatSyncedBassSwap where !planner.isUsableBeatGrid(descriptor: incomingDescriptor):
+            return "Bass Swap needs a measured beat grid on the incoming deck"
+        case .hardCutOnDrop where !planner.isUsableBeatGrid(descriptor: outgoingDescriptor):
+            return "Hard Cut needs a measured beat grid on the outgoing deck"
+        default:
+            break
+        }
+        do {
+            let request = try buildTransitionRequest(coordinator: coordinator, autoPilot: autoPilot)
+            _ = try planner.plan(request)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    public var transitionReadinessText: String {
+        transitionReadinessMessage ?? "Ready for \(audioCoordinator?.deckAGraph.isMasterPlaying == true ? "Deck A" : "Deck B") → next deck"
+    }
+
+    public var isTransitionRunning: Bool {
+        if case .inProgress = activeTransitionState { return true }
+        return false
+    }
 
     public init() {
         let coordinator = AudioEngineCoordinator()
@@ -369,7 +456,8 @@ public final class AppState: ObservableObject {
 
     /// Loads the currently selected library track into the designated deck.
     public func loadSelectedTrackIntoDeck(deck: DeckIdentifier) {
-        guard let selectedPath = selectedTrackPath,
+        guard !isTransitionBusy,
+              let selectedPath = selectedTrackPath,
               let track = loadedCache?.tracks[selectedPath] else {
             return
         }
@@ -389,11 +477,17 @@ public final class AppState: ObservableObject {
         do {
             switch deck {
             case .deckA:
-                try coordinator.deckA.loadTrack(url: trackURL)
+                try coordinator.monitor.performOnControlQueue {
+                    try coordinator.deckA.loadTrack(url: trackURL)
+                    coordinator.deckA.volume = 1.0
+                }
                 self.deckATrack = track
                 self.isDeckAPlaying = false
             case .deckB:
-                try coordinator.deckB.loadTrack(url: trackURL)
+                try coordinator.monitor.performOnControlQueue {
+                    try coordinator.deckB.loadTrack(url: trackURL)
+                    coordinator.deckB.volume = 1.0
+                }
                 self.deckBTrack = track
                 self.isDeckBPlaying = false
             }
@@ -405,6 +499,7 @@ public final class AppState: ObservableObject {
 
     /// Toggles play / pause state for the specified deck.
     public func toggleDeckPlay(deck: DeckIdentifier) {
+        guard !isTransitionBusy else { return }
         guard let coordinator = self.audioCoordinator else {
             switch deck {
             case .deckA:
@@ -436,19 +531,25 @@ public final class AppState: ObservableObject {
 
         switch deck {
         case .deckA:
-            if isDeckAPlaying {
+            if coordinator.deckAGraph.isMasterPlaying {
                 coordinator.deckA.pause()
                 isDeckAPlaying = false
             } else {
-                coordinator.deckA.play()
+                coordinator.monitor.performOnControlQueue {
+                    coordinator.deckA.volume = 1.0
+                    coordinator.deckA.play()
+                }
                 isDeckAPlaying = true
             }
         case .deckB:
-            if isDeckBPlaying {
+            if coordinator.deckBGraph.isMasterPlaying {
                 coordinator.deckB.pause()
                 isDeckBPlaying = false
             } else {
-                coordinator.deckB.play()
+                coordinator.monitor.performOnControlQueue {
+                    coordinator.deckB.volume = 1.0
+                    coordinator.deckB.play()
+                }
                 isDeckBPlaying = true
             }
         }
@@ -518,6 +619,179 @@ public final class AppState: ObservableObject {
         let clamped = position.isFinite ? min(max(position, 0.0), 1.0) : 0.5
         self.crossfaderPosition = clamped
         self.audioCoordinator?.setCrossfader(position: clamped)
+    }
+
+    /// Starts the selected macro from the outgoing deck's current playhead.
+    public func executeTransition() async {
+        do {
+            guard let coordinator = audioCoordinator else {
+                throw TransitionExecutionServiceError.invalidRequest("Audio coordinator unavailable")
+            }
+            let request = try makeTransitionRequest(coordinator: coordinator, autoPilot: false)
+            let service = coordinator.transitionExecutionService
+            _ = try await service.startTransition(request: request)
+            transitionErrorMessage = nil
+            await refreshTransitionSnapshot(using: service)
+            observeTransition(using: service)
+        } catch {
+            transitionErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Arms or disarms the selected macro at the outgoing track's mix-out cue.
+    public func toggleAutoPilot() async {
+        guard let coordinator = audioCoordinator else {
+            transitionErrorMessage = "Audio coordinator unavailable"
+            return
+        }
+        let service = coordinator.transitionExecutionService
+        if isAutoPilotArmed {
+            await service.disableAutoPilot()
+            transitionErrorMessage = nil
+            await refreshTransitionSnapshot(using: service)
+            if isTransitionBusy {
+                observeTransition(using: service)
+            } else {
+                stopTransitionObservation()
+            }
+            return
+        }
+
+        do {
+            let request = try makeTransitionRequest(coordinator: coordinator, autoPilot: true)
+            _ = try await service.armAutoPilot(request: request)
+            transitionErrorMessage = nil
+            await refreshTransitionSnapshot(using: service)
+            observeTransition(using: service)
+        } catch {
+            transitionErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Cancels an armed AutoPilot or active transition and synchronizes published transport state.
+    public func cancelTransition() async {
+        guard let coordinator = audioCoordinator else { return }
+        let service = coordinator.transitionExecutionService
+        _ = await service.cancelTransition()
+        transitionErrorMessage = nil
+        await refreshTransitionSnapshot(using: service)
+        isDeckAPlaying = coordinator.deckAGraph.isMasterPlaying
+        isDeckBPlaying = coordinator.deckBGraph.isMasterPlaying
+        stopTransitionObservation()
+    }
+
+    private func makeTransitionRequest(
+        coordinator: AudioEngineCoordinator,
+        autoPilot: Bool
+    ) throws -> TransitionRequest {
+        let readiness = autoPilot ? autoPilotReadinessMessage : transitionReadinessMessage
+        guard readiness == nil else {
+            throw TransitionExecutionServiceError.invalidRequest(readiness ?? "Transition is not ready")
+        }
+        return try buildTransitionRequest(coordinator: coordinator, autoPilot: autoPilot)
+    }
+
+    private func buildTransitionRequest(
+        coordinator: AudioEngineCoordinator,
+        autoPilot: Bool
+    ) throws -> TransitionRequest {
+        let outgoingDeck: DeckIdentifier = coordinator.deckAGraph.isMasterPlaying ? .deckA : .deckB
+        let incomingDeck: DeckIdentifier = outgoingDeck == .deckA ? .deckB : .deckA
+        guard let outgoingEntry = trackEntry(for: outgoingDeck),
+              let incomingEntry = trackEntry(for: incomingDeck) else {
+            throw TransitionExecutionServiceError.invalidRequest("Both decks need cached track metadata")
+        }
+
+        let outgoingGraph = outgoingDeck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+        let outgoingDescriptor = TrackTransitionDescriptor(deck: outgoingDeck, cacheEntry: outgoingEntry)
+        let incomingDescriptor = TrackTransitionDescriptor(deck: incomingDeck, cacheEntry: incomingEntry)
+        let style: TransitionStyle
+        switch transitionMacroStyle {
+        case .beatSyncedBassSwap:
+            style = .beatSyncedBassSwap(bars: transitionPhraseBars, allowFallbackToFilter: false)
+        case .filterEchoWash:
+            let bpm = outgoingEntry.bpm.isFinite && (40...240).contains(outgoingEntry.bpm) ? outgoingEntry.bpm : 120.0
+            let duration = Double(transitionPhraseBars) * 4.0 * 60.0 / bpm
+            style = .filterEchoWash(durationSeconds: duration, echoSend: 0.5)
+        case .hardCutOnDrop:
+            style = .hardCutOnDrop(bars: transitionPhraseBars, allowFallbackToFilter: false)
+        }
+
+        let trigger = autoPilot ? nil : outgoingGraph.currentMasterPlayheadSeconds()
+        guard autoPilot || (trigger?.isFinite == true) else {
+            throw TransitionExecutionServiceError.invalidRequest("Outgoing playhead is unavailable")
+        }
+        if autoPilot {
+            let playhead = outgoingGraph.currentMasterPlayheadSeconds()
+            guard playhead.isFinite, playhead < outgoingEntry.cueMarkers.mixOutCue else {
+                throw TransitionExecutionServiceError.playheadPastTrigger(
+                    current: playhead,
+                    trigger: outgoingEntry.cueMarkers.mixOutCue
+                )
+            }
+        }
+
+        return TransitionRequest(
+            outgoingTrack: outgoingDescriptor,
+            incomingTrack: incomingDescriptor,
+            style: style,
+            triggerPositionSeconds: trigger,
+            outgoingPlaybackRate: outgoingGraph.timePitchParameters.rate
+        )
+    }
+
+    private func trackEntry(for deck: DeckIdentifier) -> TrackCacheEntry? {
+        let loadedEntry: TrackCacheEntry?
+        switch deck {
+        case .deckA: loadedEntry = deckATrack
+        case .deckB: loadedEntry = deckBTrack
+        }
+        guard let loadedEntry,
+              loadedCacheRootURL == libraryRootURL.standardizedFileURL,
+              let currentEntry = loadedCache?.tracks[loadedEntry.relativePath],
+              currentEntry.fileFingerprint == loadedEntry.fileFingerprint else {
+            return nil
+        }
+        return currentEntry
+    }
+
+    private func observeTransition(using service: TransitionExecutionService) {
+        guard transitionObservationTask == nil else { return }
+        transitionObservationTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                let snapshot = await service.currentSnapshot()
+                guard let self else { return }
+                self.applyTransitionSnapshot(snapshot)
+                switch snapshot.state {
+                case .armed, .inProgress:
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                case .idle, .completed, .cancelled:
+                    self.transitionObservationTask = nil
+                    return
+                }
+            }
+            self?.transitionObservationTask = nil
+        }
+    }
+
+    private func refreshTransitionSnapshot(using service: TransitionExecutionService) async {
+        applyTransitionSnapshot(await service.currentSnapshot())
+    }
+
+    private func applyTransitionSnapshot(_ snapshot: TransitionExecutionSnapshot) {
+        activeTransitionState = snapshot.state
+        transitionProgress = min(max(snapshot.progress.isFinite ? snapshot.progress : 0.0, 0.0), 1.0)
+        isAutoPilotArmed = snapshot.isAutoPilotArmed
+        if let coordinator = audioCoordinator {
+            isDeckAPlaying = coordinator.deckAGraph.isMasterPlaying
+            isDeckBPlaying = coordinator.deckBGraph.isMasterPlaying
+            crossfaderPosition = coordinator.crossfaderPosition
+        }
+    }
+
+    private func stopTransitionObservation() {
+        transitionObservationTask?.cancel()
+        transitionObservationTask = nil
     }
 
     // MARK: - Library Audition & Headphone Cue Preview

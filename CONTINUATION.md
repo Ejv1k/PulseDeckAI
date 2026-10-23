@@ -36,7 +36,7 @@ Negative proof preceded behavioral repair: all three primary production regressi
 
 ## Next concrete slice: Phase 4A UI & AutoPilot integration
 
-Phase 4A UI and AutoPilot integration is in progress from merged `main` `ec582558c6a0ffd9a3ddfb3b4b943ca28ec43b43`. This bounded slice adds three macro controls, 8/16/32-bar phrase selection, one-click dispatch, readiness/error/progress state, cancellation, and AutoPilot arm/disarm atop the existing actor. Offline integration tests exercise readiness, filter and hard-cut dispatch, cancellation recovery, and AutoPilot arming/disarming. Current local full Swift suite: **252 passed**. Implementation PR, provider CI, and independent Grok review remain pending; coordinator owns the review after green CI.
+Phase 4A UI and AutoPilot integration is in progress from merged `main` `ec582558c6a0ffd9a3ddfb3b4b943ca28ec43b43`. This bounded slice adds three macro controls, 8/16/32-bar phrase selection, one-click dispatch, readiness/error/progress state, cancellation, and AutoPilot arm/disarm atop the existing actor. Offline integration tests exercise readiness, filter and hard-cut dispatch, cancellation recovery, and AutoPilot arming/disarming. Current local full Swift suite: **252 passed**. Implementation [PR #15](https://github.com/Ejv1k/PulseDeckAI/pull/15) is open; provider CI and coordinator-triggered Grok review remain pending. Coordinator owns the review after green CI.
 
 ## Stop boundary and remaining limits
 

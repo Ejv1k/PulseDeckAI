@@ -20,6 +20,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     private var _scheduleStartSeconds: Double = 0.0
     private var _segmentQueued: Bool = false
     private var _scheduleGeneration: UInt64 = 0
+    private var _loadGeneration: UInt64 = 0
     private var _isPlaying: Bool = false
     private var _volume: Float = 1.0
 
@@ -92,8 +93,31 @@ public final class CuePreviewPlayer: @unchecked Sendable {
 
     /// Loads an audio file for headphone auditioning.
     public func load(url: URL) throws {
-        try executeOnControlQueue {
-            let file = try AVAudioFile(forReading: url)
+        let file = try AVAudioFile(forReading: url)
+        let requestID = beginLoad()
+        load(file: file, requestID: requestID)
+    }
+
+    /// Invalidates earlier preparations and stops the previous preview before asynchronous file I/O.
+    public func beginLoad() -> UInt64 {
+        executeOnControlQueue {
+            self.stop()
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            return self._loadGeneration
+        }
+    }
+
+    /// Installs an already opened file only if this request still owns the serialized player.
+    /// File preparation performs no player mutation; stop and later requests invalidate this token.
+    @discardableResult
+    public func load(file: sending AVAudioFile, requestID: UInt64) -> Bool {
+        executeOnControlQueue {
+            self.stateLock.lock()
+            let isCurrent = self._loadGeneration == requestID
+            self.stateLock.unlock()
+            guard isCurrent else { return false }
+
             let sampleRate = file.processingFormat.sampleRate
             let lengthFrames = file.length
             let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0
@@ -111,6 +135,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             self.stateLock.unlock()
 
             self.scheduleSegment(file: file, startSeconds: 0.0)
+            return true
         }
     }
 
@@ -156,6 +181,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         executeOnControlQueue {
             self.invalidateSchedule()
             self.stateLock.lock()
+            self._loadGeneration &+= 1
             self._isPlaying = false
             self._currentPositionSeconds = 0.0
             self._scheduleStartSeconds = 0.0
@@ -208,6 +234,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         let duration = _trackDurationSeconds
 
         if let nodeTime = playerNode.lastRenderTime,
+           (nodeTime.isSampleTimeValid || nodeTime.isHostTimeValid),
            let playerTime = playerNode.playerTime(forNodeTime: nodeTime) {
             let sampleRate = playerTime.sampleRate
             if sampleRate.isFinite && sampleRate > 0.0 {
@@ -259,7 +286,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         stateLock.unlock()
     }
 
-    private func executeOnControlQueue<T: Sendable>(_ block: @Sendable () throws -> T) rethrows -> T {
+    private func executeOnControlQueue<T: Sendable>(_ block: () throws -> T) rethrows -> T {
         if let monitor {
             return try monitor.performOnControlQueue(block)
         } else {

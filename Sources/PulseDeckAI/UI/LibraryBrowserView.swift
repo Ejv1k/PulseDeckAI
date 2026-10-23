@@ -3,6 +3,7 @@ import PulseDeckCore
 
 public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
+    @FocusState private var isAuditionFocused: Bool
 
     public init(appState: AppState) {
         self.appState = appState
@@ -97,7 +98,7 @@ public struct LibraryBrowserView: View {
                     .padding(4)
                 }
             }
-            .frame(width: 280)
+            .frame(width: 260)
             .background(DJTheme.cardBackground)
             .cornerRadius(6)
             .overlay(
@@ -105,34 +106,87 @@ public struct LibraryBrowserView: View {
                     .stroke(DJTheme.border, lineWidth: 1)
             )
 
-            // Right Column: Crate Detail & Track List
+            // Right Column: Crate Detail, Compatibility Badges, Track List & Audition Bar
             VStack(alignment: .leading, spacing: 8) {
                 if let selected = appState.selectedCrate {
-                    HStack {
+                    // Header Bar with Crate Info and Reference Deck Selector
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(selected.displayName)
-                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .font(.system(size: 13, weight: .bold, design: .monospaced))
                                 .foregroundColor(DJTheme.textPrimary)
 
                             Text("Folder: \(selected.folderName)")
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 9.5, design: .monospaced))
                                 .foregroundColor(DJTheme.textMuted)
                         }
 
                         Spacer()
 
-                        if !selected.isReadable {
-                            Text("READ ERROR")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(.orange)
-                        } else {
-                            Text("\(selected.trackCount) TRACKS DETECTED")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(selected.trackCount > 0 ? DJTheme.master : DJTheme.textMuted)
+                        // Compatibility Reference Deck Selector
+                        HStack(spacing: 6) {
+                            Text("REF:")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+
+                            Button(action: {
+                                appState.setCompatibilityReferenceDeck(.deckA)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(DJTheme.deckA)
+                                        .frame(width: 5, height: 5)
+                                    Text("DECK A")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA.opacity(0.25) : DJTheme.cardHeader)
+                                .foregroundColor(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA : DJTheme.textMuted)
+                                .cornerRadius(3)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(action: {
+                                appState.setCompatibilityReferenceDeck(.deckB)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(DJTheme.deckB)
+                                        .frame(width: 5, height: 5)
+                                    Text("DECK B")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB.opacity(0.25) : DJTheme.cardHeader)
+                                .foregroundColor(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB : DJTheme.textMuted)
+                                .cornerRadius(3)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            if let ref = appState.referenceTrack {
+                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM ?") • \(ref.musicalKey.isEmpty ? "KEY ?" : ref.musicalKey)")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(DJTheme.textSecondary)
+                                    .lineLimit(1)
+                            } else {
+                                Text("(NO TRACK)")
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(DJTheme.textMuted)
+                            }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                     .background(DJTheme.cardHeader)
                     .cornerRadius(4)
 
@@ -162,9 +216,6 @@ public struct LibraryBrowserView: View {
                             Text("No audio files currently in this crate")
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(DJTheme.textMuted)
-                            Text("Tracks placed here will be tracked by .pulsedeck_ai_cache.json in Phase 2")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(DJTheme.textMuted.opacity(0.7))
                             Spacer()
                         }
                         .frame(maxWidth: .infinity)
@@ -173,57 +224,138 @@ public struct LibraryBrowserView: View {
                             ForEach(Array(selected.audioFiles.enumerated()), id: \.offset) { index, file in
                                 let relPath = "\(selected.folderName)/\(file)"
                                 let isSelected = appState.selectedTrackPath == relPath
+                                let isPreviewing = appState.previewTrackPath == relPath
+                                let trackEntry = appState.loadedCache?.tracks[relPath]
+                                let comp = trackEntry.flatMap { appState.compatibility(for: $0) }
 
-                                Button(action: {
-                                    appState.selectTrack(relativePath: relPath)
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Text(String(format: "%02d", index + 1))
-                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                            .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
-                                            .frame(width: 24, alignment: .leading)
+                                HStack(spacing: 10) {
+                                    // Row index & track selection button
+                                    Button(action: {
+                                        appState.selectTrack(relativePath: relPath)
+                                    }) {
+                                        HStack(spacing: 8) {
+                                            Text(String(format: "%02d", index + 1))
+                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
+                                                .frame(width: 22, alignment: .leading)
 
-                                        Image(systemName: isSelected ? "waveform.circle.fill" : "waveform")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
+                                            Image(systemName: isSelected ? "waveform.circle.fill" : "waveform")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
 
-                                        Text(file)
-                                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .monospaced))
-                                            .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
-                                            .lineLimit(1)
-
-                                        Spacer()
-
-                                        if appState.loadedCache?.tracks[relPath] != nil {
-                                            Text("ANALYZED ✓")
-                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                .foregroundColor(DJTheme.master)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(DJTheme.master.opacity(0.15))
-                                                .cornerRadius(3)
-                                        } else {
-                                            Text("MEDIA PRESERVED (GIT-IGNORED)")
-                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                .foregroundColor(DJTheme.textMuted)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(DJTheme.cardHeader)
-                                                .cornerRadius(3)
+                                            Text(file)
+                                                .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                                .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
+                                                .lineLimit(1)
                                         }
                                     }
-                                    .padding(.vertical, 4)
-                                    .padding(.horizontal, 6)
-                                    .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
-                                    .cornerRadius(4)
+                                    .buttonStyle(.plain)
+
+                                    Spacer()
+
+                                    // Real cached BPM & Musical Key metadata
+                                    if let track = trackEntry {
+                                        HStack(spacing: 6) {
+                                            if track.bpm > 0 {
+                                                Text(String(format: "%.1f BPM", track.bpm))
+                                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(DJTheme.deckA)
+                                            } else {
+                                                Text("BPM: UNKNOWN")
+                                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                    .foregroundColor(DJTheme.textMuted)
+                                            }
+
+                                            if !track.musicalKey.isEmpty && track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
+                                                Text(track.musicalKey)
+                                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(DJTheme.cue)
+                                            } else {
+                                                Text("KEY: UNKNOWN")
+                                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                    .foregroundColor(DJTheme.textMuted)
+                                            }
+                                        }
+
+                                        // Compatibility Badges against Reference Deck
+                                        if let comp {
+                                            HStack(spacing: 4) {
+                                                // Harmonic Key Badge
+                                                Text(comp.key.badgeLabel)
+                                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                    .padding(.horizontal, 5)
+                                                    .padding(.vertical, 2)
+                                                    .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : Color.red.opacity(0.2)))
+                                                    .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : .red))
+                                                    .cornerRadius(3)
+
+                                                // Tempo Badge
+                                                Text(comp.tempo.badgeLabel)
+                                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                    .padding(.horizontal, 5)
+                                                    .padding(.vertical, 2)
+                                                    .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : Color.orange.opacity(0.2)))
+                                                    .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
+                                                    .cornerRadius(3)
+                                            }
+                                        } else {
+                                            Text("NO REF")
+                                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(DJTheme.cardHeader)
+                                                .foregroundColor(DJTheme.textMuted)
+                                                .cornerRadius(3)
+                                        }
+                                    } else {
+                                        Text("UNANALYZED")
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(DJTheme.textMuted)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(DJTheme.cardHeader)
+                                            .cornerRadius(3)
+                                    }
+
+                                    // Headphone Audition Cue Button
+                                    Button(action: {
+                                        if isPreviewing {
+                                            appState.togglePreviewPlay()
+                                        } else {
+                                            appState.loadPreviewTrack(relativePath: relPath, playWhenReady: true)
+                                        }
+                                    }) {
+                                        HStack(spacing: 3) {
+                                            Image(systemName: (isPreviewing && appState.isPreviewPlaying) ? "pause.fill" : "headphones")
+                                            Text((isPreviewing && appState.isPreviewPlaying) ? "PAUSE" : "CUE")
+                                        }
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
+                                        .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
+                                        .cornerRadius(3)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .stroke(DJTheme.cue, lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Audition in headphones via Cue output")
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.vertical, 3)
+                                .padding(.horizontal, 6)
+                                .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
+                                .cornerRadius(4)
                                 .listRowBackground(DJTheme.cardBackground)
                             }
                         }
                         .listStyle(.plain)
                         .background(DJTheme.cardBackground)
                     }
+
+                    // Dedicated Audition Transport & Scrub Strip
+                    auditionControlBar
                 } else {
                     Text("Select a crate from the library")
                         .font(.system(size: 12, design: .monospaced))
@@ -239,5 +371,198 @@ public struct LibraryBrowserView: View {
                     .stroke(DJTheme.border, lineWidth: 1)
             )
         }
+    }
+
+    // MARK: - Dedicated Audition Control Bar
+
+    private var auditionControlBar: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "headphones")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(DJTheme.cue)
+
+                if let previewPath = appState.previewTrackPath {
+                    Text("AUDITION:")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textSecondary)
+
+                    Text(previewPath)
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text("HEADPHONE AUDITION — SELECT TRACK OR CLICK CUE")
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(DJTheme.textMuted)
+                }
+
+                Spacer()
+
+                if let error = appState.previewErrorMessage {
+                    Text(error)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(.red)
+                        .lineLimit(1)
+                }
+
+                Text("\(formatTime(appState.previewPositionSeconds)) / \(formatTime(appState.previewDurationSeconds))")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(DJTheme.cue)
+            }
+
+            HStack(spacing: 8) {
+                // Play / Pause Button
+                Button(action: {
+                    appState.togglePreviewPlay()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: appState.isPreviewPlaying ? "pause.fill" : "play.fill")
+                        Text(appState.isPreviewPlaying ? "PAUSE" : "AUDITION")
+                    }
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(appState.isPreviewPlaying ? DJTheme.cue : DJTheme.cardHeader)
+                    .foregroundColor(appState.isPreviewPlaying ? DJTheme.background : DJTheme.textPrimary)
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(DJTheme.cue, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.previewTrackPath == nil)
+
+                // Stop Button
+                Button(action: {
+                    appState.stopPreview()
+                }) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 10))
+                        .padding(5)
+                        .background(DJTheme.cardHeader)
+                        .foregroundColor(DJTheme.textSecondary)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.previewTrackPath == nil)
+
+                // Bounded Continuous Scrub Slider
+                Slider(
+                    value: Binding(
+                        get: { appState.previewPositionSeconds },
+                        set: { appState.seekPreview(to: $0) }
+                    ),
+                    in: 0.0...max(appState.previewDurationSeconds, 0.001)
+                )
+                .accentColor(DJTheme.cue)
+                .disabled(appState.previewTrackPath == nil || appState.previewDurationSeconds <= 0)
+
+                // Beat Step Buttons (disabled when authentic measured grid is absent)
+                HStack(spacing: 4) {
+                    Button("-4b") {
+                        appState.stepPreview(beats: -4.0)
+                    }
+                    .help("Step backward 4 beats / 1 bar (Shift+Left)")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(DJTheme.cardHeader)
+                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                    .cornerRadius(3)
+                    .disabled(!appState.previewHasUsableBeatGrid)
+
+                    Button("-1b") {
+                        appState.stepPreview(beats: -1.0)
+                    }
+                    .help("Step backward 1 beat (Left)")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(DJTheme.cardHeader)
+                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                    .cornerRadius(3)
+                    .disabled(!appState.previewHasUsableBeatGrid)
+
+                    Button("+1b") {
+                        appState.stepPreview(beats: 1.0)
+                    }
+                    .help("Step forward 1 beat (Right)")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(DJTheme.cardHeader)
+                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                    .cornerRadius(3)
+                    .disabled(!appState.previewHasUsableBeatGrid)
+
+                    Button("+4b") {
+                        appState.stepPreview(beats: 4.0)
+                    }
+                    .help("Step forward 4 beats / 1 bar (Shift+Right)")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(DJTheme.cardHeader)
+                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                    .cornerRadius(3)
+                    .disabled(!appState.previewHasUsableBeatGrid)
+                }
+            }
+        }
+        .padding(8)
+        .background(DJTheme.cardHeader)
+        .cornerRadius(4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isAuditionFocused ? DJTheme.cue.opacity(0.8) : DJTheme.border, lineWidth: 1)
+        )
+        .focusable()
+        .focused($isAuditionFocused)
+        .onKeyPress(phases: .down) { press in
+            handleAuditionKeyPress(press)
+        }
+    }
+
+    // MARK: - Keyboard Handling for Audition Player
+
+    private func handleAuditionKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        guard appState.previewTrackPath != nil else { return .ignored }
+
+        if press.key == .leftArrow {
+            if press.modifiers.contains(.shift) {
+                appState.stepPreview(beats: -4.0)
+            } else {
+                appState.stepPreview(beats: -1.0)
+            }
+            return .handled
+        } else if press.key == .rightArrow {
+            if press.modifiers.contains(.shift) {
+                appState.stepPreview(beats: 4.0)
+            } else {
+                appState.stepPreview(beats: 1.0)
+            }
+            return .handled
+        } else if press.characters == " " {
+            appState.togglePreviewPlay()
+            return .handled
+        }
+
+        return .ignored
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite && seconds >= 0 else { return "0:00.00" }
+        let totalSeconds = Int(seconds)
+        let minutes = totalSeconds / 60
+        let secs = totalSeconds % 60
+        let millis = Int((seconds.truncatingRemainder(dividingBy: 1)) * 100)
+        return String(format: "%d:%02d.%02d", minutes, secs, millis)
     }
 }

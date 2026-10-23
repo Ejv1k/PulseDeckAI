@@ -1,11 +1,23 @@
 import Foundation
 import Combine
+import AVFoundation
 import PulseDeckCore
 
 @MainActor
 public final class AppState: ObservableObject {
     @Published public var appVersion: String = PulseDeckCoreConfig.version
-    @Published public var libraryRootURL: URL
+    @Published public var libraryRootURL: URL {
+        didSet {
+            if oldValue.standardizedFileURL != libraryRootURL.standardizedFileURL {
+                stopPreview()
+                previewTrackPath = nil
+                previewDurationSeconds = 0.0
+                previewErrorMessage = nil
+                previewHasUsableBeatGrid = false
+                previewIsReady = false
+            }
+        }
+    }
     @Published public var scanSummary: LibraryScanSummary?
     @Published public var selectedCrate: LibraryCrateInfo?
     @Published public var isScanning: Bool = false
@@ -37,6 +49,15 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isDeckBCueActive: Bool = false
     @Published public var crossfaderPosition: Float = 0.5
 
+    // Library Audition & Compatibility State
+    @Published public private(set) var previewTrackPath: String?
+    @Published public private(set) var isPreviewPlaying: Bool = false
+    @Published public private(set) var previewPositionSeconds: Double = 0.0
+    @Published public private(set) var previewDurationSeconds: Double = 0.0
+    @Published public private(set) var previewErrorMessage: String?
+    @Published public private(set) var previewHasUsableBeatGrid: Bool = false
+    @Published public var compatibilityReferenceDeck: DeckIdentifier = .deckA
+
     public let waveformEditorModel: WaveformEditorModel
     public let audioCoordinator: AudioEngineCoordinator?
     private let audioMetering: AudioMeteringService?
@@ -44,6 +65,12 @@ public final class AppState: ObservableObject {
     private let scanner = LibraryScanner()
     private var scanGeneration: UInt64 = 0
     private var selectionGeneration: UInt64 = 0
+    private var previewGeneration: UInt64 = 0
+    private var previewLoadIsPending = false
+    private var previewPlayRequested = false
+    private var previewIsReady = false
+    private var previewPollingTask: Task<Void, Never>?
+    private let beforePreviewFilePreparation: (@Sendable (URL) async -> Void)?
     private var loadedCacheRootURL: URL?
     private let cacheLoader: @Sendable (URL) async -> PulseDeckLibraryCache?
 
@@ -70,6 +97,7 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = defaultURL
         let editor = WaveformEditorModel(libraryRootURL: defaultURL)
         self.waveformEditorModel = editor
+        self.beforePreviewFilePreparation = nil
         self.cacheLoader = { url in
             await Task.detached(priority: .userInitiated) {
                 CachePersistence.load(from: url)
@@ -88,11 +116,13 @@ public final class AppState: ObservableObject {
         loadedCache: PulseDeckLibraryCache? = nil,
         cacheLoader: (@Sendable (URL) async -> PulseDeckLibraryCache?)? = nil,
         audioCoordinator: AudioEngineCoordinator? = nil,
-        startCoordinator: Bool = true
+        startCoordinator: Bool = true,
+        beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil
     ) {
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
         self.audioCoordinator = audioCoordinator
+        self.beforePreviewFilePreparation = beforePreviewFilePreparation
         self.audioMetering = audioCoordinator.map { AudioMeteringService(coordinator: $0) }
         self.loadedCache = loadedCache
         self.loadedCacheRootURL = loadedCache != nil ? libraryRootURL.standardizedFileURL : nil
@@ -488,5 +518,251 @@ public final class AppState: ObservableObject {
         let clamped = position.isFinite ? min(max(position, 0.0), 1.0) : 0.5
         self.crossfaderPosition = clamped
         self.audioCoordinator?.setCrossfader(position: clamped)
+    }
+
+    // MARK: - Library Audition & Headphone Cue Preview
+
+    /// Loads a library track into the headphone audition preview player on the Cue audio engine.
+    /// Runs audio file I/O off the MainActor to prevent UI hitches, and tracks generation to drop stale loads.
+    @discardableResult
+    public func loadPreviewTrack(relativePath: String, playWhenReady: Bool = false) -> Task<Void, Never> {
+        let rootURL = self.libraryRootURL
+        let standardizedRoot = rootURL.standardizedFileURL
+        let fileURL = rootURL.appendingPathComponent(relativePath)
+        previewGeneration &+= 1
+        let generation = previewGeneration
+        self.previewTrackPath = relativePath
+        self.previewErrorMessage = nil
+        self.isPreviewPlaying = false
+        self.previewPositionSeconds = 0.0
+        self.previewDurationSeconds = 0.0
+        previewLoadIsPending = false
+        previewPlayRequested = playWhenReady
+        previewIsReady = false
+        stopPreviewPolling()
+
+        let cachedTrack = (self.loadedCacheRootURL == standardizedRoot) ? self.loadedCache?.tracks[relativePath] : nil
+        self.previewHasUsableBeatGrid = cachedTrack.map { TrackCompatibility.isAuthenticMeasuredGrid(track: $0) } ?? false
+
+        guard let coordinator = self.audioCoordinator else {
+            if let cachedTrack {
+                self.previewDurationSeconds = cachedTrack.duration
+            }
+            return Task {}
+        }
+
+        // Capture ownership before asynchronous preparation. No background work may mutate the player.
+        let requestID = coordinator.cuePreview.beginLoad()
+        previewLoadIsPending = true
+        let beforePreparation = beforePreviewFilePreparation
+        return Task { [weak self] in
+            do {
+                let file = try await Self.preparePreviewFile(url: fileURL, beforePreparation: beforePreparation)
+
+                guard let self,
+                      self.previewGeneration == generation,
+                      self.libraryRootURL.standardizedFileURL == standardizedRoot,
+                      self.previewTrackPath == relativePath else {
+                    return
+                }
+                self.previewLoadIsPending = false
+                // MainActor identity remains stable through this synchronous control-queue installation.
+                // The player checks request ownership again on that queue, including stop invalidation.
+                guard !Task.isCancelled,
+                      coordinator.cuePreview.load(file: file, requestID: requestID) else {
+                    self.previewPlayRequested = false
+                    return
+                }
+                self.previewIsReady = true
+                self.previewDurationSeconds = coordinator.cuePreview.trackDurationSeconds
+                self.previewPositionSeconds = 0.0
+                if self.previewPlayRequested {
+                    self.previewPlayRequested = false
+                    self.togglePreviewPlay()
+                }
+            } catch {
+                guard let self,
+                      self.previewGeneration == generation,
+                      self.libraryRootURL.standardizedFileURL == standardizedRoot,
+                      self.previewTrackPath == relativePath else {
+                    return
+                }
+                self.previewLoadIsPending = false
+                self.previewPlayRequested = false
+                self.previewIsReady = false
+                self.previewDurationSeconds = 0.0
+                self.previewPositionSeconds = 0.0
+                self.isPreviewPlaying = false
+                self.previewErrorMessage = "Preview load failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Nonisolated async work runs on the generic executor, then transfers unique file ownership.
+    /// `sending` also supports SDKs where AVAudioFile has no Sendable conformance.
+    nonisolated private static func preparePreviewFile(
+        url: URL,
+        beforePreparation: (@Sendable (URL) async -> Void)?
+    ) async throws -> sending AVAudioFile {
+        await beforePreparation?(url)
+        return try AVAudioFile(forReading: url)
+    }
+
+    /// Toggles play / pause state for the headphone audition preview player.
+    /// If the current preview track failed or is not ready, re-triggers file loading and arms playback on completion.
+    @discardableResult
+    public func togglePreviewPlay() -> Task<Void, Never>? {
+        guard let coordinator = self.audioCoordinator else {
+            isPreviewPlaying.toggle()
+            return nil
+        }
+
+        if isPreviewPlaying {
+            coordinator.cuePreview.pause()
+            isPreviewPlaying = false
+            stopPreviewPolling()
+            previewPositionSeconds = coordinator.cuePreview.currentPositionSeconds
+            return nil
+        }
+
+        // Start Cue audio engine safely if stopped without interrupting live Master engine
+        if !coordinator.cueAudioEngine.isRunning {
+            do {
+                try coordinator.monitor.performOnControlQueue {
+                    if !coordinator.cueAudioEngine.isRunning {
+                        if coordinator.masterAudioEngine.isRunning {
+                            try coordinator.cueAudioEngine.start()
+                        } else {
+                            try coordinator.start()
+                        }
+                    }
+                }
+            } catch {
+                self.previewErrorMessage = "Failed to start cue output: \(error.localizedDescription)"
+                return nil
+            }
+        }
+
+        guard coordinator.cueAudioEngine.isRunning else {
+            self.previewErrorMessage = "Cue output engine is not running"
+            return nil
+        }
+
+        if previewLoadIsPending {
+            previewPlayRequested.toggle()
+            return nil
+        }
+        guard previewIsReady else {
+            if let path = self.previewTrackPath {
+                return loadPreviewTrack(relativePath: path, playWhenReady: true)
+            }
+            return nil
+        }
+
+        coordinator.cuePreview.play()
+        let playing = coordinator.cuePreview.isPlaying
+        self.isPreviewPlaying = playing
+        if playing {
+            self.previewErrorMessage = nil
+            startPreviewPolling()
+        }
+        return nil
+    }
+
+    /// Stops headphone audition preview playback and resets playhead to 0.
+    public func stopPreview() {
+        previewGeneration &+= 1
+        if previewLoadIsPending { previewIsReady = false }
+        previewLoadIsPending = false
+        previewPlayRequested = false
+        audioCoordinator?.cuePreview.stop()
+        isPreviewPlaying = false
+        previewPositionSeconds = 0.0
+        stopPreviewPolling()
+    }
+
+    /// Seeks the headphone audition playhead strictly bounded to [0.0, previewDurationSeconds].
+    public func seekPreview(to seconds: Double) {
+        guard seconds.isFinite, !previewLoadIsPending else { return }
+        if audioCoordinator != nil && !previewIsReady { return }
+        let clamped = min(max(seconds, 0.0), max(previewDurationSeconds, 0.0))
+        audioCoordinator?.cuePreview.seek(to: clamped)
+        previewPositionSeconds = clamped
+    }
+
+    /// Steps preview playback by a number of beats (e.g. +/-1 beat or +/-4 beats).
+    /// Disabled if the track lacks an authentic measured beat grid (e.g. unknown-tempo 1.0s sentinel).
+    public func stepPreview(beats: Double) {
+        guard beats.isFinite && beats != 0 else { return }
+        guard previewHasUsableBeatGrid,
+              let path = previewTrackPath,
+              let track = loadedCache?.tracks[path],
+              track.bpm > 0 else {
+            return
+        }
+        let beatInterval = 60.0 / track.bpm
+        let current = audioCoordinator?.cuePreview.currentPositionSeconds ?? previewPositionSeconds
+        seekPreview(to: current + (beats * beatInterval))
+    }
+
+    /// Synchronizes the current preview playhead from the Cue preview engine.
+    public func updatePreviewPosition() {
+        guard let coordinator = self.audioCoordinator else { return }
+        let isPlaying = coordinator.cuePreview.isPlaying
+        let position = coordinator.cuePreview.currentPositionSeconds
+        self.previewPositionSeconds = position
+        if self.isPreviewPlaying != isPlaying {
+            self.isPreviewPlaying = isPlaying
+            if !isPlaying {
+                stopPreviewPolling()
+            }
+        }
+    }
+
+    private func startPreviewPolling() {
+        stopPreviewPolling()
+        previewPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                guard !Task.isCancelled else { break }
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.updatePreviewPosition()
+                }
+            }
+        }
+    }
+
+    private func stopPreviewPolling() {
+        previewPollingTask?.cancel()
+        previewPollingTask = nil
+    }
+
+    // MARK: - Compatibility Reference & Inspection
+
+    /// Currently loaded track on the active reference deck, if any.
+    public var referenceTrack: TrackCacheEntry? {
+        switch compatibilityReferenceDeck {
+        case .deckA: return deckATrack
+        case .deckB: return deckBTrack
+        }
+    }
+
+    /// Computes compatibility between a library track and the active reference deck.
+    public func compatibility(for track: TrackCacheEntry) -> TrackCompatibility? {
+        guard let ref = referenceTrack else { return nil }
+        return TrackCompatibility.evaluate(candidate: track, reference: ref)
+    }
+
+    /// Updates the reference deck used for library compatibility badges.
+    public func setCompatibilityReferenceDeck(_ deck: DeckIdentifier) {
+        self.compatibilityReferenceDeck = deck
+    }
+
+    /// Updates the library root URL and resets any audition preview state.
+    public func updateLibraryRootURL(_ newURL: URL) {
+        self.libraryRootURL = newURL
+        self.waveformEditorModel.updateLibraryRoot(newURL)
+        refreshLibrary()
     }
 }

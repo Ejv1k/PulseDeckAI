@@ -130,6 +130,63 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAutoPilotUsesCueEditsSavedAfterBothDecksLoad() async throws {
+        try prepareStudio()
+        let cacheURL = fixtureRoot.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        try CachePersistence.saveAtomic(cache: try XCTUnwrap(appState.loadedCache), to: cacheURL)
+
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        appState.transitionMacroStyle = .filterEchoWash
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+
+        let editor = appState.waveformEditorModel
+        editor.loadTrack(try XCTUnwrap(appState.loadedCache?.tracks["deck-a.wav"]))
+        editor.setCue(.mixOut, toTime: 12)
+        await editor.waitForPendingSaves()
+        XCTAssertEqual(appState.loadedCache?.tracks["deck-a.wav"]?.cueMarkers.mixOutCue, 12)
+
+        editor.loadTrack(try XCTUnwrap(appState.loadedCache?.tracks["deck-b.wav"]))
+        editor.setCue(.mixOut, toTime: 20)
+        await editor.waitForPendingSaves()
+        editor.loadTrack(try XCTUnwrap(appState.loadedCache?.tracks["deck-b.wav"]))
+        editor.setCue(.vocalEntry, toTime: 18)
+        await editor.waitForPendingSaves()
+        editor.loadTrack(try XCTUnwrap(appState.loadedCache?.tracks["deck-b.wav"]))
+        editor.setCue(.startTrim, toTime: 15)
+        await editor.waitForPendingSaves()
+        XCTAssertEqual(appState.loadedCache?.tracks["deck-b.wav"]?.cueMarkers.startTrimCue, 15)
+        XCTAssertEqual(
+            appState.autoPilotReadinessMessage,
+            "The complete transition does not fit the playable cue interval on Deck B"
+        )
+
+        editor.setCue(.startTrim, toTime: 2)
+        await editor.waitForPendingSaves()
+        XCTAssertNil(appState.autoPilotReadinessMessage)
+
+        await appState.toggleAutoPilot()
+        guard case .armed(_, let trigger) = appState.activeTransitionState else {
+            return XCTFail("Expected AutoPilot to arm from the latest saved mix-out cue")
+        }
+        XCTAssertEqual(trigger, 12, accuracy: 0.001)
+
+        let snapshot = await coordinator.transitionExecutionService.currentSnapshot()
+        let request = try XCTUnwrap(snapshot.armedRequest)
+        XCTAssertEqual(request.outgoingTrack.cueMarkers.mixOutCue, 12, accuracy: 0.001)
+        XCTAssertEqual(request.incomingTrack.cueMarkers.startTrimCue, 2, accuracy: 0.001)
+        let plan = try TransitionPlanner().plan(request)
+        let incomingSeek = try XCTUnwrap(plan.events.compactMap { event -> Double? in
+            if case .seek(deck: .deckB, positionSeconds: let position) = event.command { return position }
+            return nil
+        }.first)
+        XCTAssertEqual(incomingSeek, 2, accuracy: 0.001)
+    }
+
+    @MainActor
     func testHardCutMacroDispatchesThroughAppStateAndHandsOffDeckIntent() async throws {
         try prepareStudio()
         appState.selectedTrackPath = "deck-a.wav"

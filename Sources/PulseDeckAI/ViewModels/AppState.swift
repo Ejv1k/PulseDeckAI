@@ -105,7 +105,9 @@ public final class AppState: ObservableObject {
     public var transitionReadinessMessage: String? {
         guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
         guard coordinator.masterAudioEngine.isRunning else { return "Master output is stopped" }
-        guard let trackA = deckATrack, let trackB = deckBTrack else { return "Load a track on both decks" }
+        guard let trackA = trackEntry(for: .deckA), let trackB = trackEntry(for: .deckB) else {
+            return "Load a track on both decks"
+        }
         guard let pathA = coordinator.deckAGraph.loadedTrackURL,
               pathA.standardizedFileURL == libraryRootURL.appendingPathComponent(trackA.relativePath).standardizedFileURL else {
             return "Deck A audio does not match its loaded track"
@@ -725,10 +727,18 @@ public final class AppState: ObservableObject {
     }
 
     private func trackEntry(for deck: DeckIdentifier) -> TrackCacheEntry? {
+        let loadedEntry: TrackCacheEntry?
         switch deck {
-        case .deckA: deckATrack
-        case .deckB: deckBTrack
+        case .deckA: loadedEntry = deckATrack
+        case .deckB: loadedEntry = deckBTrack
         }
+        guard let loadedEntry,
+              loadedCacheRootURL == libraryRootURL.standardizedFileURL,
+              let currentEntry = loadedCache?.tracks[loadedEntry.relativePath],
+              currentEntry.fileFingerprint == loadedEntry.fileFingerprint else {
+            return nil
+        }
+        return currentEntry
     }
 
     private func observeTransition(using service: TransitionExecutionService) {

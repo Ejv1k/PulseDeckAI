@@ -10,28 +10,32 @@ public struct DeckStudioView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
-            deckPanel(
-                deck: .deckA,
-                title: "DECK A",
-                color: DJTheme.deckA,
-                track: appState.deckATrack,
-                isPlaying: appState.isDeckAPlaying,
-                isCueActive: appState.isDeckACueActive
-            )
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                deckPanel(
+                    deck: .deckA,
+                    title: "DECK A",
+                    color: DJTheme.deckA,
+                    track: appState.deckATrack,
+                    isPlaying: appState.isDeckAPlaying,
+                    isCueActive: appState.isDeckACueActive
+                )
 
-            // Center Crossfader Mixer Strip
-            centerMixerStrip()
-                .frame(width: 140)
+                // Center Crossfader Mixer Strip
+                centerMixerStrip()
+                    .frame(width: 140)
 
-            deckPanel(
-                deck: .deckB,
-                title: "DECK B",
-                color: DJTheme.deckB,
-                track: appState.deckBTrack,
-                isPlaying: appState.isDeckBPlaying,
-                isCueActive: appState.isDeckBCueActive
-            )
+                deckPanel(
+                    deck: .deckB,
+                    title: "DECK B",
+                    color: DJTheme.deckB,
+                    track: appState.deckBTrack,
+                    isPlaying: appState.isDeckBPlaying,
+                    isCueActive: appState.isDeckBCueActive
+                )
+            }
+
+            transitionControls()
         }
     }
 
@@ -75,7 +79,7 @@ public struct DeckStudioView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(appState.selectedTrackPath == nil)
+                .disabled(appState.selectedTrackPath == nil || appState.isTransitionBusy)
                 .help("Load selected library track into \(title)")
             }
 
@@ -141,6 +145,7 @@ public struct DeckStudioView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .disabled(appState.isTransitionBusy)
 
                 Button(action: {
                     appState.setDeckCueActive(deck: deck, active: !isCueActive)
@@ -187,6 +192,7 @@ public struct DeckStudioView: View {
                 in: 0.0...1.0
             )
             .accentColor(DJTheme.textAccent)
+            .disabled(appState.isTransitionBusy)
 
             HStack {
                 Text("DECK A")
@@ -204,6 +210,97 @@ public struct DeckStudioView: View {
                 Text("DECK B")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(DJTheme.deckB)
+            }
+        }
+        .padding(8)
+        .background(DJTheme.cardBackground)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DJTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func transitionControls() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("TRANSITION")
+                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                    .foregroundColor(DJTheme.textMuted)
+
+                Picker("Macro", selection: $appState.transitionMacroStyle) {
+                    ForEach(TransitionMacroStyle.allCases) { style in
+                        Text(style.rawValue).tag(style)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 132)
+                .disabled(appState.isTransitionBusy)
+
+                Picker("Phrase bars", selection: $appState.transitionPhraseBars) {
+                    ForEach([8, 16, 32], id: \.self) { bars in
+                        Text("\(bars) BARS").tag(bars)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 90)
+                .disabled(appState.isTransitionBusy)
+
+                Button {
+                    Task { await appState.executeTransition() }
+                } label: {
+                    Label("EXECUTE", systemImage: "arrow.left.arrow.right")
+                }
+                .disabled(!appState.transitionIsReady || appState.isTransitionBusy)
+                .help("Start the selected macro from the outgoing deck's current playhead")
+
+                Button {
+                    Task { await appState.toggleAutoPilot() }
+                } label: {
+                    Label(appState.isAutoPilotArmed ? "DISARM" : "ARM", systemImage: "autopilot")
+                }
+                .disabled(appState.isAutoPilotArmed ? false : (appState.autoPilotReadinessMessage != nil || appState.isTransitionBusy))
+                .help(appState.isAutoPilotArmed
+                    ? "Disarm the one-shot transition"
+                    : (appState.autoPilotReadinessMessage ?? "Arm a one-shot transition at the outgoing mix-out cue"))
+
+                if appState.isTransitionBusy {
+                    Button {
+                        Task { await appState.cancelTransition() }
+                    } label: {
+                        Label("CANCEL", systemImage: "xmark.circle")
+                    }
+                    .help("Cancel the armed transition or restore the outgoing deck after an active transition")
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text(appState.transitionReadinessText)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(appState.transitionIsReady ? DJTheme.textSecondary : DJTheme.textMuted)
+                    .lineLimit(1)
+
+                if appState.isTransitionRunning {
+                    ProgressView(value: appState.transitionProgress)
+                        .frame(width: 120)
+                    Text("\(Int(appState.transitionProgress * 100))%")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textAccent)
+                } else if appState.isAutoPilotArmed {
+                    Text("AUTOPILOT ARMED AT MIX OUT")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textAccent)
+                }
+
+                if let error = appState.transitionErrorMessage {
+                    Text(error)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(.red)
+                        .lineLimit(1)
+                        .help(error)
+                }
             }
         }
         .padding(8)

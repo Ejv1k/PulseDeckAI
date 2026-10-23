@@ -9,7 +9,8 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     private var appState: AppState!
     private var fixtureRoot: URL!
 
-    override func tearDown() {
+    override func tearDown() async throws {
+        await appState?.cancelTransition()
         coordinator?.stop()
         coordinator = nil
         appState = nil
@@ -17,7 +18,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
             try? FileManager.default.removeItem(at: fixtureRoot)
         }
         fixtureRoot = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     @MainActor
@@ -94,11 +95,32 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
         XCTAssertEqual(coordinator.deckBGraph.volume, 0)
 
+        let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        appState.toggleDeckPlay(deck: .deckB)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
+        XCTAssertEqual(coordinator.deckBGraph.volume, 0, "Manual controls must not override automation")
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+
         await appState.cancelTransition()
         XCTAssertEqual(appState.activeTransitionState, .cancelled)
         XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
         XCTAssertEqual(coordinator.crossfaderPosition, 0.5, accuracy: 0.001)
+
+        appState.setDeckCueActive(deck: .deckB, active: true)
+        let cueGain = coordinator.deckBGraph.cueFaderNode.outputVolume
+        appState.updateCrossfader(position: 1.0)
+        appState.toggleDeckPlay(deck: .deckB)
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckBGraph.volume, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckBGraph.effectiveMasterGain, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckBGraph.masterFaderNode.outputVolume, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckBGraph.cueFaderNode.outputVolume, cueGain)
+        XCTAssertTrue(coordinator.deckBGraph.isCueActive)
+        try assertAudibleMasterPCM()
+        try assertAudiblePCM(coordinator.cueAudioEngine.rawEngine)
     }
 
     @MainActor
@@ -121,12 +143,80 @@ final class TransitionStudioIntegrationTests: XCTestCase {
             XCTFail("Expected AutoPilot armed at outgoing mix-out cue")
         }
 
+        let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        appState.toggleDeckPlay(deck: .deckB)
+        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+
         await appState.toggleAutoPilot()
         XCTAssertFalse(appState.isAutoPilotArmed)
         XCTAssertEqual(appState.activeTransitionState, .idle)
         XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
         XCTAssertNil(appState.transitionErrorMessage)
+    }
+
+    @MainActor
+    func testDisarmAfterAutoPilotFiresStillObservesCompletionAndUnlocksControls() async throws {
+        try prepareStudio()
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        appState.transitionMacroStyle = .filterEchoWash
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+        await appState.toggleAutoPilot()
+        XCTAssertTrue(appState.isAutoPilotArmed)
+
+        let service = coordinator.transitionExecutionService
+        let fired = DispatchSemaphore(value: 0)
+        let fireTask = Task.detached {
+            defer { fired.signal() }
+            return try await service.advance(to: 10)
+        }
+        // Hold MainActor until the production actor fires. The UI observer cannot
+        // publish the new state before DISARM enters its stale-armed branch.
+        guard waitForServiceFire(fired) else {
+            fireTask.cancel()
+            return XCTFail("AutoPilot did not fire while MainActor observation was held")
+        }
+        XCTAssertTrue(appState.isAutoPilotArmed)
+        await appState.toggleAutoPilot()
+        _ = try await fireTask.value
+        XCTAssertTrue(appState.isTransitionRunning)
+        XCTAssertTrue(appState.isTransitionBusy)
+        XCTAssertFalse(appState.isAutoPilotArmed)
+
+        let running = await service.currentSnapshot()
+        let plan = try XCTUnwrap(running.activePlan)
+        _ = try await service.advance(to: plan.endTimestampSeconds)
+        let completed = await service.currentSnapshot()
+        XCTAssertEqual(completed.state, .completed)
+
+        // Only publication is asynchronous; the service clock and race are controlled.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while appState.isTransitionBusy, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(appState.activeTransitionState, .completed)
+        XCTAssertEqual(appState.transitionProgress, 1, accuracy: 0.001)
+        XCTAssertFalse(appState.isTransitionBusy)
+        XCTAssertFalse(appState.isTransitionRunning)
+        XCTAssertFalse(appState.isDeckAPlaying)
+        XCTAssertTrue(appState.isDeckBPlaying)
+        XCTAssertEqual(appState.crossfaderPosition, 1, accuracy: 0.001)
+        XCTAssertNil(appState.transitionErrorMessage)
+
+        appState.toggleDeckPlay(deck: .deckB)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        appState.updateCrossfader(position: 0.25)
+        XCTAssertEqual(coordinator.crossfaderPosition, 0.25, accuracy: 0.001)
+    }
+
+    private func waitForServiceFire(_ semaphore: DispatchSemaphore) -> Bool {
+        semaphore.wait(timeout: .now() + 5) == .success
     }
 
     @MainActor
@@ -208,6 +298,43 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.crossfaderPosition, 1.0, accuracy: 0.001)
         XCTAssertEqual(appState.crossfaderPosition, 1.0, accuracy: 0.001)
         XCTAssertNil(appState.transitionErrorMessage)
+
+        XCTAssertEqual(coordinator.deckAGraph.volume, 0.0, accuracy: 0.001)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        XCTAssertEqual(coordinator.deckAGraph.volume, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 0.0, accuracy: 0.001)
+        XCTAssertFalse(coordinator.deckAGraph.isCueActive)
+        XCTAssertEqual(coordinator.deckAGraph.cueFaderNode.outputVolume, 0.0)
+        appState.toggleDeckPlay(deck: .deckA)
+        XCTAssertEqual(coordinator.crossfaderPosition, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 0.0, accuracy: 0.001)
+        appState.updateCrossfader(position: 0.0)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.deckAGraph.volume, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1.0, accuracy: 0.001)
+        XCTAssertEqual(coordinator.deckAGraph.masterFaderNode.outputVolume, 1.0, accuracy: 0.001)
+        try assertAudibleMasterPCM()
+    }
+
+    @MainActor
+    private func assertAudibleMasterPCM(file: StaticString = #filePath, line: UInt = #line) throws {
+        try assertAudiblePCM(coordinator.masterAudioEngine.rawEngine, file: file, line: line)
+    }
+
+    private func assertAudiblePCM(_ engine: AVAudioEngine, file: StaticString = #filePath, line: UInt = #line) throws {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: 4096))
+        var peak: Float = 0
+        // Render beyond the time-pitch pipeline's startup latency before checking signal.
+        for _ in 0..<8 {
+            XCTAssertEqual(try engine.renderOffline(4096, to: buffer), .success, file: file, line: line)
+            let channels = try XCTUnwrap(buffer.floatChannelData)
+            for frame in 0..<Int(buffer.frameLength) {
+                peak = max(peak, abs(channels[0][frame]))
+            }
+        }
+        XCTAssertGreaterThan(peak, 0.05, "Manual playback must produce actual PCM after transition recovery", file: file, line: line)
     }
 
     private func createAudioFile(at url: URL, duration: Double) throws {

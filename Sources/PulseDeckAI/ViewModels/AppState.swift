@@ -460,7 +460,8 @@ public final class AppState: ObservableObject {
 
     /// Loads the currently selected library track into the designated deck.
     public func loadSelectedTrackIntoDeck(deck: DeckIdentifier) {
-        guard let selectedPath = selectedTrackPath,
+        guard !isTransitionBusy,
+              let selectedPath = selectedTrackPath,
               let track = loadedCache?.tracks[selectedPath] else {
             return
         }
@@ -480,11 +481,17 @@ public final class AppState: ObservableObject {
         do {
             switch deck {
             case .deckA:
-                try coordinator.deckA.loadTrack(url: trackURL)
+                try coordinator.monitor.performOnControlQueue {
+                    try coordinator.deckA.loadTrack(url: trackURL)
+                    coordinator.deckA.volume = 1.0
+                }
                 self.deckATrack = track
                 self.isDeckAPlaying = false
             case .deckB:
-                try coordinator.deckB.loadTrack(url: trackURL)
+                try coordinator.monitor.performOnControlQueue {
+                    try coordinator.deckB.loadTrack(url: trackURL)
+                    coordinator.deckB.volume = 1.0
+                }
                 self.deckBTrack = track
                 self.isDeckBPlaying = false
             }
@@ -496,6 +503,7 @@ public final class AppState: ObservableObject {
 
     /// Toggles play / pause state for the specified deck.
     public func toggleDeckPlay(deck: DeckIdentifier) {
+        guard !isTransitionBusy else { return }
         guard let coordinator = self.audioCoordinator else {
             switch deck {
             case .deckA:
@@ -527,19 +535,25 @@ public final class AppState: ObservableObject {
 
         switch deck {
         case .deckA:
-            if isDeckAPlaying {
+            if coordinator.deckAGraph.isMasterPlaying {
                 coordinator.deckA.pause()
                 isDeckAPlaying = false
             } else {
-                coordinator.deckA.play()
+                coordinator.monitor.performOnControlQueue {
+                    coordinator.deckA.volume = 1.0
+                    coordinator.deckA.play()
+                }
                 isDeckAPlaying = true
             }
         case .deckB:
-            if isDeckBPlaying {
+            if coordinator.deckBGraph.isMasterPlaying {
                 coordinator.deckB.pause()
                 isDeckBPlaying = false
             } else {
-                coordinator.deckB.play()
+                coordinator.monitor.performOnControlQueue {
+                    coordinator.deckB.volume = 1.0
+                    coordinator.deckB.play()
+                }
                 isDeckBPlaying = true
             }
         }
@@ -639,7 +653,11 @@ public final class AppState: ObservableObject {
             await service.disableAutoPilot()
             transitionErrorMessage = nil
             await refreshTransitionSnapshot(using: service)
-            stopTransitionObservation()
+            if isTransitionBusy {
+                observeTransition(using: service)
+            } else {
+                stopTransitionObservation()
+            }
             return
         }
 

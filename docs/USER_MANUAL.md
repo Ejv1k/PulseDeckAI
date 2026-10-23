@@ -121,8 +121,10 @@ The Phase 0 operational window is organized into three primary sections:
    * Shows real-time audio file counts and `.gitkeep` presence.
    * Clicking any crate highlights it and loads its contents in the right-hand panel.
 3. **Crate Detail & Track Browser (Right Column):**
-   * Displays detected audio files with track indices.
-   * Displays green `[MEDIA PRESERVED (GIT-IGNORED)]` badges confirming that local audio tracks are active but safely excluded from git repositories.
+   * Displays detected audio files with track indices and real cached analysis metadata (BPM and Musical Key).
+   * **Compatibility Reference Selector:** Allows selecting either **DECK A** or **DECK B** as the active mixing reference.
+   * **Harmonic & Tempo Compatibility Badges:** Displays real-time compatibility badges against the reference deck based on the Camelot wheel (Exact, Relative, Adjacent, Clash) and planner tempo threshold ($< 6.0\%$ differential). Unanalyzed tracks or unknown-tempo sentinels display honest `UNKNOWN` badges.
+   * **Headphone Audition (Cue Preview):** Dedicated Cue audition player wired exclusively to `CuePreviewPlayer` on the headphones audio graph. Features Play/Pause, Stop, bounded continuous slider scrubbing, and beat/bar step buttons (disabled when genuine beat grid is absent).
 4. **Architectural Contracts Verification Panel (Bottom Bar):**
    * Real-time verification cards showing the exact operational rules governing audio engines, thread safety, and cache schemas.
 
@@ -238,8 +240,9 @@ PulseDeck AI includes a dedicated secondary video presentation window designed f
 | **`I`** | Waveform | Set `startTrimCue` to current playhead position | Phase 3 |
 | **`O`** | Waveform | Set `mixOutCue` to current playhead position | Phase 3 |
 | **`Y`** | Waveform | Toggle `aiTrimBypass` on active deck | Phase 3 |
-| **`Left / Right Arrow`**| Waveform | Scrub playhead forward / backward by 1 beat | Phase 3 |
-| **`Shift + Left / Right`**| Waveform | Scrub playhead forward / backward by 1 bar (4 beats) | Phase 3 |
+| **`Left / Right Arrow`**| Waveform / Audition | Nudge selected cue (waveform) / Step 1 beat (audition focused) | Phase 3 |
+| **`Shift + Left / Right`**| Waveform / Audition | Step 4 beats / 1 bar (audition focused, disabled for sentinels) | Phase 3 |
+| **`Space`** | Audition | Toggle preview Play / Pause (when audition bar focused) | Phase 3 |
 | **`B` (Transition Mode)**| Crossfader | Execute bar-aligned **Bass Swap Transition** | Phase 4 |
 | **`W` (Transition Mode)**| Crossfader | Execute **Filter Echo Wash Transition** | Phase 4 |
 | **`C`** | Crossfader | Arm and trigger bar-aligned **Hard Cut Transition** | Phase 4 |

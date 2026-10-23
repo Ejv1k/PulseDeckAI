@@ -103,6 +103,14 @@ public final class AppState: ObservableObject {
     }
 
     public var transitionReadinessMessage: String? {
+        readinessMessage(autoPilot: false)
+    }
+
+    public var autoPilotReadinessMessage: String? {
+        readinessMessage(autoPilot: true)
+    }
+
+    private func readinessMessage(autoPilot: Bool) -> String? {
         guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
         guard coordinator.masterAudioEngine.isRunning else { return "Master output is stopped" }
         guard let trackA = trackEntry(for: .deckA), let trackB = trackEntry(for: .deckB) else {
@@ -136,20 +144,8 @@ public final class AppState: ObservableObject {
             break
         }
         do {
-            let request = try buildTransitionRequest(coordinator: coordinator, autoPilot: false)
-            _ = try TransitionPlanner().plan(request)
-            return nil
-        } catch {
-            return error.localizedDescription
-        }
-    }
-
-    public var autoPilotReadinessMessage: String? {
-        guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
-        guard transitionReadinessMessage == nil else { return transitionReadinessMessage }
-        do {
-            let request = try buildTransitionRequest(coordinator: coordinator, autoPilot: true)
-            _ = try TransitionPlanner().plan(request)
+            let request = try buildTransitionRequest(coordinator: coordinator, autoPilot: autoPilot)
+            _ = try planner.plan(request)
             return nil
         } catch {
             return error.localizedDescription

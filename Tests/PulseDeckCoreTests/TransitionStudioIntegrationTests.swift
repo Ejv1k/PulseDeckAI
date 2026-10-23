@@ -22,7 +22,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    private func prepareStudio() throws {
+    private func prepareStudio(startTrimCueA: Double = 0) throws {
         fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
         let trackA = fixtureRoot.appendingPathComponent("deck-a.wav")
@@ -57,7 +57,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         }
         try coordinator.start()
 
-        let entryA = makeEntry(path: "deck-a.wav")
+        let entryA = makeEntry(path: "deck-a.wav", startTrimCue: startTrimCueA)
         let entryB = makeEntry(path: "deck-b.wav")
         let cache = PulseDeckLibraryCache(tracks: [entryA.relativePath: entryA, entryB.relativePath: entryB])
         appState = AppState(
@@ -155,6 +155,54 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
         XCTAssertNil(appState.transitionErrorMessage)
+    }
+
+    @MainActor
+    func testAutoPilotArmsBeforeOutgoingStartTrimWhenFutureMixOutPlanFits() async throws {
+        try prepareStudio(startTrimCueA: 2)
+        XCTAssertEqual(appState.autoPilotReadinessMessage, "Load a track on both decks")
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        appState.transitionMacroStyle = .filterEchoWash
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+
+        XCTAssertLessThan(coordinator.deckAGraph.currentMasterPlayheadSeconds(), 2)
+        XCTAssertNotNil(appState.transitionReadinessMessage, "Immediate execution must still reject a trigger before start trim")
+        XCTAssertFalse(appState.transitionIsReady)
+        await appState.executeTransition()
+        XCTAssertNotNil(appState.transitionErrorMessage)
+        let rejectedManual = await coordinator.transitionExecutionService.currentSnapshot()
+        XCTAssertEqual(rejectedManual.state, .idle)
+
+        appState.transitionPhraseBars = 16
+        XCTAssertNotNil(appState.autoPilotReadinessMessage, "A future plan extending beyond end trim must still be rejected")
+        await appState.toggleAutoPilot()
+        XCTAssertNotNil(appState.transitionErrorMessage)
+        XCTAssertFalse(appState.isAutoPilotArmed)
+        let rejectedAutoPilot = await coordinator.transitionExecutionService.currentSnapshot()
+        XCTAssertEqual(rejectedAutoPilot.state, .idle)
+        XCTAssertNil(rejectedAutoPilot.armedRequest)
+
+        appState.transitionPhraseBars = 8
+        XCTAssertNil(appState.autoPilotReadinessMessage, "ARM must validate the future mix-out plan independently")
+
+        await appState.toggleAutoPilot()
+        XCTAssertNil(appState.transitionErrorMessage)
+        XCTAssertTrue(appState.isAutoPilotArmed)
+        guard case .armed(_, let trigger) = appState.activeTransitionState else {
+            return XCTFail("AutoPilot must arm before the outgoing start-trim cue")
+        }
+        XCTAssertEqual(trigger, 10, accuracy: 0.001)
+        let snapshot = await coordinator.transitionExecutionService.currentSnapshot()
+        let plan = try TransitionPlanner().plan(try XCTUnwrap(snapshot.armedRequest))
+        XCTAssertEqual(plan.startTimestampSeconds, 10, accuracy: 0.001)
+        XCTAssertEqual(plan.endTimestampSeconds, 26, accuracy: 0.001)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(coordinator.crossfaderPosition, 0.5, accuracy: 0.001)
     }
 
     @MainActor
@@ -352,7 +400,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         try file.write(from: buffer)
     }
 
-    private func makeEntry(path: String) -> TrackCacheEntry {
+    private func makeEntry(path: String, startTrimCue: Double = 0) -> TrackCacheEntry {
         let duration = 30.0
         let interval = 0.5
         let timestamps = stride(from: 0.0, to: duration, by: interval).map { $0 }
@@ -384,7 +432,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
             ),
             structure: TrackStructure(sections: [], vocalSegments: []),
             cueMarkers: CueMarkers(
-                startTrimCue: 0,
+                startTrimCue: startTrimCue,
                 vocalEntryCue: 4,
                 mixOutCue: 10,
                 endTrimCue: duration

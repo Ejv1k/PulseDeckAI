@@ -70,10 +70,12 @@ public struct ProceduralToneDefinition: Sendable {
 public enum ProceduralSFXGenerator: Sendable {
 
     /// Standard canonical audio format for all soundboard processing (44.1 kHz, 32-bit Float, Stereo).
-    public static let standardFormat: AVAudioFormat = AVAudioFormat(
-        standardFormatWithSampleRate: 44100.0,
-        channels: 2
-    )!
+    public static var standardFormat: AVAudioFormat {
+        AVAudioFormat(
+            standardFormatWithSampleRate: 44100.0,
+            channels: 2
+        )!
+    }
 
     /// Generates 8 distinct, punchy, click-free procedural fallback tone buffers ahead of time.
     public static func fallbackTones() -> [ProceduralToneDefinition] {

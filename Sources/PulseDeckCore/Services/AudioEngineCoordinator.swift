@@ -229,7 +229,6 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
                 masterStarted = true
 
                 try cueAudioEngine.start()
-                soundboardController.preparePlayers()
             } catch {
                 if masterStarted {
                     masterAudioEngine.stop()

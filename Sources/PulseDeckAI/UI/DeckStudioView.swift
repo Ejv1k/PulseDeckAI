@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import PulseDeckCore
 
 /// Dual-deck studio playback, transport, and crossfader control view.
@@ -37,6 +38,19 @@ public struct DeckStudioView: View {
 
             transitionControls()
         }
+        .focusable()
+        .onKeyPress(phases: [.down, .repeat]) { press in
+            handleTalkoverKeyPress(press)
+        }
+    }
+
+    private func handleTalkoverKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        guard press.characters.lowercased() == "t" else { return .ignored }
+        if press.phase == .repeat || (NSApplication.shared.currentEvent?.isARepeat == true) {
+            return .handled
+        }
+        appState.toggleTalkover()
+        return .handled
     }
 
     private func deckPanel(
@@ -211,6 +225,30 @@ public struct DeckStudioView: View {
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(DJTheme.deckB)
             }
+
+            Divider()
+                .background(DJTheme.border)
+
+            Button(action: {
+                appState.toggleTalkover()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: appState.isTalkoverActive ? "mic.fill" : "mic")
+                    Text("TALKOVER")
+                }
+                .font(.system(size: 9.5, weight: .black, design: .monospaced))
+                .foregroundColor(appState.isTalkoverActive ? DJTheme.background : DJTheme.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(appState.isTalkoverActive ? Color.yellow : DJTheme.cardHeader)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(appState.isTalkoverActive ? Color.yellow : DJTheme.border, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .help("Toggle Master Talkover ducking (-16.5 dB attenuation + vocal pocket EQ, Hotkey: T)")
         }
         .padding(8)
         .background(DJTheme.cardBackground)

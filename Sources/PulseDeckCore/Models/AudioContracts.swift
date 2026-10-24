@@ -211,6 +211,15 @@ public protocol DeckAudioGraphContract: AnyObject, Sendable {
     /// Time-pitch rate and key lock parameters.
     var timePitchParameters: TimePitchParameters { get set }
 
+    /// Master-only talkover attenuation multiplier (1.0 = normal/unity, 0.15 = ducked).
+    var talkoverVolumeMultiplier: Float { get set }
+
+    /// Master-only talkover vocal-pocket EQ gain in dB (0.0 dB = neutral/bypassed, -4.0 dB = ducked).
+    var talkoverEQGainDB: Float { get set }
+
+    /// Applies Master-only talkover volume attenuation and vocal-pocket EQ dip simultaneously.
+    func applyTalkover(volumeMultiplier: Float, eqGainDB: Float)
+
     /// Loads an audio file from a validated URL into the deck's playback buffer.
     func loadTrack(url: URL) throws
 
@@ -237,6 +246,18 @@ public protocol AudioEngineCoordinatorContract: AnyObject, Sendable {
 
     /// Deck B audio graph.
     var deckB: DeckAudioGraphContract { get }
+
+    /// Talkover controller governing Master-only ducking and vocal pocket EQ.
+    var talkoverController: TalkoverController { get }
+
+    /// True if talkover is active or ramping to active.
+    var isTalkoverActive: Bool { get }
+
+    /// Toggles master talkover ducking state.
+    func toggleTalkover()
+
+    /// Sets master talkover ducking state.
+    func setTalkover(active: Bool)
 
     /// Current latency compensation configuration between Master and Cue.
     var latencyCompensation: LatencyCompensation { get set }

@@ -21,6 +21,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     public let masterPlayerNode: AVAudioPlayerNode
     public let masterTimePitchNode: AVAudioUnitTimePitch
     public let masterEQNode: AVAudioUnitEQ
+    public let masterTalkoverEQNode: AVAudioUnitEQ
     public let masterFilterNode: AVAudioUnitEQ
     public let masterEchoNode: AVAudioUnitDelay
     public let masterFaderNode: AVAudioMixerNode
@@ -42,6 +43,8 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     // State Variables
     private var _volume: Float = 1.0
     private var _crossfaderWeight: Float = 1.0
+    private var _talkoverVolumeMultiplier: Float = 1.0
+    private var _talkoverEQGainDB: Float = 0.0
     private var _isCueActive: Bool = false
     private var _eqParameters = EQ3BandParameters()
     private var _filterParameters = ResonantFilterParameters()
@@ -150,6 +153,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         self.masterPlayerNode = AVAudioPlayerNode()
         self.masterTimePitchNode = AVAudioUnitTimePitch()
         self.masterEQNode = AVAudioUnitEQ(numberOfBands: 3)
+        self.masterTalkoverEQNode = AVAudioUnitEQ(numberOfBands: 1)
         self.masterFilterNode = AVAudioUnitEQ(numberOfBands: 1)
         self.masterEchoNode = AVAudioUnitDelay()
         self.masterFaderNode = AVAudioMixerNode()
@@ -172,13 +176,15 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         master.rawEngine.attach(masterPlayerNode)
         master.rawEngine.attach(masterTimePitchNode)
         master.rawEngine.attach(masterEQNode)
+        master.rawEngine.attach(masterTalkoverEQNode)
         master.rawEngine.attach(masterFilterNode)
         master.rawEngine.attach(masterEchoNode)
         master.rawEngine.attach(masterFaderNode)
 
         master.rawEngine.connect(masterPlayerNode, to: masterTimePitchNode, format: nil)
         master.rawEngine.connect(masterTimePitchNode, to: masterEQNode, format: nil)
-        master.rawEngine.connect(masterEQNode, to: masterFilterNode, format: nil)
+        master.rawEngine.connect(masterEQNode, to: masterTalkoverEQNode, format: nil)
+        master.rawEngine.connect(masterTalkoverEQNode, to: masterFilterNode, format: nil)
         master.rawEngine.connect(masterFilterNode, to: masterEchoNode, format: nil)
         master.rawEngine.connect(masterEchoNode, to: masterFaderNode, format: nil)
         master.rawEngine.connect(masterFaderNode, to: master.subMixer, format: nil)
@@ -200,6 +206,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
         // Initialize EQ bands and echo defaults
         configureEQ(masterEQNode)
+        configureTalkoverEQ(masterTalkoverEQNode)
         configureEQ(cueEQNode)
         configureEcho(masterEchoNode)
         configureEcho(cueEchoNode)
@@ -207,6 +214,17 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         // Initial volume states
         updateMasterFaderVolume()
         cueFaderNode.outputVolume = 0.0
+    }
+
+    private func configureTalkoverEQ(_ eq: AVAudioUnitEQ) {
+        guard !eq.bands.isEmpty else { return }
+        let band = eq.bands[0]
+        band.filterType = .parametric
+        band.frequency = TalkoverController.vocalPocketCenterHz
+        band.bandwidth = TalkoverController.vocalPocketBandwidthOctaves
+        band.gain = 0.0
+        band.bypass = true
+        eq.bypass = true
     }
 
     private func configureEcho(_ echo: AVAudioUnitDelay) {
@@ -271,11 +289,62 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
-    /// Effective master gain computed as channel volume multiplied by crossfader weight.
+    /// Effective master gain computed as channel volume multiplied by crossfader weight and talkover multiplier.
     public var effectiveMasterGain: Float {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return _volume * _crossfaderWeight
+        return _volume * _crossfaderWeight * _talkoverVolumeMultiplier
+    }
+
+    /// Master-only talkover attenuation multiplier (1.0 = normal/unity, 0.15 = ducked).
+    public var talkoverVolumeMultiplier: Float {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _talkoverVolumeMultiplier
+        }
+        set {
+            let clamped = newValue.isFinite ? min(max(newValue, 0.0), 1.0) : 1.0
+            executeOnControlQueue {
+                self.stateLock.lock()
+                self._talkoverVolumeMultiplier = clamped
+                self.stateLock.unlock()
+                self.updateMasterFaderVolume()
+            }
+        }
+    }
+
+    /// Master-only vocal-pocket EQ dip in dB (0.0 dB = neutral/bypassed, -4.0 dB = ducked).
+    public var talkoverEQGainDB: Float {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _talkoverEQGainDB
+        }
+        set {
+            let clamped = newValue.isFinite ? min(max(newValue, -24.0), 6.0) : 0.0
+            executeOnControlQueue {
+                self.stateLock.lock()
+                self._talkoverEQGainDB = clamped
+                self.stateLock.unlock()
+                self.applyTalkoverEQ(clamped)
+            }
+        }
+    }
+
+    /// Applies Master-only talkover volume attenuation and vocal-pocket EQ dip simultaneously.
+    public func applyTalkover(volumeMultiplier: Float, eqGainDB: Float) {
+        let clampedMult = volumeMultiplier.isFinite ? min(max(volumeMultiplier, 0.0), 1.0) : 1.0
+        let clampedGain = eqGainDB.isFinite ? min(max(eqGainDB, -24.0), 6.0) : 0.0
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._talkoverVolumeMultiplier = clampedMult
+            self._talkoverEQGainDB = clampedGain
+            self.stateLock.unlock()
+
+            self.updateMasterFaderVolume()
+            self.applyTalkoverEQ(clampedGain)
+        }
     }
 
 
@@ -660,9 +729,17 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
     private func updateMasterFaderVolume() {
         stateLock.lock()
-        let eff = _volume * _crossfaderWeight
+        let eff = _volume * _crossfaderWeight * _talkoverVolumeMultiplier
         stateLock.unlock()
         masterFaderNode.outputVolume = eff
+    }
+
+    private func applyTalkoverEQ(_ gainDB: Float) {
+        guard !masterTalkoverEQNode.bands.isEmpty else { return }
+        let isNeutral = abs(gainDB) < 0.001
+        masterTalkoverEQNode.bands[0].gain = gainDB
+        masterTalkoverEQNode.bands[0].bypass = isNeutral
+        masterTalkoverEQNode.bypass = isNeutral
     }
 
     private func applyEQ(_ params: EQ3BandParameters, to eq: AVAudioUnitEQ) {

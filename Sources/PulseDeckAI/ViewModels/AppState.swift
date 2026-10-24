@@ -63,6 +63,10 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
 
+    // Master-only Talkover State
+    @Published public private(set) var isTalkoverActive: Bool = false
+    @Published public private(set) var talkoverProgress: Double = 0.0
+
     // Library Audition & Compatibility State
     @Published public private(set) var previewTrackPath: String?
     @Published public private(set) var isPreviewPlaying: Bool = false
@@ -249,6 +253,13 @@ public final class AppState: ObservableObject {
         coordinator.onDeviceError = { [weak self] error in
             Task { @MainActor [weak self] in
                 self?.handleDeviceError(error)
+            }
+        }
+        coordinator.talkoverController.onStateChanged = { [weak self] state in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isTalkoverActive = state.isActive
+                self.talkoverProgress = state.progress
             }
         }
     }
@@ -619,6 +630,26 @@ public final class AppState: ObservableObject {
         let clamped = position.isFinite ? min(max(position, 0.0), 1.0) : 0.5
         self.crossfaderPosition = clamped
         self.audioCoordinator?.setCrossfader(position: clamped)
+    }
+
+    /// Toggles Master-only talkover ducking state.
+    public func toggleTalkover() {
+        guard let coordinator = self.audioCoordinator else {
+            isTalkoverActive.toggle()
+            talkoverProgress = isTalkoverActive ? 1.0 : 0.0
+            return
+        }
+        coordinator.toggleTalkover()
+    }
+
+    /// Sets Master-only talkover ducking state.
+    public func setTalkover(active: Bool) {
+        guard let coordinator = self.audioCoordinator else {
+            isTalkoverActive = active
+            talkoverProgress = active ? 1.0 : 0.0
+            return
+        }
+        coordinator.setTalkover(active: active)
     }
 
     /// Starts the selected macro from the outgoing deck's current playhead.

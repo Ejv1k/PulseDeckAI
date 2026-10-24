@@ -4,7 +4,9 @@ Updated: 2026-10-24
 
 ## Project state
 
-Current merged `main` is `2d428d22c1f0ef3f54c271391589d35b605b859a`. PR #15 merged at `2026-10-23T07:17:26Z`; Phase 4A UI and AutoPilot integration are fully merged. Phase 4B Master-only talkover is open in PR #16 on branch `ao/unattended-caveman-mode-16/root`; its concurrency repair has passed local gates and still requires exact-head CI and a fresh independent native review. See [phase status](docs/PHASE_STATUS.md) and [user manual](docs/USER_MANUAL.md).
+Current merged `main` is `5a639de99b6ffc00ebeddd6fcf2eef77cf896526`. PR #16 merged at `2026-10-24T21:38:46Z` via normal AO squash (parent `2d428d22c1f0ef3f54c271391589d35b605b859a`). Its merge tree `cf4e6e096349ad33f8b61098f7c453087c2325e1` exactly matches approved PR head `93a0ae78c91df4d805edb36dc4efadbb15080e2c`. PR CI `40128488045` and post-merge main push CI `40135135430` both completed **SUCCESS** with 270 Swift and 40 Python tests. Native independent Sol audit `657f3d2e-cdae-4e70-b713-b575be1076d7` completed **APPROVED / up_to_date**; provider review `5639788733` commented internal approval, and both review threads were resolved.
+
+Phase 4B is now fully implemented with the addition of the RAM-preloaded Soundboard slice on isolated branch `ao/unattended-caveman-mode-17/root` (worker `pulsedeckai-82`, coordinator `pulsedeckai-77`). See [phase status](docs/PHASE_STATUS.md) and [user manual](docs/USER_MANUAL.md).
 
 Relevant merged work:
 
@@ -14,65 +16,63 @@ Relevant merged work:
 - [PR #13](https://github.com/Ejv1k/PulseDeckAI/pull/13): Phase 3B Block 1 studio shell, independent output routing, and startup/recovery safety, merged at `9bb69ca3534cea1e5b298bbbcab6e743e80179a5`.
 - [PR #14](https://github.com/Ejv1k/PulseDeckAI/pull/14): Phase 3B Block 2 library cue preview and audition engine, merged at `ec582558c6a0ffd9a3ddfb3b4b943ca28ec43b43`.
 - [PR #15](https://github.com/Ejv1k/PulseDeckAI/pull/15): Phase 4A transition studio controls and AutoPilot integration, merged at `2d428d22c1f0ef3f54c271391589d35b605b859a`.
+- [PR #16](https://github.com/Ejv1k/PulseDeckAI/pull/16): Phase 4B Master-only talkover ducking and vocal pocket EQ, merged at `5a639de99b6ffc00ebeddd6fcf2eef77cf896526`.
 
-## PR15 merged status and evidence
+## Implemented Phase 4B slice: RAM Soundboard (`F1`–`F8`)
 
-Original source branch: `ao/pr14-phase4a/phase4a-ui`. Implementation owner: `pulsedeckai-79`; coordinating orchestrator: `pulsedeckai-77`.
+The bounded Phase 4B Soundboard slice implements instant, zero-I/O SFX playback in `PulseDeckCore` and `PulseDeckAI`:
 
-PR #15's approved head was `9bf36fb2601a9adcc3fd78dcc7a273e8d4f63e73`. Merge commit `2d428d22c1f0ef3f54c271391589d35b605b859a` has parent `ec582558c6a0ffd9a3ddfb3b4b943ca28ec43b43` (PR #14 merge). Its tree `e61e87b582f9bf8f719efe0ed1a4967b67af411d` exactly matches the approved PR head tree.
+1. **Audio Graph Architecture**:
+   - `SoundboardController` manages eight high-priority `AVAudioPlayerNode` instances feeding a dedicated intermediate `soundboardMixerNode: AVAudioMixerNode`.
+   - `soundboardMixerNode` attaches exclusively to `masterAudioEngine.rawEngine` and connects directly to `masterAudioEngine.subMixer`.
+   - The Cue (headphone PFL) audio engine receives zero soundboard audio, guaranteeing complete audition isolation.
+   - Strictly output-only: zero calls or connections to `inputNode`, zero live microphone access.
+   - Preserves Deck A and Deck B channel volume, crossfader weight, and talkover attenuation parameters. Soundboard audio mixes cleanly at full punch without resetting or ducking deck music.
 
-[Exact-head PR CI 39911504863](https://github.com/Ejv1k/PulseDeckAI/actions/runs/39911504863) succeeded on `9bf36fb`: build, **255 Swift tests**, and **40 Python tests**. Automatic post-merge main CI [39916786279](https://github.com/Ejv1k/PulseDeckAI/actions/runs/39916786279) completed **SUCCESS** on merge commit `2d428d2`: **255 Swift tests** and **40 Python tests**.
+2. **Deterministic Asset Mapping & Bounded RAM Caching**:
+   - Discovers up to 8 supported audio files from `PulseDeck_Library/08_Soundboard_SFX`, sorted alphabetically and mapped deterministically to Pads F1–F8. Non-audio files, `.gitkeep`, and hidden files are ignored.
+   - All files are pre-decoded and pre-converted into canonical 44.1 kHz, 32-bit Float, stereo buffers off the trigger and render paths during preload. Buffers are retained in unified RAM for the lifetime of playback.
+   - Per-asset duration cap $\le 15.0\,\text{s}$, per-asset RAM ceiling $\le 12\,\text{MB}$, and total soundboard RAM cap $\le 64\,\text{MB}$.
+   - Files exceeding duration/RAM bounds, corrupted files, or unsupported formats safely fall back to pre-synthesized procedural tones while surfacing honest UI diagnostic state.
 
-Native independent Sol review `8fbecec5-b67e-46dd-a674-23ef60f7f314` completed **APPROVED / up_to_date** on exact head `9bf36fb`. Provider review `5624740274` is **COMMENTED** with internal approval text. All four PR review threads are resolved.
+3. **Pre-Synthesized Procedural Fallbacks**:
+   - Eight distinct procedural fallback tone buffers are synthesized ahead of time during initialization (1 kHz stinger pip, 808 sub kick, white noise snare, high chime, metallic rimshot, alternating siren beep, laser zap, airhorn triad chord).
+   - If an audio file is missing (e.g. empty crate with `.gitkeep`), corrupt, or oversized, the pad immediately utilizes its ready fallback buffer with zero synthesis overhead or allocation in render callbacks.
 
-## PR16 concurrency repair and pending gates
+4. **Retrigger, Overlap & Lifecycle Semantics**:
+   - Independent pads overlap polyphonically without cutting off other pads or deck playback.
+   - Retriggering the same active pad executes a monophonic cut-and-restart (choke self), preventing runaway voice growth while enabling stutter performance drops.
+   - Lifecycle generation counters reject stale background preloads across library root changes and stop/restart transitions.
+   - All player mutation and scheduling is serialized through `OutputDeviceMonitor.controlQueue` (with a reentrant serial fallback in monitor-free test mode).
 
-PR #16 remains open. Coordinator: `pulsedeckai-77`; senior repair owner: `pulsedeckai-80`, running verified `gpt-6.1-sol/high`. Worker81 exited through the supported AO operation before takeover; its worktree and uncommitted graph draft are preserved. The repair uses an isolated worktree/branch and updates the existing PR source with a normal fast-forward push.
+5. **Keyboard Routing & Studio UI**:
+   - Dispatched via `SoundboardKeyboardRouter` in `DeckStudioView` and `ContentView`.
+   - Drops OS key-repeat events (`press.phase == .repeat` / `event.isARepeat == true`) and suppresses duplicate multi-route dispatches within the same runloop tick.
+   - Zero global event monitoring outside the active PulseDeck AI window.
+   - Studio view features an 8-pad interactive grid displaying key labels `[F1]`–`[F8]`, pad titles, duration, RAM footprint, readiness dots (green file, orange fallback, flashing yellow when active), and full button click triggering.
+   - Application menu bar includes accessible `Soundboard` menu commands for all 8 pads.
+   - Documents macOS `Fn` / Globe key requirements for standard function keys.
 
-The original PR head `edd58b04db0f276b9824ffcef9d6f7e9353ee275` passed [CI 40126733260](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40126733260): 267 Swift and 40 Python tests. Native independent Sol/high review `6b02565e-783b-4079-b37e-45e6c26c25b6` required two concurrency fixes. Provider review `5639708863` is COMMENTED with the internal changes-requested verdict. That historical CI does not validate the new repair head.
+6. **Verification Proof**:
+   - 9 comprehensive soundboard tests in `SoundboardTests.swift`:
+     1. `testAssetMappingAllEightPads`: Sorted 8-file mapping, labels F1–F8, buffer capacities.
+     2. `testEmptyCrateFallbackAudibleActualPCM`: Empty crate with `.gitkeep` renders audible non-zero PCM (>0.05).
+     3. `testPartialCorruptAndOversizedFilesSafeBehavior`: 2 valid, 1 corrupt, 1 oversized (>15s), 4 missing pads safely render audio without crashing.
+     4. `testPreloadedBuffersTriggerWithoutFileAccess`: Deleting fixture files from disk after preload proves trigger path plays directly from RAM with zero file access.
+     5. `testSimultaneousPadsAndRetriggerPolicy`: Concurrent playback of Pad 0 + Pad 1, monophonic retrigger, and stop isolation.
+     6. `testMasterPCMWithCueUnchanged`: Master renders audible SFX PCM (>0.05), while Cue remains strictly silent (peak 0.00000).
+     7. `testDeckCrossfaderAndTalkoverIsolation`: Deck crossfader at full Deck B and talkover at -16.5 dB ducking are completely untouched by SFX trigger.
+     8. `testCancellationRootChangeStaleCompletionStopRestartTeardown`: Rejects stale root 1 completion after root 2 switch; stopping coordinator stops all pads.
+     9. `testKeyboardRepeatAndRoutingBehavior`: Real NSEvent F1–F8 keycode dispatch, repeat suppression, and duplicate routing debounce.
+   - Local gates: `swift build -q`, `swift test -q` (**279 Swift tests, zero failures**), and Python companion discovery (**40 tests, zero failures**).
 
-Both findings are addressed in the repair containing this checkpoint:
+## Next concrete slice: Phase 5A Projector Secondary Window
 
-- `TalkoverController` validates each tick's generation inside the same synchronous, reentrant audio-control operation that advances progress and applies both Master graphs. Cancellation invalidates the generation and restores both graphs in that operation. Task replacement, explicit stepping, and toggles use the same serialization; callbacks execute after the controller's operation. Monitor-free controllers use a private reentrant serial queue.
-- `DeckAudioGraph` serializes channel volume, crossfader weight, and talkover gain mutations together with fader recomputation and node assignment. Monitor-free graphs use their own reentrant serial queue. Public setters remain synchronous; Cue and user/transition EQ retain their existing paths.
-
-Two semaphore-controlled regressions failed 14 assertions before the source fix. A paused stale tick left both Master graphs ducked after completed cancellation and restart. A final restore tick reopened a closed crossfader to gain 1, producing actual offline PCM peak 0.7999953. After the fix, both regressions pass: cancellation remains neutral, closed-crossfader Master PCM stays below 0.0001, and Cue remains audible. A third regression checks synchronous monitor-free setters and nested control-queue calls.
-
-Final local gates passed: `swift build -q`, `swift test -q` (**270 Swift tests, zero failures**), and Python unittest discovery (**40 tests, zero failures**). Existing twelve talkover tests and transition/cue/gain/DISARM/readiness coverage remain included. The repair head still needs its own automatic CI and one fresh independent native Sol/high audit, dispatched by the coordinator after green CI. No review or merge is self-authorized. Soundboard and Phase 5 work remain on hold.
-
-## Implemented Phase 4B slice: Master-only Talkover
-
-Phase 4B Master-only talkover ducking is implemented in open PR #16 (original author `pulsedeckai-81`, repair owner `pulsedeckai-80`, coordinator `pulsedeckai-77`):
-
-1. **Dedicated Master Talkover Path**:
-   - `DeckAudioGraph` inserts a dedicated `masterTalkoverEQNode` (`AVAudioUnitEQ(numberOfBands: 1)`) into the Master path:
-     `masterPlayerNode -> masterTimePitchNode -> masterEQNode -> masterTalkoverEQNode -> masterFilterNode -> masterEchoNode -> masterFaderNode -> masterEngine.subMixer`.
-   - The Cue (PFL) path has no talkover node and remains strictly isolated.
-   - User and transition 3-band EQ in `masterEQNode` and `cueEQNode` remain completely untouched by talkover.
-
-2. **Vocal-Pocket EQ & Linear Attenuation**:
-   - Master volume multiplier ramps linearly over 800 ms between 1.0 (unity) and 0.15 (-16.5 dB attenuation).
-   - Dedicated vocal-pocket parametric EQ ramps linearly over 800 ms between 0.0 dB (bypassed) and -4.0 dB dip centered at 948.7 Hz with bandwidth 3.32 octaves (symmetrically spanning 300 Hz–3 kHz).
-   - `masterFaderNode.outputVolume` is computed as `_volume * _crossfaderWeight * _talkoverVolumeMultiplier`. User volume knob changes, crossfader moves, and automated transitions compose multiplicatively; zero stale fader or EQ intent is ever restored.
-
-3. **Controller & State Machine**:
-   - `TalkoverController` provides deterministic progress stepping, linear 800 ms rate calculation, and continuous mid-ramp toggle reversal (no clicks, pops, or discontinuities).
-   - Hotkey `T` / `t` and UI button toggle talkover on and off. Duplicate keyDown events from OS key-repeat are dropped.
-   - Idempotent commands, cancel/reset to neutral, and teardown lifecycle cleanup halt background tasks with zero leaks.
-
-4. **Verification Proof**:
-   - Original head `edd58b04` passed **267 Swift tests** and **40 Python tests**; the concurrency repair passes **270 Swift tests** and **40 Python tests** locally. New-head CI and independent audit remain pending.
-   - 12 comprehensive talkover tests verify deterministic 800 ms midpoint (multiplier 0.575, EQ -2.0 dB) and endpoints (0.15, -4.0 dB), toggle reversals, cancel, gain/crossfader composition, underlying EQ preservation, Cue PFL/preview isolation, track load preservation, and offline PCM rendering attenuation.
-   - CoreAudio safety guarantees intact: zero touches to `inputNode`, zero live microphone access.
-
-## Next concrete slice: Phase 4B Soundboard
-
-After PR #16 passes its remaining gates and merges, a separately authorized next slice can address the 8-pad Soundboard. No Soundboard implementation is part of this repair:
-- Pre-loaded RAM audio triggers mapped to Hotkeys `F1`–`F8`.
-- Media sourced from `08_Soundboard_SFX/` directory with synthesized tone fallbacks when empty.
-- Zero-latency trigger playback routed through the engine graph.
-- Projector secondary display (Hotkeys 1–4) remains bounded to Phase 5A; no projector work in Phase 4B.
+After PR for Phase 4B Soundboard merges:
+- Secondary presentation window for external HDMI projectors / AirPlay screens.
+- Modes 1–4 (FFT spectrum visualizer, Ken Burns slideshow, Now Playing card, Blackout screen) mapped to Keys 1–4.
+- Master deck safety lock to prevent accidental dancefloor interruptions.
 
 ## Boundaries and invariants
 
-Offline AV rendering and mocked output HAL establish automated control/publication and PCM behavior. Physical speakers/headphones, Bluetooth latency, live Gemini/Ollama providers, and pointer automation remain unverified. No new microphone access or audio permission was introduced. All AO/Grok repair/backup/export/deployment tasks remain cancelled.
+Offline AV rendering and mocked output HAL establish automated control and PCM behavior. Physical speakers/headphones, Bluetooth latency, live Gemini/Ollama providers, and pointer automation remain unverified. Strictly output-only: zero microphone permissions, zero input node access. All AO/Grok repair/backup/export/deployment tasks remain cancelled.

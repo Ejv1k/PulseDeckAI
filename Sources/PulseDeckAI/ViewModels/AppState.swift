@@ -23,6 +23,7 @@ public final class AppState: ObservableObject {
                 previewErrorMessage = nil
                 previewHasUsableBeatGrid = false
                 previewIsReady = false
+                preloadSoundboard()
             }
         }
     }
@@ -66,6 +67,11 @@ public final class AppState: ObservableObject {
     // Master-only Talkover State
     @Published public private(set) var isTalkoverActive: Bool = false
     @Published public private(set) var talkoverProgress: Double = 0.0
+
+    // Master-only Soundboard State (F1–F8)
+    @Published public private(set) var soundboardPads: [SoundboardPadSnapshot] = []
+    @Published public private(set) var soundboardTotalRAMBytes: Int = 0
+    @Published public private(set) var soundboardErrorMessage: String?
 
     // Library Audition & Compatibility State
     @Published public private(set) var previewTrackPath: String?
@@ -230,6 +236,8 @@ public final class AppState: ObservableObject {
                 self.statusMessage = "Audio Startup Error: \(error.localizedDescription)"
             }
         }
+        self.soundboardPads = self.audioCoordinator?.soundboardController.padSnapshots ?? Self.defaultSoundboardSnapshots()
+        self.soundboardTotalRAMBytes = self.audioCoordinator?.soundboardController.totalRAMBytes ?? 0
         connectEditorPersistence()
         connectAudioCoordinator()
         refreshOutputDevices()
@@ -262,6 +270,16 @@ public final class AppState: ObservableObject {
                 self.talkoverProgress = state.progress
             }
         }
+        coordinator.soundboardController.onPadsChanged = { [weak self] pads in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.soundboardPads = pads
+                self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
+            }
+        }
+        self.soundboardPads = coordinator.soundboardController.padSnapshots
+        self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
+        coordinator.soundboardController.preload(from: libraryRootURL)
     }
 
     private func handleDeviceError(_ error: CoreAudioError) {
@@ -640,6 +658,7 @@ public final class AppState: ObservableObject {
             return
         }
         coordinator.toggleTalkover()
+        self.isTalkoverActive = coordinator.talkoverController.isTargetActive
     }
 
     /// Sets Master-only talkover ducking state.
@@ -650,6 +669,71 @@ public final class AppState: ObservableObject {
             return
         }
         coordinator.setTalkover(active: active)
+        self.isTalkoverActive = active
+    }
+
+    // MARK: - Soundboard Macro Controls (F1–F8)
+
+    private static func defaultSoundboardSnapshots() -> [SoundboardPadSnapshot] {
+        let fallbackDefs = ProceduralSFXGenerator.fallbackTones()
+        let format = ProceduralSFXGenerator.standardFormat
+        return fallbackDefs.enumerated().map { index, def in
+            let frameCount = AVAudioFrameCount(format.sampleRate * def.durationSeconds)
+            let ram = Int(frameCount) * Int(format.channelCount) * MemoryLayout<Float>.size
+            return SoundboardPadSnapshot(
+                index: index,
+                keyLabel: SoundboardController.keyLabels[index],
+                title: def.title,
+                source: .procedural(toneDescription: def.description, durationSeconds: def.durationSeconds),
+                isPlaying: false,
+                error: nil,
+                durationSeconds: def.durationSeconds,
+                ramBytes: ram
+            )
+        }
+    }
+
+    /// Preloads soundboard audio assets from current library root directory.
+    public func preloadSoundboard() {
+        audioCoordinator?.soundboardController.preload(from: libraryRootURL)
+    }
+
+    private var lastSoundboardTriggerTimestamp: TimeInterval = 0.0
+    private var lastSoundboardTriggerIndex: Int = -1
+
+    /// Triggers playback of the designated Soundboard pad (0..<8).
+    ///
+    /// Includes held key / duplicate route suppression to ensure exactly one trigger per user intent.
+    public func triggerSoundboardPad(index: Int) {
+        guard index >= 0 && index < SoundboardController.padCount else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if index == lastSoundboardTriggerIndex && (now - lastSoundboardTriggerTimestamp) < 0.05 {
+            return
+        }
+        lastSoundboardTriggerTimestamp = now
+        lastSoundboardTriggerIndex = index
+
+        if let coordinator = audioCoordinator {
+            coordinator.soundboardController.triggerPad(index: index)
+            self.soundboardPads = coordinator.soundboardController.padSnapshots
+        }
+    }
+
+    /// Stops playback on a specific soundboard pad.
+    public func stopSoundboardPad(index: Int) {
+        if let coordinator = audioCoordinator {
+            coordinator.soundboardController.stopPad(index: index)
+            self.soundboardPads = coordinator.soundboardController.padSnapshots
+        }
+    }
+
+    /// Stops all currently playing soundboard pads.
+    public func stopAllSoundboardPads() {
+        if let coordinator = audioCoordinator {
+            coordinator.soundboardController.stopAllPads()
+            self.soundboardPads = coordinator.soundboardController.padSnapshots
+        }
     }
 
     /// Starts the selected macro from the outgoing deck's current playhead.

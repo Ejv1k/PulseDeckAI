@@ -23,6 +23,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     public let deckBGraph: DeckAudioGraph
     public let cuePreview: CuePreviewPlayer
     public let talkoverController: TalkoverController
+    public let soundboardController: SoundboardController
 
     public let monitor: OutputDeviceMonitor
     private let hal: AudioHardwareInterface
@@ -93,6 +94,12 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
         self.talkoverController = TalkoverController(
             deckA: self.deckAGraph,
             deckB: self.deckBGraph,
+            monitor: monitorInstance
+        )
+
+        // Initialize Master-only Soundboard Controller
+        self.soundboardController = SoundboardController(
+            masterEngine: master,
             monitor: monitorInstance
         )
     }
@@ -222,6 +229,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
                 masterStarted = true
 
                 try cueAudioEngine.start()
+                soundboardController.preparePlayers()
             } catch {
                 if masterStarted {
                     masterAudioEngine.stop()
@@ -244,6 +252,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     /// Stops audio rendering, resets player positions and filters, and halts monitoring.
     public func stop() {
         talkoverController.cancelTalkover()
+        soundboardController.stopAllPads()
 
         deckAGraph.pause()
         deckBGraph.pause()

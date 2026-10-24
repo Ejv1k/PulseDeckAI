@@ -71,7 +71,7 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 ### D. WAKEUP, IMMEDIATE CALLBACKS & BOUNDED REARM PROTOCOL
 
 1. **Target Session Identification:**
-   - Active Orchestrator session for this run is `pulsedeckai-7`.
+   - Active Orchestrator session for this run is `pulsedeckai-77`.
    - Future sessions must dynamically discover their active orchestrator session ID via `ao orchestrator ls` rather than hardcoding stale session identifiers.
    - Every worker/reviewer task prompt must explicitly include reporting on every milestone/completion with the target orchestrator session ID.
 
@@ -98,7 +98,8 @@ The `caveman` skill is installed across Codex, Agy, and Grok. Minimize Orchestra
 - After local gates pass and the PR head is pushed, request one independent native audit with `ao review trigger <worker-session> --agent codex --model gpt-6.1-sol --effort high`. Verify the actual reviewer conversation runtime, not saved settings alone. Review the exact tested head. Resolve each proven review thread and require native approval of the current head before merging. Preserve the two-strike senior takeover rule; do not continue routine retries after the limit.
 - Native approval does not replace provider reviews or branch protection. Merge only the approved, tested exact head through normal provider gates; never use admin/bypass or rewrite shared history. Authorized routine pushes, PR updates, and approved merges need no repeated permission.
 - Every meaningful milestone/completion requires both an `ao report` including `orchestrator=<active-session-id>` and an immediate `ao send --session <active-session-id>` containing status, PR/head, and next action. Completion uses `ao report --done --note`. Include these requirements in native reviewer task context; reviewers must report completion and directly notify the coordinator.
-- Before yielding for input, permission, or a blocker, run `ao report --needs-input --note` or `ao report --stuck --note` with the exact blocker, recommendation, PR/head, and coordinator ID, then directly send the same actionable status. Discover the coordinator for future tasks; this continuation uses `pulsedeckai-7`.
+- Before yielding for input, permission, or a blocker, run `ao report --needs-input --note` or `ao report --stuck --note` with the exact blocker, recommendation, PR/head, and coordinator ID, then directly send the same actionable status. Discover the coordinator for future tasks; this continuation uses `pulsedeckai-77`.
+- All AO and Grok repair, backup, export, and deployment tasks are cancelled. Do not inspect or modify AO source, candidate artifacts, DB, configuration, or processes. Native Grok pre-model launcher failure remains known; use authorized independent Codex `gpt-6.1-sol / high` fallback for audits.
 - Do not poll, sleep, silently wait, or send acknowledgment-only callbacks. Dispatch review with callback instructions and yield. Stop after the assigned phase block; stop after Phase 1C merges until the next assignment.
 
 ---

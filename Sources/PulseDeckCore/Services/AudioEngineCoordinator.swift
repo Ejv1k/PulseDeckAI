@@ -22,6 +22,7 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     public let deckAGraph: DeckAudioGraph
     public let deckBGraph: DeckAudioGraph
     public let cuePreview: CuePreviewPlayer
+    public let talkoverController: TalkoverController
 
     public let monitor: OutputDeviceMonitor
     private let hal: AudioHardwareInterface
@@ -87,6 +88,13 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
         // Initialize independent Cue Preview Player
         self.cuePreview = CuePreviewPlayer(cueEngine: cue, monitor: monitorInstance)
+
+        // Initialize Master-only Talkover Controller
+        self.talkoverController = TalkoverController(
+            deckA: self.deckAGraph,
+            deckB: self.deckBGraph,
+            monitor: monitorInstance
+        )
     }
 
     // MARK: - AudioEngineCoordinatorContract Conformance
@@ -105,6 +113,18 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
     public var deckB: DeckAudioGraphContract {
         deckBGraph
+    }
+
+    public var isTalkoverActive: Bool {
+        talkoverController.isTalkoverActive
+    }
+
+    public func toggleTalkover() {
+        talkoverController.toggleTalkover()
+    }
+
+    public func setTalkover(active: Bool) {
+        talkoverController.setTalkover(active: active)
     }
 
     public var latencyCompensation: LatencyCompensation {
@@ -223,6 +243,8 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
 
     /// Stops audio rendering, resets player positions and filters, and halts monitoring.
     public func stop() {
+        talkoverController.cancelTalkover()
+
         deckAGraph.pause()
         deckBGraph.pause()
         cuePreview.stop()

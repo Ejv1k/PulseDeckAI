@@ -22,6 +22,12 @@ public struct PulseDeckApp: App {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(appState.isScanning)
             }
+            CommandMenu("Playback") {
+                Button("Toggle Master Talkover") {
+                    appState.toggleTalkover()
+                }
+                .keyboardShortcut("t", modifiers: [])
+            }
         }
     }
 }

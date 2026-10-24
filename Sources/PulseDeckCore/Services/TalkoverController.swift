@@ -63,6 +63,12 @@ public final class TalkoverController: @unchecked Sendable {
     private let deckB: any DeckAudioGraphContract
     private weak var monitor: OutputDeviceMonitor?
 
+    /// Installed before test operations; pauses a selected application before graph mutation.
+    var beforeGraphApplicationForTesting: (@Sendable () -> Void)?
+
+    private let fallbackQueue = DispatchQueue(label: "com.pulsedeck.talkover.control")
+    private let fallbackQueueKey = DispatchSpecificKey<UInt8>()
+    private static let fallbackQueueToken: UInt8 = 1
     private let stateLock = NSLock()
     private var _isTargetActive: Bool = false
     private var _currentProgress: Double = 0.0
@@ -82,6 +88,7 @@ public final class TalkoverController: @unchecked Sendable {
         self.deckA = deckA
         self.deckB = deckB
         self.monitor = monitor
+        fallbackQueue.setSpecific(key: fallbackQueueKey, value: Self.fallbackQueueToken)
     }
 
     deinit {
@@ -153,50 +160,54 @@ public final class TalkoverController: @unchecked Sendable {
 
     /// Toggles talkover ducking state.
     public func toggleTalkover() {
-        stateLock.lock()
-        let newTarget = !_isTargetActive
-        stateLock.unlock()
-        setTalkover(active: newTarget)
+        executeOnControlQueue {
+            self.setTalkover(active: !self.isTargetActive)
+        }
     }
 
     /// Sets talkover ducking state (idempotent for redundant target calls).
     public func setTalkover(active: Bool) {
-        stateLock.lock()
-        if _isTargetActive == active {
-            // Already at endpoint target: no-op
-            if active && _currentProgress >= 1.0 {
-                stateLock.unlock()
-                return
+        executeOnControlQueue {
+            self.stateLock.lock()
+            if self._isTargetActive == active {
+                // Already at endpoint target: no-op
+                if active && self._currentProgress >= 1.0 {
+                    self.stateLock.unlock()
+                    return
+                }
+                if !active && self._currentProgress <= 0.0 {
+                    self.stateLock.unlock()
+                    return
+                }
             }
-            if !active && _currentProgress <= 0.0 {
-                stateLock.unlock()
-                return
-            }
+
+            self._isTargetActive = active
+            self._rampGeneration &+= 1
+            let generation = self._rampGeneration
+            self._rampTask?.cancel()
+            self._rampTask = nil
+            self._lastTickTimestamp = nil
+            self.stateLock.unlock()
+
+            // Publish the replacement task before another control operation can cancel it.
+            self.startRampTask(generation: generation)
         }
-
-        _isTargetActive = active
-        _rampGeneration &+= 1
-        let generation = _rampGeneration
-        _rampTask?.cancel()
-        _rampTask = nil
-        _lastTickTimestamp = nil
-        stateLock.unlock()
-
-        startRampTask(generation: generation)
     }
 
     /// Immediately halts any running ramp task and resets talkover to neutral unity.
     public func cancelTalkover() {
-        stateLock.lock()
-        _rampGeneration &+= 1
-        _isTargetActive = false
-        _currentProgress = 0.0
-        _rampTask?.cancel()
-        _rampTask = nil
-        _lastTickTimestamp = nil
-        stateLock.unlock()
+        executeOnControlQueue {
+            self.stateLock.lock()
+            self._rampGeneration &+= 1
+            self._isTargetActive = false
+            self._currentProgress = 0.0
+            self._rampTask?.cancel()
+            self._rampTask = nil
+            self._lastTickTimestamp = nil
+            self.stateLock.unlock()
 
-        applyCurrentValuesToGraphs()
+            self.applyCurrentValuesToGraphs()
+        }
         notifyStateChanged()
     }
 
@@ -206,17 +217,20 @@ public final class TalkoverController: @unchecked Sendable {
     @discardableResult
     public func stepProgress(to progress: Double) -> TalkoverState {
         let clamped = progress.isFinite ? min(max(progress, 0.0), 1.0) : 0.0
-        stateLock.lock()
-        _currentProgress = clamped
-        if clamped >= 1.0 {
-            _isTargetActive = true
-        } else if clamped <= 0.0 {
-            _isTargetActive = false
-        }
-        let st = currentStateLocked()
-        stateLock.unlock()
+        let st = executeOnControlQueue {
+            self.stateLock.lock()
+            self._currentProgress = clamped
+            if clamped >= 1.0 {
+                self._isTargetActive = true
+            } else if clamped <= 0.0 {
+                self._isTargetActive = false
+            }
+            let st = self.currentStateLocked()
+            self.stateLock.unlock()
 
-        applyCurrentValuesToGraphs()
+            self.applyCurrentValuesToGraphs()
+            return st
+        }
         notifyStateChanged()
         return st
     }
@@ -237,18 +251,16 @@ public final class TalkoverController: @unchecked Sendable {
     @discardableResult
     public func tick(at timestampSeconds: Double) -> Bool {
         guard timestampSeconds.isFinite else { return false }
-        stateLock.lock()
-        let previous = _lastTickTimestamp
-        _lastTickTimestamp = timestampSeconds
-        stateLock.unlock()
-
-        let elapsed: Double
-        if let previous, timestampSeconds >= previous {
-            elapsed = timestampSeconds - previous
-        } else {
-            elapsed = 0.0
+        let (elapsed, generation) = executeOnControlQueue {
+            self.stateLock.lock()
+            let previous = self._lastTickTimestamp
+            self._lastTickTimestamp = timestampSeconds
+            let generation = self._rampGeneration
+            self.stateLock.unlock()
+            let elapsed = previous.map { max(0.0, timestampSeconds - $0) } ?? 0.0
+            return (elapsed, generation)
         }
-        return advanceTimeInternal(deltaSeconds: elapsed, expectedGeneration: nil)
+        return advanceTimeInternal(deltaSeconds: elapsed, expectedGeneration: generation)
     }
 
     // MARK: - Internal Ramp Implementation
@@ -256,34 +268,35 @@ public final class TalkoverController: @unchecked Sendable {
     @discardableResult
     private func advanceTimeInternal(deltaSeconds: Double, expectedGeneration: UInt64?) -> Bool {
         guard deltaSeconds.isFinite, deltaSeconds >= 0.0 else { return false }
-
         stateLock.lock()
-        if let expected = expectedGeneration, expected != _rampGeneration {
-            stateLock.unlock()
-            return true // Outdated generation: stop task
-        }
-
-        let target = _isTargetActive
-        let rate = 1.0 / Self.rampDurationSeconds
-        let deltaProgress = deltaSeconds * rate
-
-        if target {
-            _currentProgress = min(1.0, _currentProgress + deltaProgress)
-        } else {
-            _currentProgress = max(0.0, _currentProgress - deltaProgress)
-        }
-
-        let isDone: Bool
-        if target {
-            isDone = _currentProgress >= 1.0
-        } else {
-            isDone = _currentProgress <= 0.0
-        }
+        let generation = expectedGeneration ?? _rampGeneration
         stateLock.unlock()
+        // A paused/cancelled tick must still validate its generation inside the
+        // same serialized operation that writes both graphs.
+        beforeGraphApplicationForTesting?()
+        let result = executeOnControlQueue { () -> (done: Bool, applied: Bool) in
+            self.stateLock.lock()
+            guard generation == self._rampGeneration else {
+                self.stateLock.unlock()
+                return (true, false) // Outdated generation: stop task
+            }
+            let target = self._isTargetActive
+            let deltaProgress = deltaSeconds / Self.rampDurationSeconds
+            if target {
+                self._currentProgress = min(1.0, self._currentProgress + deltaProgress)
+            } else {
+                self._currentProgress = max(0.0, self._currentProgress - deltaProgress)
+            }
+            let isDone = target ? self._currentProgress >= 1.0 : self._currentProgress <= 0.0
+            self.stateLock.unlock()
 
-        applyCurrentValuesToGraphs()
-        notifyStateChanged()
-        return isDone
+            self.applyCurrentValuesToGraphs()
+            return (isDone, true)
+        }
+        if result.applied {
+            notifyStateChanged()
+        }
+        return result.done
     }
 
     private func startRampTask(generation: UInt64) {
@@ -319,12 +332,23 @@ public final class TalkoverController: @unchecked Sendable {
         }
     }
 
+    /// Called only inside the controller's serialized control operation.
     private func applyCurrentValuesToGraphs() {
-        let mult = currentVolumeMultiplier
-        let eq = currentEQGainDB
-
+        let progress = currentProgress
+        let mult = Float(1.0 - (1.0 - Double(Self.duckedVolumeMultiplier)) * progress)
+        let eq = Float(Double(Self.duckedEQGainDB) * progress)
         deckA.applyTalkover(volumeMultiplier: mult, eqGainDB: eq)
         deckB.applyTalkover(volumeMultiplier: mult, eqGainDB: eq)
+    }
+
+    private func executeOnControlQueue<T: Sendable>(_ body: () throws -> T) rethrows -> T {
+        if let monitor {
+            return try monitor.performOnControlQueue(body)
+        }
+        if DispatchQueue.getSpecific(key: fallbackQueueKey) == Self.fallbackQueueToken {
+            return try body()
+        }
+        return try fallbackQueue.sync(execute: body)
     }
 
     private func notifyStateChanged() {

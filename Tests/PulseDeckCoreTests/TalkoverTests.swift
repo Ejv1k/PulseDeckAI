@@ -6,6 +6,139 @@ import CoreAudio
 
 final class TalkoverTests: XCTestCase {
 
+    private final class ApplicationGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed = false
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+
+        func pauseFirstApplication() {
+            lock.lock()
+            let shouldPause = !claimed
+            claimed = true
+            lock.unlock()
+            if shouldPause {
+                entered.signal()
+                XCTAssertEqual(release.wait(timeout: .now() + 10), .success, "Application gate timed out")
+            }
+        }
+    }
+
+    func testCancellationRejectsPausedTickAcrossStopAndRestart() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try coordinator.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.start()
+        let talkover = coordinator.talkoverController
+        talkover.stepProgress(to: 1)
+        let gate = ApplicationGate()
+        let finished = DispatchSemaphore(value: 0)
+        talkover.beforeGraphApplicationForTesting = { gate.pauseFirstApplication() }
+        defer { gate.release.signal(); coordinator.stop() }
+        DispatchQueue.global().async {
+            talkover.advanceTime(deltaSeconds: 0)
+            finished.signal()
+        }
+        guard gate.entered.wait(timeout: .now() + 10) == .success else {
+            return XCTFail("Tick did not reach the application boundary")
+        }
+        // Complete cancellation while the old tick is paused, then release it.
+        coordinator.stop()
+        XCTAssertEqual(talkover.state, .inactive)
+        gate.release.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success)
+        for deck in [coordinator.deckAGraph, coordinator.deckBGraph] {
+            XCTAssertEqual(deck.talkoverVolumeMultiplier, 1)
+            XCTAssertEqual(deck.masterFaderNode.outputVolume, 1)
+            XCTAssertEqual(deck.masterTalkoverEQNode.bands[0].gain, 0)
+            XCTAssertTrue(deck.masterTalkoverEQNode.bypass)
+        }
+        try coordinator.start()
+        XCTAssertEqual(talkover.state, .inactive)
+        for deck in [coordinator.deckAGraph, coordinator.deckBGraph] {
+            XCTAssertEqual(deck.masterFaderNode.outputVolume, 1)
+            XCTAssertTrue(deck.masterTalkoverEQNode.bypass)
+        }
+    }
+
+    func testFinalTalkoverTickCannotReopenClosedCrossfader() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let master = coordinator.masterAudioEngine.rawEngine
+        let cue = coordinator.cueAudioEngine.rawEngine
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try master.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try cue.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.start()
+        defer { coordinator.stop() }
+        let url = try createSineWavFile(durationSeconds: 2)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let deck = coordinator.deckAGraph
+        try deck.loadTrack(url: url)
+        deck.isCueActive = true
+        coordinator.setCrossfader(position: 0)
+        deck.play()
+        // Public monitor-free controller still drives the real monitored graphs.
+        // Initial partial progress has an inactive target, so this tick is the final restore.
+        let talkover = TalkoverController(deckA: deck, deckB: coordinator.deckBGraph)
+        talkover.stepProgress(to: 0.5)
+        XCTAssertGreaterThan(peakAmplitude(of: try render(master)), 0.1)
+        let cuePeak = peakAmplitude(of: try render(cue))
+        XCTAssertGreaterThan(cuePeak, 0.1)
+        let gate = ApplicationGate()
+        let finished = DispatchSemaphore(value: 0)
+        deck.beforeMasterGainApplicationForTesting = { gate.pauseFirstApplication() }
+        defer { gate.release.signal() }
+        DispatchQueue.global().async {
+            talkover.advanceTime(deltaSeconds: 0.4)
+            finished.signal()
+        }
+        guard gate.entered.wait(timeout: .now() + 10) == .success else {
+            return XCTFail("Final tick did not reach the gain application boundary")
+        }
+        coordinator.setCrossfader(position: 1)
+        XCTAssertEqual(deck.masterFaderNode.outputVolume, 0)
+        gate.release.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(talkover.state, .inactive)
+        XCTAssertEqual(deck.crossfaderWeight, 0)
+        XCTAssertEqual(deck.effectiveMasterGain, 0)
+        XCTAssertEqual(deck.masterFaderNode.outputVolume, 0)
+        XCTAssertTrue(deck.masterTalkoverEQNode.bypass)
+        _ = try render(master) // Allow the mixer's volume smoothing to settle.
+        XCTAssertLessThan(peakAmplitude(of: try render(master)), 0.0001)
+        XCTAssertEqual(peakAmplitude(of: try render(cue)), cuePeak, accuracy: 0.05)
+        XCTAssertEqual(deck.cueFaderNode.outputVolume, 1)
+    }
+
+    func testGainSettersRemainSynchronousAndReentrantWithAndWithoutMonitor() {
+        let hardware = MockAudioHardware()
+        let master = OutputAudioEngine(role: .master, hal: hardware)
+        let cue = OutputAudioEngine(role: .cue, hal: hardware)
+        let unmonitored = DeckAudioGraph(deckId: .deckA, masterEngine: master, cueEngine: cue)
+        let coordinator = AudioEngineCoordinator(hal: hardware)
+        let check: @Sendable (DeckAudioGraph) -> Void = { deck in
+            deck.volume = 0.8
+            deck.crossfaderWeight = 0.5
+            deck.talkoverVolumeMultiplier = 0.15
+            XCTAssertEqual(deck.masterFaderNode.outputVolume, 0.06, accuracy: 0.0001)
+            deck.applyTalkover(volumeMultiplier: 1, eqGainDB: 0)
+            XCTAssertEqual(deck.masterFaderNode.outputVolume, 0.4, accuracy: 0.0001)
+            XCTAssertTrue(deck.masterTalkoverEQNode.bypass)
+            deck.isCueActive = true
+            XCTAssertEqual(deck.cueFaderNode.outputVolume, 1)
+        }
+        check(unmonitored)
+        coordinator.monitor.performOnControlQueue {
+            check(coordinator.deckAGraph)
+            // Nested controller and graph operations must execute inline, never sync to themselves.
+            coordinator.talkoverController.toggleTalkover()
+            coordinator.talkoverController.cancelTalkover()
+            XCTAssertEqual(coordinator.deckAGraph.masterFaderNode.outputVolume, 0.4, accuracy: 0.0001)
+            XCTAssertEqual(coordinator.talkoverController.state, .inactive)
+        }
+    }
+
     private func createSineWavFile(durationSeconds: Double = 1.0, frequencyHz: Float = 1000.0) throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
         let fileURL = tempDir.appendingPathComponent("talkover_test_\(UUID().uuidString).wav")

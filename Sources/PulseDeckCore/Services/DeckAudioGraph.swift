@@ -38,6 +38,12 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private weak var cueEngine: OutputAudioEngine?
     private weak var monitor: OutputDeviceMonitor?
 
+    /// Installed before test operations; pauses a selected gain application.
+    var beforeMasterGainApplicationForTesting: (@Sendable () -> Void)?
+
+    private let fallbackQueue = DispatchQueue(label: "com.pulsedeck.deckaudiograph.fallbackControl")
+    private let fallbackQueueKey = DispatchSpecificKey<UInt8>()
+    private static let fallbackQueueToken: UInt8 = 1
     private let stateLock = NSLock()
 
     // State Variables
@@ -166,6 +172,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         self.cueEchoNode = AVAudioUnitDelay()
         self.cueFaderNode = AVAudioMixerNode()
 
+        fallbackQueue.setSpecific(key: fallbackQueueKey, value: Self.fallbackQueueToken)
         setupGraphs()
     }
 
@@ -267,10 +274,13 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
         set {
             let clamped = newValue.isFinite ? min(max(newValue, 0.0), 1.0) : 0.0
-            stateLock.lock()
-            _volume = clamped
-            stateLock.unlock()
-            updateMasterFaderVolume()
+            beforeMasterGainApplicationForTesting?()
+            executeOnControlQueue {
+                self.stateLock.lock()
+                self._volume = clamped
+                self.stateLock.unlock()
+                self.updateMasterFaderVolume()
+            }
         }
     }
 
@@ -282,10 +292,13 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
         set {
             let clamped = newValue.isFinite ? min(max(newValue, 0.0), 1.0) : 1.0
-            stateLock.lock()
-            _crossfaderWeight = clamped
-            stateLock.unlock()
-            updateMasterFaderVolume()
+            beforeMasterGainApplicationForTesting?()
+            executeOnControlQueue {
+                self.stateLock.lock()
+                self._crossfaderWeight = clamped
+                self.stateLock.unlock()
+                self.updateMasterFaderVolume()
+            }
         }
     }
 
@@ -305,6 +318,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
         set {
             let clamped = newValue.isFinite ? min(max(newValue, 0.0), 1.0) : 1.0
+            beforeMasterGainApplicationForTesting?()
             executeOnControlQueue {
                 self.stateLock.lock()
                 self._talkoverVolumeMultiplier = clamped
@@ -336,6 +350,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     public func applyTalkover(volumeMultiplier: Float, eqGainDB: Float) {
         let clampedMult = volumeMultiplier.isFinite ? min(max(volumeMultiplier, 0.0), 1.0) : 1.0
         let clampedGain = eqGainDB.isFinite ? min(max(eqGainDB, -24.0), 6.0) : 0.0
+        beforeMasterGainApplicationForTesting?()
         executeOnControlQueue {
             self.stateLock.lock()
             self._talkoverVolumeMultiplier = clampedMult
@@ -727,6 +742,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         return scheduledStart
     }
 
+    /// Initialization is unpublished; subsequent gain reads and node writes share the control queue.
     private func updateMasterFaderVolume() {
         stateLock.lock()
         let eff = _volume * _crossfaderWeight * _talkoverVolumeMultiplier
@@ -867,7 +883,10 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         if let monitor {
             return try monitor.performOnControlQueue(block)
         } else {
-            return try block()
+            if DispatchQueue.getSpecific(key: fallbackQueueKey) == Self.fallbackQueueToken {
+                return try block()
+            }
+            return try fallbackQueue.sync(execute: block)
         }
     }
 }

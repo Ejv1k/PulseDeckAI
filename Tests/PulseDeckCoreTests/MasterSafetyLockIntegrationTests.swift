@@ -348,10 +348,6 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
     }
 
-    private nonisolated static func waitForCommand(_ semaphore: DispatchSemaphore) -> Bool {
-        semaphore.wait(timeout: .now() + 5) == .success
-    }
-
     private actor CommandLatch {
         private var released = false
         private var waiter: CheckedContinuation<Void, Never>?
@@ -375,7 +371,12 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
             await latch.wait()
         }
         let request = Task { @MainActor in await f.app.executeTransition() }
-        let held = await Task.detached { Self.waitForCommand(entered) }.value
+        // Keep the bounded synchronous wait off MainActor without detached-closure inference.
+        let held = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: entered.wait(timeout: .now() + 5) == .success)
+            }
+        }
         guard held else {
             await latch.release(); await request.value
             return XCTFail("Validated transition never reached its controlled handoff")

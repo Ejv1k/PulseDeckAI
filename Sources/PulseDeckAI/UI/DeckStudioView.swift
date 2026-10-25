@@ -230,19 +230,7 @@ public struct DeckStudioView: View {
 
     private func centerMixerStrip() -> some View {
         VStack(spacing: 6) {
-            Button {
-                guard NSApplication.shared.currentEvent?.isARepeat != true else { return }
-                appState.setMasterSafetyLockEnabled(!appState.isMasterSafetyLockEnabled)
-            } label: {
-                Label("SAFETY LOCK", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
-                    .foregroundStyle(appState.isMasterSafetyLockEnabled ? DJTheme.cue : DJTheme.textSecondary)
-                    .padding(.vertical, 5)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Master Safety Lock")
-            .accessibilityValue(appState.isMasterSafetyLockEnabled ? "On" : "Off")
-            .help("Protect on-air deck transport. Shift+Space confirms one pause on the focused deck without unlocking.")
+            MasterSafetyLockButton(appState: appState)
 
             Text("CROSSFADER")
                 .font(.system(size: 9, weight: .black, design: .monospaced))
@@ -487,5 +475,43 @@ public struct DeckStudioView: View {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+/// The production control owns activation semantics; an event source makes pointer,
+/// keyboard and assistive activation reproducible without global AppKit mutation.
+@MainActor
+struct MasterSafetyLockButton: View {
+    @ObservedObject var appState: AppState
+    private let currentEvent: @MainActor () -> NSEvent?
+
+    init(appState: AppState, currentEvent: @escaping @MainActor () -> NSEvent? = { NSApplication.shared.currentEvent }) {
+        self.appState = appState
+        self.currentEvent = currentEvent
+    }
+
+    var body: some View {
+        button
+            .buttonStyle(.plain)
+            .accessibilityLabel("Master Safety Lock")
+            .accessibilityValue(appState.isMasterSafetyLockEnabled ? "On" : "Off")
+            .help("Protect on-air deck transport. Shift+Space confirms one pause on the focused deck without unlocking.")
+    }
+
+    // Keep the real Button available for an in-process primitive-style activation test.
+    var button: some View {
+        Button {
+            if let event = currentEvent(),
+               (event.type == .keyDown || event.type == .keyUp),
+               event.isARepeat {
+                return
+            }
+            appState.setMasterSafetyLockEnabled(!appState.isMasterSafetyLockEnabled)
+        } label: {
+            Label("SAFETY LOCK", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
+                .font(.system(size: 9, weight: .black, design: .monospaced))
+                .foregroundStyle(appState.isMasterSafetyLockEnabled ? DJTheme.cue : DJTheme.textSecondary)
+                .padding(.vertical, 5)
+        }
     }
 }

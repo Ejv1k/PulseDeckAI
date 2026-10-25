@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import SwiftUI
 import AVFoundation
 import CoreAudio
 @testable import PulseDeckCore
@@ -392,6 +393,90 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         await request.value
         XCTAssertTrue(f.app.isTransitionRunning)
         await f.app.cancelTransition()
+    }
+
+    @MainActor
+    private final class ButtonEventContext {
+        var event: NSEvent?
+    }
+
+    @MainActor
+    private struct CaptureSafetyButtonStyle: PrimitiveButtonStyle {
+        let capture: (@escaping @MainActor () -> Void) -> Void
+
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.onAppear { capture { configuration.trigger() } }
+        }
+    }
+
+    @MainActor
+    private func hostedSafetyButton(app: AppState, context: ButtonEventContext) throws -> (NSWindow, @MainActor () -> Void) {
+        // Activate the actual production Button through SwiftUI's public primitive
+        // configuration. No accessibility server, private reflection, or OS focus is needed.
+        let ready = expectation(description: "Production Safety Lock button mounted")
+        var trigger: (@MainActor () -> Void)?
+        let control = MasterSafetyLockButton(appState: app, currentEvent: { context.event })
+        let host = NSHostingView(rootView: control.button.buttonStyle(CaptureSafetyButtonStyle { action in
+            trigger = action
+            ready.fulfill()
+        }).frame(width: 200, height: 50))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 70),
+                              styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        wait(for: [ready], timeout: 2)
+        guard let trigger else {
+            window.close()
+            throw NSError(domain: "MasterSafetyLockTests", code: 1)
+        }
+        return (window, trigger)
+    }
+
+    @MainActor
+    func testActualSafetyLockButtonAcceptsMouseActivation() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let context = ButtonEventContext()
+        let (window, action) = try hostedSafetyButton(app: f.app, context: context)
+        defer { window.close() }
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            context.event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: .zero,
+                modifierFlags: [], timestamp: 20, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            let previous = f.app.isMasterSafetyLockEnabled
+            action()
+            XCTAssertEqual(f.app.isMasterSafetyLockEnabled, !previous)
+            XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying, "Unlocking must not itself interrupt Master")
+        }
+    }
+
+    @MainActor
+    func testActualSafetyLockButtonAllowsAccessibilityWithoutCurrentEvent() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let context = ButtonEventContext()
+        let (window, action) = try hostedSafetyButton(app: f.app, context: context)
+        defer { window.close() }
+        XCTAssertNil(context.event)
+        action()
+        XCTAssertFalse(f.app.isMasterSafetyLockEnabled)
+        XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
+    }
+
+    @MainActor
+    func testActualSafetyLockButtonSuppressesHeldKeyboardActivation() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let context = ButtonEventContext()
+        let (window, action) = try hostedSafetyButton(app: f.app, context: context)
+        defer { window.close() }
+        context.event = try key(window, time: 21, repeating: true)
+        action()
+        XCTAssertTrue(f.app.isMasterSafetyLockEnabled)
+        context.event = try key(window, time: 22)
+        action()
+        XCTAssertFalse(f.app.isMasterSafetyLockEnabled)
+        context.event = try key(window, time: 23, repeating: true)
+        action()
+        XCTAssertFalse(f.app.isMasterSafetyLockEnabled)
     }
 
 }

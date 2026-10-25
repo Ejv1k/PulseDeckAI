@@ -2,24 +2,27 @@ import AppKit
 import SwiftUI
 import PulseDeckCore
 
+private final class ProjectorNotificationToken: @unchecked Sendable {
+    var observer: (any NSObjectProtocol)?
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+}
+
 /// Window controller managing the presentation lifecycle, external display binding,
 /// and full-screen state of the secondary projector display.
 @MainActor
 public final class ProjectorWindowController: NSObject, NSWindowDelegate {
     private weak var viewModel: ProjectorViewModel?
     private var window: NSWindow?
-    private var screenChangeObserver: (any NSObjectProtocol)?
+    private var screenChangeToken: ProjectorNotificationToken?
 
     public init(viewModel: ProjectorViewModel) {
         self.viewModel = viewModel
         super.init()
         observeScreenChanges()
-    }
-
-    isolated deinit {
-        if let observer = screenChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
     }
 
     // MARK: - Display Detection & Selection
@@ -143,7 +146,8 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
     // MARK: - Display Disconnect Handling
 
     private func observeScreenChanges() {
-        screenChangeObserver = NotificationCenter.default.addObserver(
+        let token = ProjectorNotificationToken()
+        token.observer = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
@@ -152,6 +156,7 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
                 self?.handleScreenParametersChanged()
             }
         }
+        self.screenChangeToken = token
     }
 
     /// Handles hot-plug or disconnect of external projectors safely.

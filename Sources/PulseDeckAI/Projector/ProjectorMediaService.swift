@@ -3,6 +3,15 @@ import AppKit
 import AVFoundation
 import ImageIO
 
+private final class MediaNotificationToken: @unchecked Sendable {
+    var observer: (any NSObjectProtocol)?
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+}
+
 /// Service managing discovery, bounded downsampled caching, and muted playback of media
 /// from `09_Visual_Backgrounds_Media`.
 ///
@@ -38,14 +47,10 @@ public final class ProjectorMediaService: ObservableObject {
     private var scanGeneration: UInt64 = 0
     private var photoCache: [URL: (image: NSImage, bytes: Int)] = [:]
     private var photoCacheTotalBytes: Int = 0
-    private var playerDidPlayToEndObserver: (any NSObjectProtocol)?
+    private var playerDidPlayToEndToken: MediaNotificationToken?
     private var activeScanTask: Task<Void, Never>?
 
     public init() {}
-
-    isolated deinit {
-        cleanupPlayer()
-    }
 
     /// Sets the library root and scans `09_Visual_Backgrounds_Media`.
     public func setLibraryRoot(_ url: URL) {
@@ -288,7 +293,8 @@ public final class ProjectorMediaService: ObservableObject {
         player.volume = 0.0
 
         // Install seamless looping observer
-        playerDidPlayToEndObserver = NotificationCenter.default.addObserver(
+        let token = MediaNotificationToken()
+        token.observer = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: playerItem,
             queue: .main
@@ -296,16 +302,14 @@ public final class ProjectorMediaService: ObservableObject {
             player?.seek(to: .zero)
             player?.play()
         }
+        self.playerDidPlayToEndToken = token
 
         self.currentVideoPlayer = player
         player.play()
     }
 
     private func cleanupPlayer() {
-        if let observer = playerDidPlayToEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            playerDidPlayToEndObserver = nil
-        }
+        playerDidPlayToEndToken = nil
         currentVideoPlayer?.pause()
         currentVideoPlayer = nil
     }

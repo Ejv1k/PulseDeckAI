@@ -3,11 +3,15 @@ import AppKit
 import PulseDeckCore
 
 /// Dual-deck studio playback, transport, and crossfader control view.
+@MainActor
 public struct DeckStudioView: View {
     @ObservedObject var appState: AppState
+    @StateObject private var safetyKeyboard: MasterSafetyLockKeyboardRouter
+    @FocusState private var isStudioFocused: Bool
 
     public init(appState: AppState) {
         self.appState = appState
+        _safetyKeyboard = StateObject(wrappedValue: MasterSafetyLockKeyboardRouter(appState: appState))
     }
 
     public var body: some View {
@@ -38,11 +42,24 @@ public struct DeckStudioView: View {
 
             transitionControls()
 
+            if let message = appState.masterSafetyLockMessage {
+                Text(message)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DJTheme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("masterSafetyLockFeedback")
+            }
+
             soundboardSection()
         }
+        .background(MasterSafetyLockKeyboardBridge(router: safetyKeyboard))
         .focusable()
+        .focused($isStudioFocused)
         .onKeyPress(phases: [.down, .repeat]) { press in
-            SoundboardKeyboardRouter.handleKeyPress(press, appState: appState)
+            if isStudioFocused, case .handled = safetyKeyboard.handleStudioKeyPress(press) {
+                return .handled
+            }
+            return SoundboardKeyboardRouter.handleKeyPress(press, appState: appState)
         }
     }
 
@@ -68,6 +85,7 @@ public struct DeckStudioView: View {
                 Spacer()
 
                 Button(action: {
+                    appState.focusMasterDeck(deck)
                     appState.loadSelectedTrackIntoDeck(deck: deck)
                 }) {
                     HStack(spacing: 4) {
@@ -88,6 +106,13 @@ public struct DeckStudioView: View {
                 .buttonStyle(.plain)
                 .disabled(appState.selectedTrackPath == nil || appState.isTransitionBusy)
                 .help("Load selected library track into \(title)")
+            }
+
+            if appState.isMasterDeckOnAir(deck) {
+                Label(appState.isMasterSafetyLockEnabled ? "ON AIR · LOCKED" : "ON AIR · UNLOCKED",
+                      systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(color)
             }
 
             // Track metadata
@@ -134,6 +159,7 @@ public struct DeckStudioView: View {
             // Transport Controls
             HStack(spacing: 8) {
                 Button(action: {
+                    appState.focusMasterDeck(deck)
                     appState.toggleDeckPlay(deck: deck)
                 }) {
                     HStack(spacing: 4) {
@@ -153,6 +179,19 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
+
+                Button {
+                    appState.focusMasterDeck(deck)
+                    appState.stopDeck(deck: deck)
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .foregroundStyle(DJTheme.textPrimary)
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.isTransitionBusy)
+                .accessibilityLabel("Stop \(title)")
+                .help("Stop and rewind this deck. On-air decks require Safety Lock off.")
 
                 Button(action: {
                     appState.setDeckCueActive(deck: deck, active: !isCueActive)
@@ -181,12 +220,18 @@ public struct DeckStudioView: View {
         .cornerRadius(6)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(color.opacity(0.35), lineWidth: 1)
+                .stroke(color.opacity(appState.focusedMasterDeck == deck ? 0.9 : 0.35), lineWidth: 1)
         )
+        .simultaneousGesture(TapGesture().onEnded {
+            appState.focusMasterDeck(deck)
+            isStudioFocused = true
+        })
     }
 
     private func centerMixerStrip() -> some View {
         VStack(spacing: 6) {
+            MasterSafetyLockButton(appState: appState)
+
             Text("CROSSFADER")
                 .font(.system(size: 9, weight: .black, design: .monospaced))
                 .foregroundColor(DJTheme.textMuted)
@@ -430,5 +475,43 @@ public struct DeckStudioView: View {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+/// The production control owns activation semantics; an event source makes pointer,
+/// keyboard and assistive activation reproducible without global AppKit mutation.
+@MainActor
+struct MasterSafetyLockButton: View {
+    @ObservedObject var appState: AppState
+    private let currentEvent: @MainActor () -> NSEvent?
+
+    init(appState: AppState, currentEvent: @escaping @MainActor () -> NSEvent? = { NSApplication.shared.currentEvent }) {
+        self.appState = appState
+        self.currentEvent = currentEvent
+    }
+
+    var body: some View {
+        button
+            .buttonStyle(.plain)
+            .accessibilityLabel("Master Safety Lock")
+            .accessibilityValue(appState.isMasterSafetyLockEnabled ? "On" : "Off")
+            .help("Protect on-air deck transport. Shift+Space confirms one pause on the focused deck without unlocking.")
+    }
+
+    // Keep the real Button available for an in-process primitive-style activation test.
+    var button: some View {
+        Button {
+            if let event = currentEvent(),
+               (event.type == .keyDown || event.type == .keyUp),
+               event.isARepeat {
+                return
+            }
+            appState.setMasterSafetyLockEnabled(!appState.isMasterSafetyLockEnabled)
+        } label: {
+            Label("SAFETY LOCK", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
+                .font(.system(size: 9, weight: .black, design: .monospaced))
+                .foregroundStyle(appState.isMasterSafetyLockEnabled ? DJTheme.cue : DJTheme.textSecondary)
+                .padding(.vertical, 5)
+        }
     }
 }

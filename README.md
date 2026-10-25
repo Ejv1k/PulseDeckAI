@@ -38,7 +38,7 @@ PulseDeck AI is developed through a verification-driven lifecycle. The core perf
 
 ### Implemented & Verified Capabilities
 * [x] **Dual Independent CoreAudio Output Pipeline (Phase 1):** Segregated `masterAudioEngine` (FOH speakers) and `cueAudioEngine` (headphones) running output-only graphs, 3-band isolator EQ, dual-pole resonant sweep filters, and C11 lock-free SPSC output metering.
-* [x] **Offline DSP & Unified Cache Schema v1.0.0 (Phase 2):** Accelerate vDSP feature extraction, beat grid estimation, 4 bounded cue markers, Camelot wheel harmonic key detection, atomic file persistence (`.pulsedeck_ai_cache.json`), override preservation, and Gemini 2.5 Flash / Ollama hybrid advising.
+* [x] **Offline DSP & Unified Cache Schema v1.0.0 (Phase 2):** Accelerate vDSP feature extraction, beat grid estimation, 4 bounded cue markers, Camelot wheel harmonic key compatibility matching on cached/override metadata, atomic file persistence (`.pulsedeck_ai_cache.json`), override preservation, and Gemini 2.5 Flash / Ollama hybrid advising.
 * [x] **Interactive Waveforms & Library Audition Engine (Phase 3):** 60 FPS multi-band SwiftUI Canvas waveforms with frequency-color mapping, 4 draggable cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, non-destructive cue playhead scrubbing, and dedicated headphone Cue preview player with beat-step stepping.
 * [x] **Performance Transitions, Auto-Pilot, Talkover & Soundboard (Phase 4):** Bar-aligned macro transitions (Bass Swap, Filter Echo Wash, Hard Cut) with on-screen Macro/Phrase pickers and `EXECUTE` button, one-shot cue-armed Auto-Pilot mix engine (`ARM` / `DISARM` / `CANCEL`), Master Talkover Ducking (`T`, 800ms linear ramp to 0.15 Master music level with -4 dB 300 Hz–3 kHz mid dip, SFX bypass), and 8-pad zero-I/O RAM Soundboard (`F1`–`F8`) with procedural synthesized fallbacks, choke-self retrigger, polyphonic overlap, and strict Master-only routing with Cue isolation.
 * [x] **Secondary Projector Presentation Window (Phase 5A):** Dedicated fullscreen-capable external window (`Cmd + Shift + P`) supporting 4 presentation modes on Keys 1–4 (24-band FFT visualizer, Ken Burns photo slideshow and muted video loops with 48 MB / 20 photo RAM cache and idle fallback, Now Playing & customizable event banner, and true blackout). Includes first-responder text editing protection, display disconnect fallback, and strictly muted videos (`volume = 0.0`).
@@ -105,6 +105,12 @@ $$\text{0.0} \le \text{startTrimCue} \le \text{vocalEntryCue} \le \text{mixOutCu
 
 When a human DJ manually adjusts cues, BPM, or musical key, the track entry records `manualOverrides.isManual = true` along with the list of overridden fields. Re-running automated DSP analysis or re-scanning the library will **never** overwrite manually adjusted fields.
 
+> [!NOTE]
+> **Analysis Limitations & Cached Key Matching:**
+> * `LocalTrackAnalyzer` and the Python companion script write `musicalKey: "Unknown"` and empty `vocalSegments: []`. They do not extract musical keys or lead-vocal onsets from raw audio. `HarmonicCompatibility` matches Camelot keys already present in cached metadata or manual overrides.
+> * `vocalEntryCue` is computed via a temporal span heuristic (`span * 0.12`).
+> * `startTrimCue` and `endTrimCue` are bounded metadata timestamps for transition planning. They do **not** automatically crop or stop ordinary deck playback in CoreAudio (`DeckAudioGraph.loadTrack` schedules from frame zero to `file.length`).
+
 ### 5. Interactive Waveforms & Non-Destructive Cue Editing
 The multi-band Canvas waveform visually differentiates audio frequencies:
 * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Bass drums, 808 subs, basslines.
@@ -118,7 +124,7 @@ The multi-band Canvas waveform visually differentiates audio frequencies:
   * `+` / `=`: Zoom in timeline; `-` / `_`: Zoom out timeline.
   * `[` / `]`: Scroll timeline left / right (5 seconds).
   * `Left / Right Arrow`: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
-* **AI Trim Bypass:** Clickable toolbar button (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles automated trim cues non-destructively without losing cue markers. Bypass is button-only with no keyboard shortcut.
+* **AI Trim Bypass:** Clickable toolbar button (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles display and auditioning of unedited track bounds in the waveform editor without losing cue markers. It does **not** alter CoreAudio deck playback scheduling or stop playback. Bypass is button-only with no keyboard shortcut.
 
 > [!NOTE]
 > **Non-Destructive Cue Playhead:** The cue editing playhead in the waveform editor is strictly isolated to cue point positioning and visual scrubbing. It **never** seeks or interrupts live Master audio playback.

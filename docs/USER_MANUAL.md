@@ -114,8 +114,9 @@ PulseDeck AI **never** requests or opens an audio input channel (`engine.inputNo
 ### 3.2 Crates Browser & Harmonic Compatibility Badges
 * **10 Standard DJ Crates:** Structured navigation across wedding and event crates (see Section 8).
 * **Reference Deck Selector:** Toggle between **Deck A** and **Deck B** as the harmonic mixing reference.
-* **Compatibility Badges:**
-  * **Camelot Key Badges:** `EXACT KEY` (matching key number and letter), `RELATIVE` (same number, opposite letter e.g. 8A to 8B), `ADJACENT` (±1 Camelot number e.g. 8A to 7A/9A), or `CLASH` (incompatible musical key). Tracks with unknown tempo/key display honest `UNKNOWN` indicators.
+* **Compatibility Badges (Cached Key Matching):**
+  * `HarmonicCompatibility` compares Camelot keys **already present in track cache metadata or manual overrides**. Local offline analyzers (`LocalTrackAnalyzer` and the Python companion script) do not detect musical keys from audio waveforms (writing `musicalKey: "Unknown"` by default).
+  * **Camelot Key Badges:** When keys are populated in cache, displays `EXACT KEY` (matching key number and letter), `RELATIVE` (same number, opposite letter e.g. 8A to 8B), `ADJACENT` (±1 Camelot number e.g. 8A to 7A/9A), or `CLASH` (incompatible musical key). Tracks with unknown tempo or unanalyzed key display honest `UNKNOWN` indicators.
   * **Tempo Badges:** Tracks within $\le 6.0\%$ tempo difference display `TEMPO OK`; larger differences show relative differential percentage.
 
 ### 3.3 Headphone Cue Audition Bar (Cue Preview)
@@ -147,11 +148,11 @@ PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) direct
   * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Kick drums, basslines, 808 subs.
   * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, pianos, guitars.
   * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, acoustic presence.
-* **The Four Ordered Cue Markers:**
-  1. `startTrimCue` (Yellow Handle): Automatically loaded starting position, skipping dead space or ambient intro banter. Set to current playhead via `I` key.
-  2. `vocalEntryCue` (Green Handle): First lead vocal entry. Used by Auto-Pilot to prevent vocal clashes. Set to current playhead via `V` key.
-  3. `mixOutCue` (Red Handle): Optimal transition start marker. Used by Auto-Pilot. Set to current playhead via `M` key.
-  4. `endTrimCue` (Purple Handle): Trailing silence cutoff. Playback automatically stops here. Set to current playhead via `O` key.
+* **The Four Ordered Cue Markers (Metadata & Transition Planning):**
+  1. `startTrimCue` (Yellow Handle): Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero. Set to current playhead via `I` key.
+  2. `vocalEntryCue` (Green Handle): Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection. Set to current playhead via `V` key.
+  3. `mixOutCue` (Red Handle): Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot. Set to current playhead via `M` key.
+  4. `endTrimCue` (Purple Handle): Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`). Set to current playhead via `O` key.
 * **Waveform Keyboard Controls (Active when waveform editor is focused):**
   * **`I`**: Snap `startTrimCue` to current playhead position.
   * **`O`**: Snap `endTrimCue` to current playhead position.
@@ -161,7 +162,7 @@ PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) direct
   * **`-` / `_`**: Zoom out timeline.
   * **`[` / `]`**: Scroll timeline left / right by 5 seconds.
   * **`Left / Right Arrow`**: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
-* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) enables or disables automated trim cues non-destructively without altering persisted cue markers. There is **no** keyboard shortcut for bypass; use the toolbar button.
+* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles display and auditioning of track boundaries in the waveform editor without altering persisted cue values. It does **not** alter CoreAudio deck playback scheduling or stop playback on loaded decks. There is **no** keyboard shortcut for bypass; use the toolbar button.
 * **Human Override Protection:** Dragging cue handles or setting hotkeys flags fields as user-customized in `.pulsedeck_ai_cache.json`. Rescanning will **never** overwrite your custom cue adjustments.
 
 > [!IMPORTANT]

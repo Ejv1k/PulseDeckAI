@@ -315,16 +315,16 @@ The cache is stored at `PulseDeck_Library/.pulsedeck_ai_cache.json` and conforms
 Every audio track contains four ordered, bounded cue markers:
 $$0.0 \le \text{startTrimCue} \le \text{vocalEntryCue} \le \text{mixOutCue} \le \text{endTrimCue} \le \text{duration}$$
 
-* `startTrimCue`: Trims leading silence, DJ drops, or spoken vinyl clicks. Playback begins here.
-* `vocalEntryCue`: Timestamp where the first lead vocal begins. Critical for avoiding vocal clashes during transitions.
-* `mixOutCue`: Timestamp where the outro transition should start.
-* `endTrimCue`: Timestamp where active audio concludes, trimming trailing silence or applause.
+* `startTrimCue`: Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero.
+* `vocalEntryCue`: Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection.
+* `mixOutCue`: Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot.
+* `endTrimCue`: Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`).
 
 ### 7.3 Immutability of Manual DJ Overrides
 PulseDeck AI guarantees that **automated analysis will never clobber human DJ adjustments**:
 * When a DJ manually repositions cue markers, overrides BPM, or edits musical key, `manualOverrides.isManual` is set to `true`, and field names are appended to `overriddenFields` (e.g. `["cueMarkers", "bpm"]`).
 * When re-analysis occurs (e.g. after updating the DSP algorithm), `mergingPreservingOverrides(with:)` merges new spectral waveforms and energy curves, but **strictly retains** user-modified fields.
-* The `aiTrimBypass` flag allows the DJ to temporarily audition original track boundaries without clearing stored cue values.
+* The `aiTrimBypass` flag allows the DJ to temporarily audition original track boundaries in the waveform editor without clearing stored cue values; it does not alter CoreAudio audio graph scheduling.
 
 ### 7.4 Atomic Serialization
 Cache persistence uses POSIX atomic write semantics to prevent file corruption during sudden system shutdowns:
@@ -341,7 +341,7 @@ Acoustic feature extraction executes locally without network access:
 * **Silence & Noise Floor:** Detects threshold transitions below $-60\,\text{dBFS}$ to calculate `startTrimCue` and `endTrimCue`.
 * **Spectral Analysis:** vDSP Fast Fourier Transform (FFT) generates multi-band peak arrays (Low: $20\text{--}250\,\text{Hz}$, Mid: $250\text{--}3500\,\text{Hz}$, High: $3500\text{--}20000\,\text{Hz}$).
 * **Beat Grid & BPM Detection:** Autocorrelation and spectral flux peak detection calculate `beatIntervalSeconds` and `firstBeatOffsetSeconds`.
-* **Vocal Detection:** The current offline batch analyzer does not claim semantic vocal detection and writes an empty `vocalSegments` array. Cue points remain estimates and require DJ review.
+* **Vocal & Musical Key Detection Limits:** Offline local analyzers (`LocalTrackAnalyzer` and Python batch companion) write `musicalKey: "Unknown"` and an empty `vocalSegments: []` array. They do not extract musical keys or lead-vocal onsets from audio waveforms. `vocalEntryCue` is a temporal duration heuristic (`span * 0.12`). `HarmonicCompatibility` matches Camelot keys already present in cached metadata or manual overrides.
 
 ### 8.2 Hybrid AI Advisor (Google Gemini & Local Ollama)
 The AI Advisor provides real-time track selection recommendations based on harmonic compatibility, energy curves, and transition points:
@@ -479,7 +479,7 @@ To prevent catastrophic accidental dropouts during live performance:
 | :---: | :--- | :--- | :--- |
 | **0** | **Operational Foundation & Docs** | Swift 6 package, SwiftUI dark shell, library scanner, cache schema v1, atomic persistence, protocol contracts, docs | **Merged** (`swift build`, `swift test`, `python3 scripts/pulsedeck_cache.py`) |
 | **1** | **Dual Audio Engines & Metering** | CoreAudio HAL routing, dual `AVAudioEngine`, 3-band EQ, resonant filter, SPSC lock-free metering | **Merged** (PR #4, PR #6; offline audio graph tests, lock-free ring buffer verification) |
-| **2** | **Offline DSP & Hybrid Advisor** | vDSP FFT, beat tracking, vocal estimation, Gemini 2.5 Flash / Ollama advisor, cache generation | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`, rate limit stress testing) |
+| **2** | **Offline DSP & Hybrid Advisor** | vDSP FFT, beat tracking, heuristic cue estimation, Gemini 2.5 Flash / Ollama advisor, cache generation | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`, rate limit stress testing) |
 | **3** | **Waveforms, Cues & Interactive Browser** | Multi-band Canvas waveform, 4 bounded cue handles, manual override preservation, cue scrubbing, headphone audition player | **Merged** (PR #9, PR #13, PR #14; waveform render tests, override preservation, audition engine tests) |
 | **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot state machine, Talkover ducking (`T`), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing tests, SFX RAM preload & trailing PCM preservation tests) |
 | **5A** | **Projector Display & Safety Locks** | Multi-screen secondary window, 4 visualizer modes, text editing protection, Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |

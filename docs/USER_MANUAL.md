@@ -75,17 +75,24 @@ PulseDeck AI **never** requests or opens an audio input channel (`engine.inputNo
 
 ```
 +---------------------------------------------------------------------------------------------------+
-|  [●] PulseDeck AI        Apple Silicon M1 Pro / 16GB   macOS 14+                [Rescan (Cmd+R)]  |
+|  [●] PulseDeck AI        Apple Silicon M1 Pro / 16GB   macOS 14+     [Projector] [Rescan (Cmd+R)] |
 |  LIBRARY: /.../PulseDeck_Library   STATUS: 10 Crates, 7 Tracks Verified                           |
 +---------------------------------------------------------------------------------------------------+
-|  DECK A (Teal)                     |  CENTRAL MIXER & CONTROLS         |  DECK B (Amber)          |
-|  Queen - Don't Stop Me Now         |  Master Vol: [====|====] 0.0 dB   |  Daft Punk - One More... |
-|  156.0 BPM • 11B • Key Lock: ON    |  Crossfader: [====|====] Center   |  123.0 BPM • 8B • Lock: ON|
-|  [PLAY] [CUE] [PAUSE]  Speed: 0.0% |  [TALK (T)] [AUTO-PILOT] [LOCK]   |  [PLAY] [CUE] [PAUSE]    |
-|  EQ: Low 0.0 | Mid 0.0 | High 0.0  |  TRANSITIONS: [BASS] [WASH] [CUT] |  EQ: Low 0.0 | Mid | High|
-|  Filter: 0.0 (Center)  Res: 1.0    |  METERS: Master -12dB | Cue -14dB |  Filter: 0.0  Res: 1.0   |
-|  [WAVEFORM CANVAS - 4 CUE HANDLES] |  SOUNDBOARD SFX (F1 - F8):        |  [WAVEFORM CANVAS]       |
-|  startTrim ▲ vocal ▲ mixOut ▲ end  |  [F1 Pip] [F2 Kick] [F3 Snare]... |  startTrim ▲ vocal ▲ ... |
+|  OUTPUT ROUTING: Master [Built-in Output ▼] Latency: [===|===] | Cue [Headphones ▼] Latency: [===] |
+|  METERS: Master L [========  ] R [======    ]  |  Cue L [=====     ] R [=====     ] (SPSC Lock-Free)|
++---------------------------------------------------------------------------------------------------+
+|  DECK A (Teal)             [LOAD]  |  CENTER MIXER STRIP               |  DECK B (Amber)    [LOAD]|
+|  Queen - Don't Stop Me Now.mp3     |  [SAFETY LOCK: ON (Shift+Space)]  |  Daft Punk - One More... |
+|  3:29 • 156.0 BPM • 11B            |  CROSSFADER: [======|======]      |  5:20 • 123.0 BPM • 8B   |
+|  [ PLAY / PAUSE ]  [ ■ ]  [ CUE ]  |  [ TALKOVER DUCKING (Hotkey: T) ] |  [ PLAY / PAUSE ] [■] [CUE]|
+|  -----------------------------------------------------------------------------------------------  |
+|  TRANSITIONS: [Bass Swap ▼] [16 BARS ▼]  [ EXECUTE ]  [ ARM / DISARM ]  [ CANCEL ]   (Ready)       |
+|  SOUNDBOARD SFX (F1-F8): [F1 Stinger] [F2 Kick] [F3 Snare] [F4 Chime] [F5 Rim] [F6 Siren] [F7] [F8] |
++---------------------------------------------------------------------------------------------------+
+|  SHARED WAVEFORM CUE EDITOR (Selected Track): Queen - Don't Stop Me Now.mp3                       |
+|  [AI TRIM: ACTIVE]  Zoom: [-][+]  Scroll: [ [ ][ ] ]  Nudge: [◀][▶]  [Reset Cues]                 |
+|  [=========================== Canvas Multi-Band Waveform (60 FPS) ==============================] |
+|        ▲ startTrim (I)      ▲ vocalEntry (V)                 ▲ mixOut (M)          ▲ endTrim (O)  |
 +---------------------------------------------------------------------------------------------------+
 |  DJ CRATES (10)            |  TRACK BROWSER: 05_MainStage_Dance_120_128BPM                        |
 |  ------------------------- |  Ref Deck: [Deck A ▼] • Compatibility: Camelot Harmonic & Tempo      |
@@ -94,12 +101,15 @@ PulseDeck AI **never** requests or opens an audio input channel (`engine.inputNo
 |  [05] MainStage Dance (12) |  03  Tiësto - The Business.mp3   120 BPM  5A  [ADJACENT]  [TEMPO OK] |
 |  ...                       |  [AUDITION CUE BAR] [▶ Play] [■ Stop] Scrub: [===|===] [|◀] [▶|]     |
 +---------------------------------------------------------------------------------------------------+
+|  ARCHITECTURE STATUS: Master Audio: RUNNING | Cue Audio: RUNNING | Ring Buffers: 0 Drops          |
++---------------------------------------------------------------------------------------------------+
 ```
 
 ### 3.1 Top Status Header & Library Rescanning
 * **Hardware & Runtime Validation:** Displays verified Apple Silicon architecture, memory profile, and Swift 6 concurrency runtime.
 * **Library Status:** Reports crate discovery, track counts, and validation status.
 * **Rescan Button (`Cmd + R`):** Triggers an asynchronous, non-blocking scan of `PulseDeck_Library`. Newly added crates or audio files appear immediately without restarting the application.
+* **Projector Window Button (`Cmd + Shift + P`):** Toggles the secondary external presentation window.
 
 ### 3.2 Crates Browser & Harmonic Compatibility Badges
 * **10 Standard DJ Crates:** Structured navigation across wedding and event crates (see Section 8).
@@ -113,22 +123,26 @@ PulseDeck AI **never** requests or opens an audio input channel (`engine.inputNo
 * **Zero Master Leakage:** Audition playback routes exclusively to DJ headphones; zero preview audio ever reaches Master FOH speakers.
 * **Controls:** Play/Pause (`Space` when audition bar is focused), Stop, continuous slider scrubbing, and beat/bar step buttons (`[|◀]`, `[▶|]`). Beat step is disabled for unanalyzed tracks or unknown tempo sentinels.
 
-### 3.4 Dual Deck DJ Channel Strips (Deck A & Deck B)
-* **Transport:** Bounded Play, Pause, Cue, and Seek controls.
-* **TimePitch & Key Lock:**
-  * Variable pitch/tempo adjustment slider ($\pm 8.0\%$ range, $0.92\text{--}1.08\times$ rate).
-  * Key Lock toggle maintains musical pitch during tempo adjustments.
-* **3-Band Isolator Equalizer:**
-  * Low Shelf ($250\,\text{Hz}$): Kill or boost kick and bass ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-  * Mid Parametric ($1200\,\text{Hz}$): Shape vocals and instruments ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-  * High Shelf ($3500\,\text{Hz}$): Control hi-hat and cymbal brightness ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-* **Dual-Pole Resonant Sweep Filter:**
-  * Turn counter-clockwise from center ($0.0$ to $-1.0$) for smooth Low-Pass Filter sweep.
-  * Turn clockwise from center ($0.0$ to $+1.0$) for High-Pass Filter sweep.
-  * Resonance ($Q$) knob shapes sweep sharpness and acoustic energy.
+### 3.4 Dual Deck Studio Controls (Deck A & Deck B)
+`DeckStudioView` provides live transport, deck loading, on-air monitoring, crossfader, and master ducking:
+* **Deck Panels (Deck A & Deck B):**
+  * **`LOAD` Button:** Loads the track currently selected in the Library Browser into the respective deck.
+  * **Track Metadata Display:** Shows loaded track filename, formatted duration, analyzed BPM, and Camelot musical key. Displays "No Track Loaded" when empty.
+  * **On-Air & Safety Status:** When a deck has nonzero broadcast gain to Master, displays `ON AIR · LOCKED` (or `ON AIR · UNLOCKED`).
+  * **`PLAY / PAUSE` Button:** Toggles playback. Can also be triggered via `Space` when the studio view is focused. If the deck is playing on-air and Master Safety Lock is enabled, manual pause is rejected with nonmodal feedback (use `Shift + Space` for one-shot pause).
+  * **`STOP` Button (`■`):** Stops playback and rewinds the deck to the beginning. Intercepted by Master Safety Lock if on-air.
+  * **`CUE` Button:** Toggles Pre-Fader Listen (PFL) in DJ monitoring headphones (`isCueActive`). Completely isolated from Master FOH sound.
+  * **Deck Focus:** Click anywhere inside Deck A or Deck B panel to set focus for keyboard transport (`Space` / `Shift + Space`).
+* **Center Mixer Strip:**
+  * **Master Safety Lock Button:** One-click toggle to enable or disable persistent transport safety protection (default ON).
+  * **Crossfader Slider:** Smooth continuous horizontal crossfader routing between Deck A ($0.0$) and Deck B ($1.0$).
+  * **`TALKOVER` Button:** Toggles Master Talkover ducking (-16.5 dB attenuation + vocal pocket EQ, also bound to `T` hotkey).
+* **Backend-Only DSP Architecture (Under the Hood):**
+  * The CoreAudio audio graph architecture implements real-time 3-band isolator EQs (Low Shelf 250 Hz, Mid 1200 Hz, High Shelf 3500 Hz), dual-pole resonant sweep filters (LPF/HPF), and AVAudioUnitTimePitch stretching within the backend audio pipeline (`DeckAudioGraph`).
+  * In the shipped UI shell, these DSP capabilities are automated via transition macros and audio graph processing rather than manual on-screen channel-strip knobs or tempo faders.
 
 ### 3.5 Interactive Canvas Waveforms & Cue Editing
-Each deck features a 60 FPS multi-band waveform rendered with SwiftUI Canvas:
+PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) directly below the deck studio, bound to the currently selected track in the library or active deck model, providing full 60 FPS multi-band timeline visualization and cue editing:
 * **Frequency Band Colors:**
   * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Kick drums, basslines, 808 subs.
   * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, pianos, guitars.
@@ -153,12 +167,24 @@ Each deck features a 60 FPS multi-band waveform rendered with SwiftUI Canvas:
 > [!IMPORTANT]
 > **Non-Destructive Cue Editing:** Moving cue handles or scrubbing the playhead in the waveform editor is strictly non-destructive. The cue editor playhead does **not** seek live playing Master audio.
 
-### 3.6 Automated Performance Transitions
-Accessible via the mixer interface or keyboard hotkeys:
-* **Bass Swap (`B` Key):** Waits for the next downbeat (beat 1), instantly cuts outgoing bass while swapping incoming bass, and smoothly crossfades mid/high frequencies over 16 bars.
-* **Filter Echo Wash (`W` Key):** Sweeps outgoing deck's high-pass filter upward into an echo wash, executes an equal-power S-curve crossfade, and drops the incoming track on the downbeat.
-* **Hard Cut (`C` Key):** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from Deck A to Deck B.
-* **Auto-Pilot (`Shift + A`):** When the playhead crosses `mixOutCue`, Auto-Pilot evaluates harmonic compatibility, selects the optimal transition type, and executes the mix automatically.
+### 3.6 Automated Performance Transitions & One-Shot Auto-Pilot
+Performance transitions are configured and triggered via the **TRANSITION** controls strip in `DeckStudioView` (there are no keyboard hotkeys for transitions; use the on-screen controls):
+* **Macro Style Picker:** Selects the transition algorithm:
+  * **Bass Swap:** Aligns to downbeats, cuts outgoing low frequencies while cutting in incoming bass, and smoothly crossfades mid/high frequencies across the phrase.
+  * **Filter Echo Wash:** Sweeps outgoing high-pass filter upward into an echo delay wash, crossfades with an equal-power S-curve, and drops the incoming track on the 1.
+  * **Hard Cut:** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from outgoing to incoming deck.
+* **Phrase Bars Picker:** Selects transition duration: `8 BARS`, `16 BARS`, or `32 BARS`.
+* **`EXECUTE` Button:** Immediately launches the selected transition macro from the outgoing deck's current playhead position. Requires both decks to be loaded and one deck to be playing.
+* **Auto-Pilot One-Shot Cue-Armed Mix Engine (`ARM` / `DISARM` / `CANCEL` Buttons):**
+  * Auto-Pilot is an implemented **one-shot, cue-armed transition runner** for the two pre-loaded decks. It does **not** dynamically query an AI advisor or autonomously select transition styles at the cue point, nor does it perform unattended continuous multi-song mixing.
+  * **The One-Shot Auto-Pilot Workflow (One Transition per Arming):**
+    1. **Load Both Decks:** Ensure the outgoing track is loaded on one deck and the incoming track on the other.
+    2. **Start Outgoing Deck:** Begin playing the outgoing track to Master.
+    3. **Configure Transition:** Select the desired macro style (`Bass Swap`, `Filter Echo Wash`, or `Hard Cut`) and phrase length (`8`, `16`, or `32` bars) in the transition strip.
+    4. **Click `ARM`:** `AppState.buildTransitionRequest` packages the loaded tracks, macro style, and phrase bars into an armed transition request targeting the outgoing track's `mixOutCue`. The status updates to `AUTOPILOT ARMED AT MIX OUT`.
+    5. **Automated Trigger:** When the outgoing track's playhead crosses its `mixOutCue`, the system triggers the armed transition automatically.
+    6. **Transition Completion:** The incoming track takes over on-air playback, and Auto-Pilot disarms automatically.
+    7. **Disarm / Cancel:** To disarm before reaching the cue, click `DISARM`. To abort an active transition in progress and restore the outgoing deck, click `CANCEL`.
 
 ### 3.7 Master Talkover Ducking (`T` Key)
 * Press `T` to make an announcement over the MC microphone.
@@ -215,13 +241,11 @@ To prevent accidental dancefloor silence during live sets:
 
 | Key / Shortcut | Scope / Context | Action Description | Phase |
 | :--- | :--- | :--- | :---: |
-| **`Space`** | Studio Deck | Toggle Play / Pause on selected deck (guarded when on-air and locked) | Phase 1 / 5A |
-| **`Shift + Space`** | Studio Deck | One-shot Force Pause on on-air master deck (overrides safety lock) | Phase 5A |
+| **`Space`** | Studio Deck | Toggle Play / Pause on focused deck (guarded when on-air and locked) | Phase 1 / 5A |
+| **`Shift + Space`** | Studio Deck | One-shot Force Pause on focused on-air master deck (overrides safety lock) | Phase 5A |
 | **`Space`** | Audition Bar | Toggle preview Play / Pause (when audition bar is focused) | Phase 3B |
-| **`A`** | Studio | Select Deck A as active focus deck | Phase 1 |
-| **`B`** | Studio | Select Deck B as active focus deck | Phase 1 |
-| **`Q`** | Deck A | Trigger Pre-Fader Cue (PFL) for Deck A | Phase 1 |
-| **`W`** | Deck B | Trigger Pre-Fader Cue (PFL) for Deck B | Phase 1 |
+| **`[|◀] / [▶|]`** (`Left / Right Arrow`) | Audition Bar | Step preview playhead 1 beat forward / backward (audition focused) | Phase 3B |
+| **`Shift + Left / Right Arrow`** | Audition Bar | Step preview playhead 4 beats / 1 bar forward / backward (disabled for sentinels) | Phase 3B |
 | **`I`** | Waveform | Snap `startTrimCue` to current waveform playhead position | Phase 3A |
 | **`O`** | Waveform | Snap `endTrimCue` to current waveform playhead position | Phase 3A |
 | **`V`** | Waveform | Snap `vocalEntryCue` to current waveform playhead position | Phase 3A |
@@ -230,12 +254,6 @@ To prevent accidental dancefloor silence during live sets:
 | **`-` / `_`** | Waveform | Zoom out waveform timeline | Phase 3A |
 | **`[` / `]`** | Waveform | Scroll waveform timeline left / right by 5 seconds | Phase 3A |
 | **`Left / Right Arrow`** | Waveform | Nudge selected cue handle forward / backward by ±50ms | Phase 3A |
-| **`[|◀] / [▶|]`** | Audition Bar | Step preview playhead 1 beat (audition focused) | Phase 3B |
-| **`Shift + Left / Right`**| Audition Bar | Step preview playhead 4 beats / 1 bar (disabled for sentinels) | Phase 3B |
-| **`B`** (Transition Mode) | Crossfader | Execute bar-aligned **Bass Swap Transition** | Phase 4A |
-| **`W`** (Transition Mode) | Crossfader | Execute **Filter Echo Wash Transition** | Phase 4A |
-| **`C`** | Crossfader | Arm and execute bar-aligned **Hard Cut Transition** | Phase 4A |
-| **`Shift + A`** | Automation | Toggle **Auto-Pilot** automated mix engine | Phase 4A |
 | **`T`** | Master Bus | Toggle **Master Talkover Ducking** (800ms linear duck to 0.15 gain + mid dip) | Phase 4B |
 | **`F1` – `F8`** | Soundboard | Trigger RAM Soundboard pads 1–8 (hold `Fn`/Globe if macOS standard keys disabled) | Phase 4B |
 | **`1`** | Projector | Switch Projector to **Mode 1: Audio Spectrum Visualizer** | Phase 5A |
@@ -245,6 +263,9 @@ To prevent accidental dancefloor silence during live sets:
 | **`Cmd + Shift + P`** | Window | Open / Close Secondary Projector Window | Phase 5A |
 | **`Cmd + Ctrl + F`** | Projector | Toggle Fullscreen on active Projector Window | Phase 5A |
 | **`Cmd + R`** | Library | Rescan music library crates and refresh cache asynchronously | Phase 0 |
+
+> [!NOTE]
+> **On-Screen Button Workflows:** Deck focus is selected by clicking on Deck A or Deck B panel. Headphone Pre-Fader Listen (PFL) is toggled via the on-screen **CUE** button on each deck. Transition macros and phrase lengths are selected via the **TRANSITION** pickers and launched via **EXECUTE**, **ARM**, or **CANCEL** buttons. Waveform AI Trim Bypass is toggled via the toolbar button. These operations do not have keyboard shortcut bindings.
 
 ---
 
@@ -340,7 +361,7 @@ Audio and video files in `PulseDeck_Library` are strictly excluded from version 
 ### 9.2 The 15-Minute DJ Pre-Flight Checklist
 Before opening the room to guests:
 1. **Power & Hardware:** Connect MacBook Pro to MagSafe power. Connect USB DAC interface to PA system and verify signal lights.
-2. **Headphone Check:** Plug headphones into 3.5mm jack (or pair Bluetooth headphones). Run a test track in `00_Test_Tracks_Dev` and verify pre-fader cueing (`Q` key).
+2. **Headphone Check:** Plug headphones into 3.5mm jack (or pair Bluetooth headphones). Run a test track in `00_Test_Tracks_Dev` and verify pre-fader cueing (click the **CUE** button on the deck panel).
 3. **Latency Calibration:** If using Bluetooth headphones, adjust latency offset until cue clicks align with master output.
 4. **Projector Screen:** Connect HDMI cable to external projector. Press `Cmd + Shift + P`. Press `Key 1` to verify audio spectrum visualizer and `Key 3` to verify wedding couple's name card.
 5. **Soundboard Test:** Press `F1` (or `Fn + F1`) to verify stinger / airhorn volume through venue PA.

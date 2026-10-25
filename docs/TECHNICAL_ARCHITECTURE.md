@@ -408,9 +408,15 @@ PulseDeck AI codifies three automated transition contracts and two performance m
   2. Quantized to trigger exactly on the downbeat (beat 1) of the upcoming bar.
   3. Crossfader cuts from $100\%$ Deck A to $100\%$ Deck B in $0.0\,\text{ms}$, stopping the previous deck instantaneously.
 
-### 9.4 Space Macro / Auto-Pilot
-* Evaluates outgoing track's `mixOutCue`.
-* When the playhead crosses `mixOutCue`, Auto-Pilot queries the AI Advisor or heuristic rules, selects the optimal transition type, aligns beat grids, and executes the mix automatically without human intervention.
+### 9.4 Auto-Pilot One-Shot Cue-Armed Transition Engine
+* **Execution Architecture:**
+  1. `AppState.buildTransitionRequest` constructs a `TransitionRequest` from the two currently loaded decks, the DJ-selected `transitionMacroStyle` (`beatSyncedBassSwap`, `filterEchoWash`, or `hardCutOnDrop`), and `transitionPhraseBars` (`8`, `16`, or `32` bars).
+  2. `toggleAutoPilot()` arms this pre-configured request with `TransitionExecutionService.armAutoPilot(request:)`.
+  3. The transition service monitors the active outgoing deck's playhead against its cached `mixOutCue`.
+  4. When the outgoing playhead crosses `mixOutCue`, the service dispatches the armed transition request, executing the chosen macro across the selected phrase duration.
+  5. Upon completion, the incoming deck becomes the active on-air deck, and Auto-Pilot disarms.
+* **One-Shot Scope:** Auto-Pilot executes exactly one transition per arming. It does not query an AI advisor or heuristically choose transition strategies dynamically at the cue point, nor does it autonomously load tracks or perform continuous unattended multi-track mixing.
+* **DJ Controls:** Arming, disarming, and aborting are controlled via the UI buttons (`ARM` / `DISARM` / `CANCEL`) in the Deck Studio transition panel.
 
 ### 9.5 Master Talkover Ducking Macro (`T` Key)
 * **Duck Level:** Reduces Master FOH music output level **to** approximately 15% of its original linear amplitude (a ~-16.5 dB drop down to 0.15 linear gain multiplier) over an 800ms linear ramp.

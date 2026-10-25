@@ -14,7 +14,7 @@ Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI
 * **Strict Output-Only Guarantee:** Absolutely zero interaction with audio input hardware (`engine.inputNode`). Preserves high-fidelity Bluetooth A2DP audio codecs and eliminates the risk of feedback loops or OS microphone privacy interrupts.
 * **Deterministic Real-Time Safety:** Render callbacks execute free of heap allocations (`malloc`), locks, mutexes, Swift runtime actor hops, or Objective-C ARC retain/release cycles.
 * **Protected Human DJ Provenance:** High-precision automated DSP cue analysis that never clobbers manual user adjustments, backed by atomic file persistence.
-* **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`, 800ms linear ramp to 0.15 linear gain with vocal pocket EQ), and 8-pad zero-I/O RAM soundboard (`F1`–`F8`).
+* **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), one-shot cue-armed Auto-Pilot, Master talkover ducking (`T`, 800ms linear ramp to 0.15 linear gain with vocal pocket EQ), and 8-pad zero-I/O RAM soundboard (`F1`–`F8`).
 * **Secondary Projector Visuals:** Dedicated presentation window (`Cmd + Shift + P`) offering 24-band FFT spectrum visualizer, Ken Burns photo slideshow and muted video loops, Now Playing card with event banner, and blackout screen.
 * **Hybrid Intelligent Advisor:** Offline-first vDSP feature extraction augmented with an optional, rate-limited Google Gemini (`gemini-2.5-flash`) cloud advisor or local Ollama (`localhost:11434`) model.
 
@@ -40,7 +40,7 @@ PulseDeck AI is developed through a verification-driven lifecycle. The core perf
 * [x] **Dual Independent CoreAudio Output Pipeline (Phase 1):** Segregated `masterAudioEngine` (FOH speakers) and `cueAudioEngine` (headphones) running output-only graphs, 3-band isolator EQ, dual-pole resonant sweep filters, and C11 lock-free SPSC output metering.
 * [x] **Offline DSP & Unified Cache Schema v1.0.0 (Phase 2):** Accelerate vDSP feature extraction, beat grid estimation, 4 bounded cue markers, Camelot wheel harmonic key detection, atomic file persistence (`.pulsedeck_ai_cache.json`), override preservation, and Gemini 2.5 Flash / Ollama hybrid advising.
 * [x] **Interactive Waveforms & Library Audition Engine (Phase 3):** 60 FPS multi-band SwiftUI Canvas waveforms with frequency-color mapping, 4 draggable cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, non-destructive cue playhead scrubbing, and dedicated headphone Cue preview player with beat-step stepping.
-* [x] **Performance Transitions, Auto-Pilot, Talkover & Soundboard (Phase 4):** Quantized Bass Swap (`B`), Filter Echo Wash (`W`), Hard Cut (`C`), Auto-Pilot mix engine (`Shift + A`), Master Talkover Ducking (`T`, 800ms linear ramp to 0.15 Master music level with -4 dB 300 Hz–3 kHz mid dip, SFX bypass), and 8-pad zero-I/O RAM Soundboard (`F1`–`F8`) with procedural synthesized fallbacks, choke-self retrigger, polyphonic overlap, and strict Master-only routing with Cue isolation.
+* [x] **Performance Transitions, Auto-Pilot, Talkover & Soundboard (Phase 4):** Bar-aligned macro transitions (Bass Swap, Filter Echo Wash, Hard Cut) with on-screen Macro/Phrase pickers and `EXECUTE` button, one-shot cue-armed Auto-Pilot mix engine (`ARM` / `DISARM` / `CANCEL`), Master Talkover Ducking (`T`, 800ms linear ramp to 0.15 Master music level with -4 dB 300 Hz–3 kHz mid dip, SFX bypass), and 8-pad zero-I/O RAM Soundboard (`F1`–`F8`) with procedural synthesized fallbacks, choke-self retrigger, polyphonic overlap, and strict Master-only routing with Cue isolation.
 * [x] **Secondary Projector Presentation Window (Phase 5A):** Dedicated fullscreen-capable external window (`Cmd + Shift + P`) supporting 4 presentation modes on Keys 1–4 (24-band FFT visualizer, Ken Burns photo slideshow and muted video loops with 48 MB / 20 photo RAM cache and idle fallback, Now Playing & customizable event banner, and true blackout). Includes first-responder text editing protection, display disconnect fallback, and strictly muted videos (`volume = 0.0`).
 * [x] **Master Deck Safety Lock (Phase 5A):** Protects playing on-air decks on the audio control queue during playback and crossfades from accidental pauses, stops, seeks, or track loads. `Shift + Space` provides a one-shot pause override. Fully merged in PR #19.
 * [ ] **Final Documentation Polish (Phase 5B — In Progress):** Complete user manual, architectural specification, continuation tracking, and phase status.
@@ -62,7 +62,7 @@ graph TD
     end
 
     subgraph MasterPipeline["Master Engine (Device A: FOH)"]
-        MFader["Master Volume & Crossfader"]
+        MFader["Master Crossfader"]
         MDuck["Talkover Ducking (T) & Pocket EQ"]
         MSoundboard["Soundboard SFX (F1-F8, Master-Only)"]
         MDelay["Master Latency Delay Buffer"]
@@ -123,11 +123,12 @@ The multi-band Canvas waveform visually differentiates audio frequencies:
 > [!NOTE]
 > **Non-Destructive Cue Playhead:** The cue editing playhead in the waveform editor is strictly isolated to cue point positioning and visual scrubbing. It **never** seeks or interrupts live Master audio playback.
 
-### 6. Automated Transitions & Auto-Pilot Engine
-* **Bass Swap (`B` Key):** Aligns to downbeats, cuts outgoing bass while swapping incoming bass, and smoothly crossfades mid/high frequencies over 16 bars.
-* **Filter Echo Wash (`W` Key):** Sweeps outgoing high-pass filter upward into an echo wash, executes an equal-power crossfade, and drops the incoming track on the 1.
-* **Hard Cut (`C` Key):** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from Deck A to Deck B.
-* **Auto-Pilot (`Shift + A`):** Evaluates `mixOutCue`, selects harmonic transition strategies, aligns beats, and triggers transitions automatically.
+### 6. Automated Transitions & One-Shot Auto-Pilot
+* **Transition Macros & Phrase Picker:** Controlled via the on-screen transition strip in `DeckStudioView` (Macro picker + Phrase bars picker + `EXECUTE` button; no transition hotkeys):
+  * **Bass Swap:** Aligns to downbeats, cuts outgoing bass while swapping incoming bass, and smoothly crossfades mid/high frequencies over 8, 16, or 32 bars.
+  * **Filter Echo Wash:** Sweeps outgoing high-pass filter upward into an echo wash, executes an equal-power crossfade, and drops the incoming track on the 1.
+  * **Hard Cut:** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from Deck A to Deck B.
+* **One-Shot Cue-Armed Auto-Pilot:** Arms the pre-configured transition request across both pre-loaded decks at the outgoing track's `mixOutCue` via on-screen `ARM` / `DISARM` / `CANCEL` buttons. Executes exactly one transition per arming (no dynamic advisor querying at the cue, no autonomous strategy selection, and no continuous multi-track mixing).
 
 ### 7. Master Talkover Ducking (`T` Key)
 * **Linear 800ms Ramp:** Smoothly reduces Master FOH music output **to** 15% linear amplitude (0.15 multiplier, ~-16.5 dB) over an 800ms linear ramp.
@@ -193,7 +194,7 @@ pulsedeckai/
 │   │   ├── Services/
 │   │   │   ├── AudioEngineCoordinator.swift  # Master/Cue engine lifecycle coordinator
 │   │   │   ├── OutputAudioEngine.swift       # Segregated CoreAudio output engine
-│   │   │   ├── DeckAudioGraph.swift          # Deck channel strips (TimePitch, EQ, Filter)
+│   │   │   ├── DeckAudioGraph.swift          # Deck audio graph pipeline (TimePitch, EQ, Filter)
 │   │   │   ├── CoreAudioHardwareInterface.swift # CoreAudio HAL device routing
 │   │   │   ├── AudioMeteringService.swift    # Lock-free SPSC vDSP output metering
 │   │   │   ├── CuePreviewPlayer.swift        # Library headphone audition player

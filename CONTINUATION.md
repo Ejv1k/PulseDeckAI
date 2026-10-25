@@ -58,10 +58,14 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 ## Next Concrete Steps: Complete Phase 5B Documentation
 
 1. **Worker 82 (Phase 5B)**:
-   - PR #21 opened at https://github.com/Ejv1k/PulseDeckAI/pull/21 (base `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`). Initial CI passed (329 Swift, 40 Python).
-   - Addressed review comment regarding cue-editing hotkeys (`I` for startTrim, `O` for endTrim, `V` for vocalEntry, `M` for mixOut) and clarified AI trim bypass is button-only (no `Y` key).
+   - PR #21 opened at https://github.com/Ejv1k/PulseDeckAI/pull/21 (base `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`). CI runs 40228292349 and 40229634047 passed (329 Swift, 40 Python).
+   - Addressed review comments:
+     1. `docs/USER_MANUAL.md:139`: Corrected waveform cue hotkeys (`I`, `O`, `V`, `M`), removed non-existent `Y` key, clarified clickable AI Trim Bypass button. Thread `PRRT_kwDOVJOZu86wEieD` resolved.
+     2. `docs/USER_MANUAL.md:222`: Removed unbound shortcuts (`A`/`B` deck select, `Q`/`W` PFL, `B`/`W`/`C` transitions, `Shift + A` AutoPilot); documented on-screen pickers and button workflows. Thread `PRRT_kwDOVJOZu86wEieF`.
+     3. `docs/USER_MANUAL.md:119`: Rewrote UI walkthrough and ASCII layout diagram around shipped `ContentView`; distinguished backend CoreAudio DSP (EQ, resonant filter, TimePitch) from available channel strip controls (LOAD, PLAY/PAUSE, STOP, CUE). Thread `PRRT_kwDOVJOZu86wEieI`.
+     4. `docs/USER_MANUAL.md:152`: Rewrote Auto-Pilot as implemented one-shot cue-armed transition runner (`ARM`/`DISARM`/`CANCEL`), removing claims of dynamic AI strategy selection or continuous mixing. Thread `PRRT_kwDOVJOZu86wEieK`.
    - Commit and push fix commit to `origin ao/phase5b-docs/final-docs`.
-   - Resolve review thread `PRRT_kwDOVJOZu86wEieD`.
+   - Resolve review threads `PRRT_kwDOVJOZu86wEieF`, `PRRT_kwDOVJOZu86wEieI`, and `PRRT_kwDOVJOZu86wEieK`.
    - Watch automatic exact-head PR CI once.
    - Report checkpoint to AO orchestrator and message coordinator `pulsedeckai-77`.
    - HOLD for coordinator independent native Sol/high docs audit and final merge instructions.

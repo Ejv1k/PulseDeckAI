@@ -18,7 +18,7 @@ PulseDeck AI delivers a complete, verified DJ workstation:
 * **Deterministic Cache & Human DJ Provenance:** High-precision automated DSP cue analysis backed by atomic file persistence that never clobbers manual user adjustments.
 * **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`), and RAM-preloaded soundboard (`F1`–`F8`).
 * **Secondary Projector Visuals:** Dedicated presentation window (`Cmd + Shift + P`) offering 24-band FFT spectrum visualizer, Ken Burns photo slideshow and muted video loops, Now Playing card with event banner, and blackout screen.
-* **Master Deck Safety Lock [Pending Merge — PR #19]:** Default-on transport guard protecting active on-air decks on the audio control queue from accidental drops, with `Shift + Space` one-shot override.
+* **Master Deck Safety Lock:** Default-on transport guard protecting active on-air decks on the audio control queue from accidental drops, with `Shift + Space` one-shot override (merged in PR #19).
 
 ---
 
@@ -191,10 +191,7 @@ PulseDeck AI provides a dedicated secondary video presentation window designed f
 
 ---
 
-## 5. Master Deck Safety Lock [Pending Merge — PR #19]
-
-> [!NOTE]
-> The Master Deck Safety Lock feature is fully implemented and reviewed in PR #19, pending merge into `main`.
+## 5. Master Deck Safety Lock
 
 To prevent accidental dancefloor silence during live sets:
 * **Default-On Protection:** Enabled by default upon app startup. Protects any loaded deck actively playing to a running Master engine with nonzero channel or crossfader gain.

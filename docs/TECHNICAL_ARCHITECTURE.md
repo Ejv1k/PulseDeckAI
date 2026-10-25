@@ -456,14 +456,14 @@ graph TD
 * **Keyboard Routing (`ProjectorKeyboardRouter`):** Dispatches keys 1–4 to switch modes, drops OS repeat events, debounces rapid multi-route events, and checks first responder text editing (`NSTextField`, `NSTextView`, `NSText`) to ensure digits 1–4 are never stolen while editing the event banner.
 * **State Isolation (`ProjectorViewModel`):** Stored in a separate `@MainActor` observable object without adding new stored properties to `AppState`.
 
-### 10.3 Master Deck Safety Lock [Pending Merge — PR #19]
+### 10.3 Master Deck Safety Lock
 To prevent catastrophic accidental dropouts during live performance:
 * **Default-On Protection:** Enabled by default upon startup. Protects any loaded deck actively playing to a running Master engine with nonzero channel or crossfader gain.
 * **Control-Queue Graph Authority:** On-air membership is evaluated synchronously on the audio control queue directly against real graph state, ensuring both decks are protected during crossfades.
 * **Guarded Actions:** Manual pause, stop, track load, and live playhead seek commands are intercepted and rejected with nonmodal UI warning feedback while locked.
 * **One-Shot Override (`Shift + Space`):** Pressing `Shift + Space` allows a one-shot intentional pause of the focused on-air deck without modifying the persistent lock state.
 * **Automation & Cue Isolation:** Automated transitions (Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot) execute unimpeded. Headphone Cue audition, pre-fader listening, and non-destructive waveform cue marker editing (`I`/`O`/drag) are completely exempt and never seek or interrupt live Master audio.
-* **Status:** Implemented and reviewed in PR #19, pending merge into `main`.
+* **Status:** Fully merged to `main` in PR #19.
 
 ---
 
@@ -476,5 +476,5 @@ To prevent catastrophic accidental dropouts during live performance:
 | **2** | **Offline DSP & Hybrid Advisor** | vDSP FFT, beat tracking, vocal estimation, Gemini 2.5 Flash / Ollama advisor, cache generation | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`, rate limit stress testing) |
 | **3** | **Waveforms, Cues & Interactive Browser** | Multi-band Canvas waveform, 4 bounded cue handles, manual override preservation, cue scrubbing, headphone audition player | **Merged** (PR #9, PR #13, PR #14; waveform render tests, override preservation, audition engine tests) |
 | **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot state machine, Talkover ducking (`T`), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing tests, SFX RAM preload & trailing PCM preservation tests) |
-| **5A** | **Projector Display & Safety Locks** | Multi-screen secondary window, 4 visualizer modes, text editing protection, Master deck safety lock | **Projector Merged** (PR #18, PR #20; 313 Swift / 40 Python CI green); **Safety Lock Pending Merge** (PR #19) |
-| **5B** | **Final Documentation & Product Polish** | Authoritative user manual, architecture docs, phase status, continuation records | **In Progress** (Phase 5B shared documentation draft) |
+| **5A** | **Projector Display & Safety Locks** | Multi-screen secondary window, 4 visualizer modes, text editing protection, Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |
+| **5B** | **Final Documentation & Product Polish** | Authoritative user manual, architecture docs, phase status, continuation records | **In Progress** (Phase 5B documentation PR) |

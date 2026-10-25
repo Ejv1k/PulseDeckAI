@@ -38,6 +38,30 @@ final class SoundboardTests: XCTestCase {
         return fileURL
     }
 
+    private func createSineWavFileCustomSampleRate(
+        in directory: URL,
+        filename: String,
+        sampleRate: Double,
+        durationSeconds: Double = 0.5,
+        frequencyHz: Float = 440.0
+    ) throws -> URL {
+        let fileURL = directory.appendingPathComponent(filename)
+        let customFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let file = try AVAudioFile(forWriting: fileURL, settings: customFormat.settings)
+        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
+        let buffer = AVAudioPCMBuffer(pcmFormat: customFormat, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        if let channels = buffer.floatChannelData {
+            for frame in 0..<Int(frameCount) {
+                let sample = sin(Float(frame) * 2.0 * .pi * frequencyHz / Float(sampleRate)) * 0.7
+                channels[0][frame] = sample
+                channels[1][frame] = sample
+            }
+        }
+        try file.write(from: buffer)
+        return fileURL
+    }
+
     private func createCorruptFile(in directory: URL, filename: String) throws -> URL {
         let fileURL = directory.appendingPathComponent(filename)
         let garbage = Data([0xFF, 0xFE, 0x00, 0x01, 0xDE, 0xAD, 0xBE, 0xEF])
@@ -502,5 +526,89 @@ final class SoundboardTests: XCTestCase {
         XCTAssertTrue(appState.isTalkoverActive)
         appState.toggleTalkover()
         XCTAssertFalse(appState.isTalkoverActive)
+    }
+
+    // MARK: - 10. Sample-Rate Conversion Flushing & Trailing PCM Drain
+
+    func testSampleRateConversionFlushesEndOfStreamAndPreservesTrailingPCM() throws {
+        let tempDir = try createTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sfxDir = tempDir.appendingPathComponent("08_Soundboard_SFX")
+        try FileManager.default.createDirectory(at: sfxDir, withIntermediateDirectories: true)
+
+        // 1. Non-44.1 kHz asset (48 kHz, 0.4s duration = 19,200 frames)
+        // Converted to 44.1 kHz, expected frames ~ 17,640.
+        let file48k = try createSineWavFileCustomSampleRate(
+            in: sfxDir,
+            filename: "01_Airhorn.wav",
+            sampleRate: 48000.0,
+            durationSeconds: 0.4,
+            frequencyHz: 440.0
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file48k.path))
+
+        // 2. Short non-44.1 kHz asset (48 kHz, 0.01s = 480 frames)
+        let fileShort48k = try createSineWavFileCustomSampleRate(
+            in: sfxDir,
+            filename: "02_Laser.wav",
+            sampleRate: 48000.0,
+            durationSeconds: 0.01,
+            frequencyHz: 880.0
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileShort48k.path))
+
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let soundboard = coordinator.soundboardController
+
+        let expectation = expectation(description: "Preload completes")
+        soundboard.onPadsChanged = { snapshots in
+            if snapshots[0].isFallback == false && snapshots[1].isFallback == false {
+                expectation.fulfill()
+            }
+        }
+
+        soundboard.preload(from: tempDir)
+        wait(for: [expectation], timeout: 5.0)
+        soundboard.onPadsChanged = nil
+
+        let snapshots = soundboard.padSnapshots
+        XCTAssertFalse(snapshots[0].isFallback)
+        XCTAssertFalse(snapshots[1].isFallback)
+
+        // Inspect pad 0 preloaded buffer
+        let buffer0 = try XCTUnwrap(soundboard.bufferForTesting(at: 0))
+        XCTAssertEqual(buffer0.format.sampleRate, 44100.0)
+        XCTAssertEqual(buffer0.format.channelCount, 2)
+
+        // Expected frames: 0.4 * 44100 = 17640 frames (+/- 100 frames for resampling filter latency)
+        let expectedFrames: Double = 0.4 * 44100.0
+        XCTAssertEqual(Double(buffer0.frameLength), expectedFrames, accuracy: 200.0)
+
+        // Verify trailing PCM is flushed and preserved (not truncated or zeroed out)
+        let trailingCount = 200
+        XCTAssertGreaterThan(Int(buffer0.frameLength), trailingCount)
+        if let channels = buffer0.floatChannelData {
+            var trailingMaxAmp: Float = 0.0
+            let startFrame = Int(buffer0.frameLength) - trailingCount
+            for frame in startFrame..<Int(buffer0.frameLength) {
+                trailingMaxAmp = max(trailingMaxAmp, abs(channels[0][frame]))
+            }
+            // Continuous sine wave with amplitude 0.7 at 440 Hz has peaks every ~100 frames;
+            // over 200 frames, peak amplitude must be well above 0.3 if trailing samples are flushed.
+            XCTAssertGreaterThan(trailingMaxAmp, 0.3, "Trailing PCM must be preserved after endOfStream flush")
+        }
+
+        // Inspect pad 1 short buffer (was 480 frames at 48k -> ~441 frames at 44.1k)
+        let buffer1 = try XCTUnwrap(soundboard.bufferForTesting(at: 1))
+        XCTAssertGreaterThan(buffer1.frameLength, 0, "Short asset must not produce empty buffer")
+        XCTAssertEqual(buffer1.format.sampleRate, 44100.0)
+        if let channels1 = buffer1.floatChannelData {
+            var shortMaxAmp: Float = 0.0
+            for frame in 0..<Int(buffer1.frameLength) {
+                shortMaxAmp = max(shortMaxAmp, abs(channels1[0][frame]))
+            }
+            XCTAssertGreaterThan(shortMaxAmp, 0.3, "Short converted asset must retain audible PCM")
+        }
     }
 }

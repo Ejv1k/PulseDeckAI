@@ -433,6 +433,14 @@ public final class SoundboardController: @unchecked Sendable {
         return _pads.reduce(0) { $0 + $1.ramBytes }
     }
 
+    /// Testing hook to inspect the preloaded PCM buffer for a specific pad.
+    public func bufferForTesting(at index: Int) -> AVAudioPCMBuffer? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard index >= 0 && index < _pads.count else { return nil }
+        return _pads[index].buffer
+    }
+
     /// Prepares player nodes for low-latency playback.
     public func preparePlayers() {
         executeOnControlQueue {
@@ -679,31 +687,72 @@ public final class SoundboardController: @unchecked Sendable {
                     // Convert to canonical format if needed
                     let finalBuffer: AVAudioPCMBuffer
                     if audioFile.processingFormat == targetFormat {
+                        guard srcBuffer.frameLength > 0 else {
+                            throw NSError(domain: "PulseDeck.Soundboard", code: -5, userInfo: [NSLocalizedDescriptionKey: "Audio file contains zero frames"])
+                        }
                         finalBuffer = srcBuffer
                     } else {
                         guard let converter = AVAudioConverter(from: audioFile.processingFormat, to: targetFormat) else {
                             throw NSError(domain: "PulseDeck.Soundboard", code: -2, userInfo: [NSLocalizedDescriptionKey: "Unsupported audio format conversion"])
                         }
-                        let destCapacity = AVAudioFrameCount(Double(srcCapacity) * targetFormat.sampleRate / audioFile.processingFormat.sampleRate) + 1024
-                        guard let destBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: destCapacity) else {
-                            throw NSError(domain: "PulseDeck.Soundboard", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to allocate destination buffer"])
-                        }
 
-                        var convertError: NSError?
-                        var readAll = false
-                        let status = converter.convert(to: destBuffer, error: &convertError) { _, outStatus in
-                            if readAll {
-                                outStatus.pointee = .noDataNow
-                                return nil
+                        var drainedBuffers: [AVAudioPCMBuffer] = []
+                        var totalDrainedFrames: AVAudioFrameCount = 0
+                        var inputSupplied = false
+
+                        while true {
+                            let chunkCapacity: AVAudioFrameCount = 8192
+                            guard let chunk = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: chunkCapacity) else {
+                                throw NSError(domain: "PulseDeck.Soundboard", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to allocate destination buffer"])
                             }
-                            readAll = true
-                            outStatus.pointee = .haveData
-                            return srcBuffer
+                            var convertError: NSError?
+                            let status = converter.convert(to: chunk, error: &convertError) { _, outStatus in
+                                if inputSupplied {
+                                    outStatus.pointee = .endOfStream
+                                    return nil
+                                }
+                                inputSupplied = true
+                                outStatus.pointee = .haveData
+                                return srcBuffer
+                            }
+
+                            if let convertError {
+                                throw convertError
+                            }
+
+                            if chunk.frameLength > 0 {
+                                drainedBuffers.append(chunk)
+                                totalDrainedFrames += chunk.frameLength
+                            }
+
+                            if status == .endOfStream || chunk.frameLength == 0 {
+                                break
+                            }
                         }
 
-                        guard status == .haveData || status == .inputRanDry, convertError == nil else {
-                            throw convertError ?? NSError(domain: "PulseDeck.Soundboard", code: -4, userInfo: [NSLocalizedDescriptionKey: "Audio conversion failed"])
+                        // Reject empty conversion output
+                        guard totalDrainedFrames > 0,
+                              let destBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: totalDrainedFrames) else {
+                            throw NSError(domain: "PulseDeck.Soundboard", code: -4, userInfo: [NSLocalizedDescriptionKey: "Audio conversion produced empty output"])
                         }
+                        destBuffer.frameLength = totalDrainedFrames
+
+                        var destOffset: AVAudioFrameCount = 0
+                        let channelCount = Int(targetFormat.channelCount)
+                        for chunk in drainedBuffers {
+                            let framesToCopy = chunk.frameLength
+                            guard framesToCopy > 0 else { continue }
+                            if let srcChannels = chunk.floatChannelData,
+                               let dstChannels = destBuffer.floatChannelData {
+                                for ch in 0..<channelCount {
+                                    let srcPtr = srcChannels[ch]
+                                    let dstPtr = dstChannels[ch].advanced(by: Int(destOffset))
+                                    dstPtr.initialize(from: srcPtr, count: Int(framesToCopy))
+                                }
+                            }
+                            destOffset += framesToCopy
+                        }
+
                         finalBuffer = destBuffer
                     }
 
@@ -726,13 +775,14 @@ public final class SoundboardController: @unchecked Sendable {
 
                     cumulativeRAM += assetRAM
                     let cleanTitle = fileURL.deletingPathExtension().lastPathComponent
+                    let effectiveDuration = Double(finalBuffer.frameLength) / targetFormat.sampleRate
                     results.append(
                         DecodedAsset(
                             buffer: finalBuffer,
-                            source: .file(name: fileName, durationSeconds: duration),
+                            source: .file(name: fileName, durationSeconds: effectiveDuration),
                             error: nil,
                             title: cleanTitle,
-                            durationSeconds: duration,
+                            durationSeconds: effectiveDuration,
                             ramBytes: assetRAM
                         )
                     )

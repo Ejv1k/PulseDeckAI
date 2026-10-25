@@ -479,4 +479,54 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         XCTAssertFalse(f.app.isMasterSafetyLockEnabled)
     }
 
+    @MainActor
+    func testProjectorWindowDispatchPreservesSafetyLockAndMasterHandoff() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        _ = NSApplication.shared
+        ProjectorKeyboardRouter.resetDebounceForTesting()
+        let projector = ProjectorViewModel()
+        defer { projector.teardown(); ProjectorKeyboardRouter.resetDebounceForTesting() }
+        let router = MasterSafetyLockKeyboardRouter(appState: f.app)
+        let receiver = KeyReceiver(router: router)
+        let window = ProjectorPresentationWindow(contentRect: receiver.frame, styleMask: [.titled],
+                                                 backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.projectorViewModel = projector
+        window.contentView = receiver
+        router.attach(to: window, anchor: receiver)
+        XCTAssertTrue(window.makeFirstResponder(receiver))
+        defer { router.detach(from: receiver); window.close() }
+
+        f.app.toggleDeckPlay(deck: .deckB)
+        f.app.updateCrossfader(position: 0.5)
+        XCTAssertTrue(f.app.isMasterDeckOnAir(.deckA))
+        XCTAssertTrue(f.app.isMasterDeckOnAir(.deckB))
+        for (mode, code) in zip(ProjectorMode.allCases, [UInt16(18), 19, 20, 21]) {
+            let digit = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: [], timestamp: Double(mode.rawValue), windowNumber: window.windowNumber,
+                context: nil, characters: mode.keyLabel, charactersIgnoringModifiers: mode.keyLabel,
+                isARepeat: false, keyCode: code))
+            window.sendEvent(digit)
+            XCTAssertEqual(projector.currentMode, mode)
+            XCTAssertTrue(f.app.isMasterDeckOnAir(.deckA))
+            XCTAssertTrue(f.app.isMasterDeckOnAir(.deckB))
+            XCTAssertGreaterThan(try f.peak(f.audio.masterAudioEngine.rawEngine), 0.001,
+                                 "Projector mode changes must leave real Master PCM audible")
+        }
+        XCTAssertEqual(receiver.dispatchedKeys, 0, "Projector digits must not reach deck transport")
+        projector.updateNowPlaying(from: f.app)
+        XCTAssertEqual(projector.nowPlayingMetadata.deck, .deckA)
+        window.sendEvent(try key(window, time: 30))
+        XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying, "Projector routing must not bypass the lock")
+        XCTAssertTrue(f.audio.deckBGraph.isMasterPlaying)
+        window.sendEvent(try key(window, time: 31, shift: true))
+        XCTAssertFalse(f.audio.deckAGraph.isMasterPlaying)
+        XCTAssertTrue(f.audio.deckBGraph.isMasterPlaying)
+        XCTAssertTrue(f.app.isMasterSafetyLockEnabled)
+        projector.updateNowPlaying(from: f.app)
+        XCTAssertEqual(projector.nowPlayingMetadata.deck, .deckB)
+        XCTAssertTrue(projector.nowPlayingMetadata.isMasterPlaying)
+        XCTAssertGreaterThan(try f.peak(f.audio.masterAudioEngine.rawEngine), 0.001)
+    }
+
 }

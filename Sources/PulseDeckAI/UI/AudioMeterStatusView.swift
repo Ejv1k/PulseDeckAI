@@ -2,15 +2,18 @@ import PulseDeckCore
 import SwiftUI
 
 /// Minimal metering consumer. Timeline polling drains snapshots on the UI side only.
+/// Polling now belongs to the shared distributor; this view only reads cached snapshots.
 public struct AudioMeterStatusView: View {
     @ObservedObject private var appState: AppState
+    @ObservedObject private var meters: AudioMeterSnapshotDistributor
 
     public init(appState: AppState) {
         self.appState = appState
+        self.meters = .shared(for: appState)
     }
 
     public var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { _ in
+        Group {
             if let error = appState.meteringErrorMessage {
                 Text(error)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -18,8 +21,8 @@ public struct AudioMeterStatusView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
             } else {
-                let master = appState.meterSnapshot(for: .master)
-                let cue = appState.meterSnapshot(for: .cue)
+                let master = meters.master
+                let cue = meters.cue
                 HStack(spacing: 16) {
                     meter("MASTER", snapshot: master, color: DJTheme.master)
                     meter("CUE", snapshot: cue, color: DJTheme.cue)
@@ -30,6 +33,7 @@ public struct AudioMeterStatusView: View {
                 .background(DJTheme.cardBackground)
             }
         }
+        .task { await meters.observe() }
     }
 
     private func meter(_ title: String, snapshot: AudioMeterSnapshot?, color: Color) -> some View {

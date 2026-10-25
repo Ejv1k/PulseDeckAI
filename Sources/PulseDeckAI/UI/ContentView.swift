@@ -4,12 +4,13 @@ import PulseDeckCore
 
 public struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var projectorViewModel: ProjectorViewModel
 
     public init() {}
 
     public var body: some View {
         VStack(spacing: 8) {
-            StatusHeaderView(appState: appState)
+            StatusHeaderView(appState: appState, projectorViewModel: projectorViewModel)
 
             OutputRoutingView(appState: appState)
 

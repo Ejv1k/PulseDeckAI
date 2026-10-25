@@ -215,17 +215,22 @@ PulseDeck AI features three transition algorithms accessible via dedicated keybo
 
 ---
 
-## 5. Secondary Projector Display & Event Visuals (Phase 5 Preview)
+## 5. Secondary Projector Display & Event Visuals (Phase 5A)
 
 PulseDeck AI includes a dedicated secondary video presentation window designed for external HDMI video projectors, LED walls, or AirPlay screens:
 
 ### 5.1 Projector Modes (Keys `1` through `4`)
-* **Mode 1 (`Key 1`) — Dynamic Audio Spectrum:** Renders a multi-band FFT audio visualizer that pulses and dances in real time with the master dancefloor sound.
-* **Mode 2 (`Key 2`) — Ken Burns Media Slideshow:** Smoothly pans and zooms through high-resolution wedding photos or video loops loaded from `PulseDeck_Library/09_Visual_Backgrounds_Media`.
-* **Mode 3 (`Key 3`) — Now Playing & Event Title:** Displays an elegant title card with the currently playing song title, artist, and a customizable event header (e.g. *"Sarah & Michael's Wedding — October 14, 2026"*).
-* **Mode 4 (`Key 4`) — Blackout Screen:** Turns the projector display completely black for speeches, formal dinner toasts, or cake cuttings.
+* **Mode 1 (`Key 1`) — Dynamic Audio Spectrum:** Renders a 24-band FFT audio visualizer that pulses and dances in real time with the master dancefloor sound. Uses existing published output meter frames without audio real-time allocations, decaying cleanly to zero on silence without random noise.
+* **Mode 2 (`Key 2`) — Ken Burns Media Slideshow:** Smoothly pans and zooms through photos (JPG, PNG, HEIC, WEBP, TIFF) or muted looping videos (MP4, MOV, M4V) loaded from `PulseDeck_Library/09_Visual_Backgrounds_Media`. Video audio is strictly muted (`volume = 0.0`) preventing any Master/Cue leakage.
+* **Mode 3 (`Key 3`) — Now Playing & Event Title:** Displays an elegant title card with the currently playing song title, artist, BPM, musical key, and a customizable event header (e.g. *"Sarah & Michael's Wedding — October 14, 2026"*).
+* **Mode 4 (`Key 4`) — Blackout Screen:** Turns the projector display completely black for speeches, formal dinner toasts, or cake cuttings, leaving controls and audio completely uninterrupted in the DJ booth.
 
-### 5.2 Master Deck Safety Lock
+### 5.2 Projector Controls & Window Management
+* **Open / Close Projector:** Press `Cmd + Shift + P` or choose **Projector > Open Projector Window**. PulseDeck AI automatically detects external HDMI/AirPlay displays and places the window on the external screen. If disconnected, it falls back safely to the primary display.
+* **Toggle Fullscreen:** Press `Cmd + Ctrl + F` or choose **Projector > Toggle Fullscreen**.
+* **Configure Event Banner:** Choose **Projector > Configure Event Banner...** to open the DJ control sheet. Edit wedding or gala titles directly without displaying editing controls to the audience. Digit keys 1–4 are never stolen while typing in text fields.
+
+### 5.3 Master Deck Safety Lock
 * When a deck is actively playing to the Master PA, its transport controls are locked.
 * Pressing `Space` (Play/Pause) or scrubbing the active master deck will not stop the music unless you hold `Shift + Space` or toggle the Safety Lock off in the toolbar. This eliminates accidental dancefloor dropouts.
 

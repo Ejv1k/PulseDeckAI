@@ -516,11 +516,72 @@ final class ProjectorTests: XCTestCase {
         }, destroyRingForTesting: { pd_meter_ring_destroy($0) })
         try service.start()
         defer { service.stop() }
+        let initialFanout = expectation(description: "Both views read the initial shared frame")
+        let statusStarted = expectation(description: "Status subscription started")
+        let projectorStarted = expectation(description: "Projector subscription started")
+        let emptyPoll = expectation(description: "Remaining subscription polls the empty real queue")
+        let freshFrame = expectation(description: "Remaining subscription delivers a fresh producer frame")
+        let unexpectedPoll = expectation(description: "No poll survives the final consumer")
+        unexpectedPoll.isInverted = true
         var masterReads = 0
+        var readsBeforeInitialFrame = 0
+        var totalReads = 0
+        var observeEmptyPoll = false
+        var stopped = false
         let distributor = AudioMeterSnapshotDistributor { role in
-            if role == .master { masterReads += 1 }
-            return service.drainLatest(for: role)
+            totalReads += 1
+            if stopped { unexpectedPoll.fulfill() }
+            let snapshot = service.drainLatest(for: role)
+            if role == .master {
+                masterReads += 1
+                if observeEmptyPoll, snapshot == nil {
+                    observeEmptyPoll = false
+                    emptyPoll.fulfill()
+                }
+            }
+            return snapshot
         }
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        var deliveredFreshFrame: ProjectorVisualizerFrame?
+        let masterToken = distributor.$master.sink { snapshot in
+            guard snapshot?.hostTime == 300 else { return }
+            vm.updateVisualizer(snapshot: snapshot)
+            deliveredFreshFrame = vm.visualizerFrame
+            freshFrame.fulfill()
+        }
+        // Cue publishes after Master in the same synchronous poll. Read both views' caches here,
+        // before yielding MainActor to another legitimate polling tick.
+        let cueToken = distributor.$cue.sink { cue in
+            guard cue?.hostTime == 200 else { return }
+            guard let statusSnapshot = distributor.master else {
+                XCTFail("Master frame must already be cached when Cue publishes")
+                return
+            }
+            vm.updateVisualizer(snapshot: distributor.master)
+            XCTAssertEqual(vm.visualizerFrame.rms, statusSnapshot.rms)
+            XCTAssertEqual(vm.visualizerFrame.timestamp, statusSnapshot.hostTime)
+            XCTAssertEqual(distributor.master, statusSnapshot, "A second view read must not consume the shared frame")
+            XCTAssertEqual(cue?.hostTime, 200, "Cue remains independent of Master")
+            XCTAssertEqual(masterReads - readsBeforeInitialFrame, 1,
+                           "Both active subscriptions must share one fresh-frame drain")
+            XCTAssertNil(service.drainLatest(for: .master), "The real transfer queue was drained exactly once")
+            initialFanout.fulfill()
+        }
+        defer { masterToken.cancel(); cueToken.cancel() }
+        let statusConsumer = Task {
+            statusStarted.fulfill()
+            await distributor.observe()
+        }
+        let projectorConsumer = Task {
+            projectorStarted.fulfill()
+            await distributor.observe()
+        }
+        defer { statusConsumer.cancel(); projectorConsumer.cancel() }
+        let startupResult = await XCTWaiter.fulfillment(of: [statusStarted, projectorStarted], timeout: 2)
+        XCTAssertEqual(startupResult, .completed)
+        // Both subscriptions are active before either real producer supplies a frame.
+        readsBeforeInitialFrame = masterReads
         let values = [Float](repeating: 0.5, count: 1024)
         XCTAssertTrue(values.withUnsafeBufferPointer {
             pd_meter_ring_push_audio(rings[0], $0.baseAddress, nil, 1, 1024, 44100, 100)
@@ -528,29 +589,42 @@ final class ProjectorTests: XCTestCase {
         XCTAssertTrue(values.withUnsafeBufferPointer {
             pd_meter_ring_push_audio(rings[1], $0.baseAddress, nil, 1, 1024, 44100, 200)
         })
-        let statusConsumer = Task { await distributor.observe() }
-        let projectorConsumer = Task { await distributor.observe() }
-        defer { statusConsumer.cancel(); projectorConsumer.cancel() }
-        try await waitUntil { distributor.master != nil }
-        let statusSnapshot = try XCTUnwrap(distributor.master)
-        let vm = ProjectorViewModel()
-        defer { vm.teardown() }
-        vm.updateVisualizer(snapshot: distributor.master)
-        XCTAssertEqual(vm.visualizerFrame.rms, statusSnapshot.rms)
-        XCTAssertEqual(vm.visualizerFrame.timestamp, statusSnapshot.hostTime)
-        XCTAssertEqual(distributor.master, statusSnapshot, "A second view read must not consume the shared frame")
-        XCTAssertEqual(distributor.cue?.hostTime, 200, "Cue remains independent of Master")
-        XCTAssertEqual(masterReads, 1, "Two subscriptions must start only one polling owner")
-        XCTAssertNil(service.drainLatest(for: .master), "The real transfer queue was drained exactly once")
+        let fanoutResult = await XCTWaiter.fulfillment(of: [initialFanout], timeout: 2)
+        XCTAssertEqual(fanoutResult, .completed)
         statusConsumer.cancel()
         await statusConsumer.value
-        XCTAssertNotNil(distributor.master, "Projector subscription keeps polling alive")
+        let readsAfterFirstCancellation = masterReads
+        observeEmptyPoll = true
+        let emptyResult = await XCTWaiter.fulfillment(of: [emptyPoll], timeout: 2)
+        XCTAssertEqual(emptyResult, .completed)
+        XCTAssertGreaterThan(masterReads, readsAfterFirstCancellation, "Remaining consumer must keep the polling owner alive")
+        XCTAssertNil(distributor.master, "An observed empty destructive-queue poll must clear the cache")
+        // A nil cache after an empty poll is valid. A fresh real frame proves liveness instead.
+        XCTAssertTrue(values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(rings[0], $0.baseAddress, nil, 1, 1024, 44100, 300)
+        })
+        let freshResult = await XCTWaiter.fulfillment(of: [freshFrame], timeout: 2)
+        XCTAssertEqual(freshResult, .completed)
+        XCTAssertEqual(deliveredFreshFrame?.timestamp, 300)
+        XCTAssertEqual(deliveredFreshFrame?.rms, 0.5)
+        XCTAssertEqual(deliveredFreshFrame?.isSilent, false)
         projectorConsumer.cancel()
         await projectorConsumer.value
-        let readsAtStop = masterReads
+        stopped = true
+        let readsAtStop = totalReads
         XCTAssertNil(distributor.master)
-        try await Task.sleep(for: .milliseconds(75))
-        XCTAssertEqual(masterReads, readsAtStop, "No poll may survive the final consumer")
+        XCTAssertNil(distributor.cue)
+        XCTAssertTrue(values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(rings[0], $0.baseAddress, nil, 1, 1024, 44100, 400)
+        })
+        XCTAssertTrue(values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(rings[1], $0.baseAddress, nil, 1, 1024, 44100, 500)
+        })
+        let stoppedResult = await XCTWaiter.fulfillment(of: [unexpectedPoll], timeout: 0.15)
+        XCTAssertEqual(stoppedResult, .completed)
+        XCTAssertEqual(totalReads, readsAtStop, "No poll may survive the final consumer")
+        XCTAssertEqual(service.drainLatest(for: .master)?.hostTime, 400, "Stopped owner must leave a fresh Master frame unread")
+        XCTAssertEqual(service.drainLatest(for: .cue)?.hostTime, 500, "Stopped owner must leave a fresh Cue frame unread")
     }
 
     func testSharedMeterIdentityAndPureViewConstruction() throws {

@@ -777,4 +777,127 @@ final class ProjectorTests: XCTestCase {
         XCTAssertNil(weakMedia, "No player observer or decode task may retain inactive media services")
     }
 
+    func testToolbarRescanDiscoversPhotoAddedAfterCompletedStartupScan() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writePhoto(directory.appendingPathComponent("a.png"))
+        let state = offlineState(root: root)
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        state.refreshLibrary()
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !state.isScanning && !vm.mediaService.isScanning }
+        XCTAssertEqual(vm.mediaService.items.map(\.fileName), ["a.png"])
+        try writePhoto(directory.appendingPathComponent("b.png"))
+        // This is the exact stored action passed to Button(action:) by the production toolbar.
+        let toolbar = StatusHeaderView(appState: state, projectorViewModel: vm)
+        var mediaScans = 0
+        let token = vm.mediaService.$isScanning.dropFirst().filter { $0 }.sink { _ in mediaScans += 1 }
+        toolbar.rescanLibrary()
+        XCTAssertTrue(state.isScanning, "Toolbar action must refresh the library as well as media")
+        XCTAssertTrue(vm.mediaService.isScanning, "Toolbar action must explicitly refresh unchanged-root media")
+        toolbar.rescanLibrary() // Duplicate Cmd-R route while scanning must be ignored.
+        XCTAssertEqual(mediaScans, 1, "One user action must not start duplicate media scans")
+        try await waitUntil { !state.isScanning && !vm.mediaService.isScanning }
+        XCTAssertEqual(vm.mediaService.items.map(\.fileName), ["a.png", "b.png"])
+        withExtendedLifetime(token) {}
+    }
+
+    func testCorruptVideoPublishesFallbackAndReleasesActualPlayer() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a valid video container".utf8).write(to: directory.appendingPathComponent("corrupt.mp4"))
+        let service = ProjectorMediaService()
+        defer { service.teardown() }
+        service.setPresentationActive(true)
+        service.setLibraryRoot(root)
+        try await waitUntil {
+            if case .error = service.mediaState { return true }
+            return false
+        }
+        XCTAssertNil(service.currentVideoPlayer, "Failed AVPlayerItem must release its active player and loop observers")
+        XCTAssertFalse(service.isScanning)
+    }
+
+    func testLateDecodedPhotosStartAnimationOnlyAfterEachImageMounts() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writePhoto(directory.appendingPathComponent("a.png"))
+        try writePhoto(directory.appendingPathComponent("b.png"))
+        let service = ProjectorMediaService()
+        defer { service.teardown() }
+        let firstAnimation = ProjectorPhotoAnimation()
+        let secondAnimation = ProjectorPhotoAnimation()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        let hosted = NSHostingView(rootView: AnyView(ProgressView()))
+        window.contentView = hosted
+        window.makeKeyAndOrderFront(nil)
+        hosted.layoutSubtreeIfNeeded()
+        service.setPresentationActive(true)
+        service.setLibraryRoot(root)
+        try await waitUntil { service.currentPhoto != nil }
+        XCTAssertEqual(firstAnimation.scale, 1, "A loading parent must not start an unmounted image's motion")
+        let firstImage = try XCTUnwrap(service.currentPhoto)
+        let firstID = try XCTUnwrap(service.items.first?.id)
+        hosted.rootView = AnyView(ProjectorPhotoView(image: firstImage, mediaID: firstID,
+                                                   animation: firstAnimation).id(firstID))
+        hosted.layoutSubtreeIfNeeded()
+        hosted.display()
+        try await waitUntil { firstAnimation.scale > 1 }
+        service.nextMediaItem()
+        try await waitUntil { service.currentPhoto != nil }
+        XCTAssertEqual(secondAnimation.scale, 1)
+        let secondImage = try XCTUnwrap(service.currentPhoto)
+        let secondID = service.items[service.currentIndex].id
+        XCTAssertNotEqual(secondID, firstID)
+        hosted.rootView = AnyView(ProjectorPhotoView(image: secondImage, mediaID: secondID,
+                                                   animation: secondAnimation).id(secondID))
+        hosted.layoutSubtreeIfNeeded()
+        hosted.display()
+        try await waitUntil { secondAnimation.scale > 1 && firstAnimation.scale == 1 }
+        window.contentView = nil
+        // Unmounting a decoded image must cancel/reset its animation state too.
+        hosted.rootView = AnyView(EmptyView())
+        try await waitUntil { secondAnimation.scale == 1 }
+    }
+
+    func testVideoFailureCallbacksCannotOverrideNewRootOrClosedPresentation() async throws {
+        let videoRoot = try temporaryRoot()
+        let photoRoot = try temporaryRoot()
+        for root in [videoRoot, photoRoot] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(ProjectorMediaService.mediaFolderName),
+                withIntermediateDirectories: true)
+        }
+        try Data("corrupt video".utf8).write(to: videoRoot.appendingPathComponent(
+            ProjectorMediaService.mediaFolderName).appendingPathComponent("bad.mp4"))
+        try writePhoto(photoRoot.appendingPathComponent(ProjectorMediaService.mediaFolderName).appendingPathComponent("new.png"))
+        let service = ProjectorMediaService()
+        defer { service.teardown() }
+        service.setLibraryRoot(videoRoot)
+        try await waitUntil { !service.isScanning }
+        service.setPresentationActive(true)
+        let oldPlayer = try XCTUnwrap(service.currentVideoPlayer)
+        let oldItem = try XCTUnwrap(oldPlayer.currentItem)
+        service.setLibraryRoot(photoRoot) // Cancels observations before the asynchronous failure is delivered.
+        try await waitUntil { service.currentPhoto != nil }
+        XCTAssertEqual(service.items.map(\.fileName), ["new.png"])
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: oldItem)
+        await Task.yield()
+        XCTAssertTrue(service.mediaState.isReady)
+        XCTAssertNotNil(service.currentPhoto)
+        service.setPresentationActive(false)
+        NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: oldItem)
+        await Task.yield()
+        XCTAssertNil(service.currentVideoPlayer)
+        XCTAssertNil(service.currentPhoto)
+        XCTAssertTrue(service.mediaState.isReady, "Closed presentation must reject obsolete failure callbacks")
+    }
+
 }

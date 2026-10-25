@@ -8,7 +8,6 @@ import PulseDeckCore
 /// and honest ambient idle fallback when `09_Visual_Backgrounds_Media` is empty or corrupt.
 public struct ProjectorSlideshowView: View {
     @ObservedObject var viewModel: ProjectorViewModel
-    @State private var kenBurnsZoom: Bool = false
 
     public init(viewModel: ProjectorViewModel) {
         self.viewModel = viewModel
@@ -35,9 +34,6 @@ public struct ProjectorSlideshowView: View {
                 idleFallbackView
             }
         }
-        .onAppear {
-            kenBurnsZoom = true
-        }
     }
 
     @ViewBuilder
@@ -50,11 +46,8 @@ public struct ProjectorSlideshowView: View {
             switch item.type {
             case .photo:
                 if let image = viewModel.mediaService.currentPhoto {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .scaleEffect(kenBurnsZoom ? 1.08 : 1.0)
-                        .animation(.easeInOut(duration: 8.0).repeatForever(autoreverses: true), value: kenBurnsZoom)
+                    ProjectorPhotoView(image: image, mediaID: item.id)
+                        .id(item.id)
                         .transition(.opacity)
                 } else {
                     idleFallbackView
@@ -104,6 +97,60 @@ public struct ProjectorSlideshowView: View {
                 .frame(maxWidth: 480)
         }
         .padding(40)
+    }
+}
+
+/// Per-photo state belongs to the mounted image, rather than the loading/fallback container.
+@MainActor
+final class ProjectorPhotoAnimation: ObservableObject {
+    @Published private(set) var scale: CGFloat = 1
+    private var startTask: Task<Void, Never>?
+
+    deinit { startTask?.cancel() }
+
+    func start() {
+        reset()
+        startTask = Task { @MainActor [weak self] in
+            // onAppear has mounted the unscaled image before this new animation transaction.
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            withAnimation(.easeInOut(duration: 8).repeatForever(autoreverses: true)) {
+                self.scale = 1.08
+            }
+            self.startTask = nil
+        }
+    }
+
+    func reset() {
+        startTask?.cancel()
+        startTask = nil
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if scale != 1 { scale = 1 }
+        }
+    }
+}
+
+struct ProjectorPhotoView: View {
+    let image: NSImage
+    let mediaID: String
+    @StateObject private var animation: ProjectorPhotoAnimation
+
+    init(image: NSImage, mediaID: String, animation: ProjectorPhotoAnimation? = nil) {
+        self.image = image
+        self.mediaID = mediaID
+        _animation = StateObject(wrappedValue: animation ?? ProjectorPhotoAnimation())
+    }
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .scaleEffect(animation.scale)
+            .onAppear { animation.start() }
+            .onChange(of: mediaID) { _, _ in animation.start() }
+            .onDisappear { animation.reset() }
     }
 }
 

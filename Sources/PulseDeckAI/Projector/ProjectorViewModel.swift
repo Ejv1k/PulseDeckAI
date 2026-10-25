@@ -119,6 +119,13 @@ public final class ProjectorViewModel: ObservableObject {
         mediaService.setLibraryRoot(url)
     }
 
+    /// Shared toolbar/menu action. Concurrent shortcut routes must produce only one refresh.
+    public func refreshLibrary(from appState: AppState) {
+        guard !appState.isScanning else { return }
+        appState.refreshLibrary()
+        rescanMedia()
+    }
+
     /// Explicit refresh also discovers assets added beneath an unchanged library root.
     public func rescanMedia() {
         mediaService.rescan()

@@ -51,6 +51,9 @@ public final class ProjectorMediaService: ObservableObject {
     private var photoCache: [URL: (image: NSImage, bytes: Int)] = [:]
     private var photoCacheTotalBytes: Int = 0
     private var playerDidPlayToEndToken: MediaNotificationToken?
+    private var playerFailureToken: MediaNotificationToken?
+    private var playerStatusObservation: NSKeyValueObservation?
+    private var playerGeneration: UInt64 = 0
     private var activeScanTask: Task<Void, Never>?
     private var activePhotoTask: Task<Void, Never>?
 
@@ -227,6 +230,7 @@ public final class ProjectorMediaService: ObservableObject {
         cleanupPlayer()
         currentPhoto = nil
         guard presentationActive else { return }
+        mediaState = .ready(items: items)
         let item = items[index]
         let currentGen = photoGeneration
 
@@ -369,10 +373,40 @@ public final class ProjectorMediaService: ObservableObject {
         self.playerDidPlayToEndToken = token
 
         self.currentVideoPlayer = player
+        let generation = playerGeneration
+        playerStatusObservation = playerItem.observe(\.status, options: [.initial, .new]) { @Sendable [weak self] item, _ in
+            guard item.status == .failed else { return }
+            Task { @MainActor [weak self] in
+                self?.handleVideoFailure(generation: generation)
+            }
+        }
+        let failureToken = MediaNotificationToken()
+        failureToken.observer = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleVideoFailure(generation: generation)
+            }
+        }
+        playerFailureToken = failureToken
         player.play()
     }
 
+    private func handleVideoFailure(generation: UInt64) {
+        guard presentationActive, generation == playerGeneration,
+              let player = currentVideoPlayer else { return }
+        let message = player.currentItem?.error?.localizedDescription ?? "Unable to play this visual background."
+        cleanupPlayer()
+        mediaState = .error(message: message)
+    }
+
     private func cleanupPlayer() {
+        playerGeneration &+= 1
+        playerStatusObservation?.invalidate()
+        playerStatusObservation = nil
+        playerFailureToken = nil
         playerDidPlayToEndToken = nil
         currentVideoPlayer?.pause()
         currentVideoPlayer = nil

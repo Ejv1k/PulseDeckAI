@@ -31,8 +31,7 @@ public struct PulseDeckApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Rescan Library") {
-                    appState.refreshLibrary()
-                    projectorViewModel.rescanMedia()
+                    projectorViewModel.refreshLibrary(from: appState)
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(appState.isScanning)

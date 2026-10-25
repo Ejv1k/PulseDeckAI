@@ -1,6 +1,6 @@
 # PulseDeck AI — Technical Architecture Specification
 
-> **Document Status:** Authoritative Architectural Specification (Phase 0 Baseline)  
+> **Document Status:** Authoritative Architectural Specification (Phase 5 Baseline)  
 > **Target Hardware Baseline:** Apple Silicon MacBook Pro 14" / 16" (M1 Pro, 16GB Unified Memory)  
 > **Target Software Platform:** macOS Sonoma (14.0+) / macOS Sequoia (15.0+), Swift 6.0 Concurrency Mode  
 > **Document Scope:** Full architectural contracts, hardware interfaces, audio pipelines, memory models, transition mathematics, and phase roadmaps.
@@ -71,7 +71,7 @@ graph TD
 2. **Output-Only Hardware Isolation:** Audio inputs are structurally excluded. Calling `engine.inputNode` is strictly forbidden across the codebase.
 3. **Deterministic Cache & DJ Provenance:** Automated acoustic analysis provides intelligent baseline suggestions, but a human DJ's manual adjustments are sacred and immutable.
 4. **Resilient Hybrid Intelligence:** The system functions 100% offline at all times. Cloud AI advising is an optional advisory overlay wrapped with strict rate limits, retries, and local fallback models.
-5. **Phase-Gated Implementation:** Every capability belongs to a defined phase. Phase 0 delivers an operational dark-themed shell with verified contracts, ready for Phase 1 audio implementation.
+5. **Phase-Gated Implementation:** Every capability belongs to a defined phase. Core audio, offline analysis, waveforms, transitions, talkover ducking, RAM soundboard, and secondary projector visuals are delivered and verified across Phases 0–5A, ready for final integration and documentation.
 
 ---
 
@@ -315,16 +315,16 @@ The cache is stored at `PulseDeck_Library/.pulsedeck_ai_cache.json` and conforms
 Every audio track contains four ordered, bounded cue markers:
 $$0.0 \le \text{startTrimCue} \le \text{vocalEntryCue} \le \text{mixOutCue} \le \text{endTrimCue} \le \text{duration}$$
 
-* `startTrimCue`: Trims leading silence, DJ drops, or spoken vinyl clicks. Playback begins here.
-* `vocalEntryCue`: Timestamp where the first lead vocal begins. Critical for avoiding vocal clashes during transitions.
-* `mixOutCue`: Timestamp where the outro transition should start.
-* `endTrimCue`: Timestamp where active audio concludes, trimming trailing silence or applause.
+* `startTrimCue`: Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero.
+* `vocalEntryCue`: Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection.
+* `mixOutCue`: Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot.
+* `endTrimCue`: Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`).
 
 ### 7.3 Immutability of Manual DJ Overrides
 PulseDeck AI guarantees that **automated analysis will never clobber human DJ adjustments**:
 * When a DJ manually repositions cue markers, overrides BPM, or edits musical key, `manualOverrides.isManual` is set to `true`, and field names are appended to `overriddenFields` (e.g. `["cueMarkers", "bpm"]`).
 * When re-analysis occurs (e.g. after updating the DSP algorithm), `mergingPreservingOverrides(with:)` merges new spectral waveforms and energy curves, but **strictly retains** user-modified fields.
-* The `aiTrimBypass` flag allows the DJ to temporarily audition original track boundaries without clearing stored cue values.
+* The `aiTrimBypass` flag allows the DJ to temporarily audition original track boundaries in the waveform editor without clearing stored cue values; it does not alter CoreAudio audio graph scheduling.
 
 ### 7.4 Atomic Serialization
 Cache persistence uses POSIX atomic write semantics to prevent file corruption during sudden system shutdowns:
@@ -341,7 +341,7 @@ Acoustic feature extraction executes locally without network access:
 * **Silence & Noise Floor:** Detects threshold transitions below $-60\,\text{dBFS}$ to calculate `startTrimCue` and `endTrimCue`.
 * **Spectral Analysis:** vDSP Fast Fourier Transform (FFT) generates multi-band peak arrays (Low: $20\text{--}250\,\text{Hz}$, Mid: $250\text{--}3500\,\text{Hz}$, High: $3500\text{--}20000\,\text{Hz}$).
 * **Beat Grid & BPM Detection:** Autocorrelation and spectral flux peak detection calculate `beatIntervalSeconds` and `firstBeatOffsetSeconds`.
-* **Vocal Detection:** The current offline batch analyzer does not claim semantic vocal detection and writes an empty `vocalSegments` array. Cue points remain estimates and require DJ review.
+* **Vocal & Musical Key Detection Limits:** Offline local analyzers (`LocalTrackAnalyzer` and Python batch companion) write `musicalKey: "Unknown"` and an empty `vocalSegments: []` array. They do not extract musical keys or lead-vocal onsets from audio waveforms. `vocalEntryCue` is a temporal duration heuristic (`span * 0.12`). `HarmonicCompatibility` matches Camelot keys already present in cached metadata or manual overrides.
 
 ### 8.2 Hybrid AI Advisor (Google Gemini & Local Ollama)
 The AI Advisor provides real-time track selection recommendations based on harmonic compatibility, energy curves, and transition points:
@@ -408,14 +408,21 @@ PulseDeck AI codifies three automated transition contracts and two performance m
   2. Quantized to trigger exactly on the downbeat (beat 1) of the upcoming bar.
   3. Crossfader cuts from $100\%$ Deck A to $100\%$ Deck B in $0.0\,\text{ms}$, stopping the previous deck instantaneously.
 
-### 9.4 Space Macro / Auto-Pilot
-* Evaluates outgoing track's `mixOutCue`.
-* When the playhead crosses `mixOutCue`, Auto-Pilot queries the AI Advisor or heuristic rules, selects the optimal transition type, aligns beat grids, and executes the mix automatically without human intervention.
+### 9.4 Auto-Pilot One-Shot Cue-Armed Transition Engine
+* **Execution Architecture:**
+  1. `AppState.buildTransitionRequest` constructs a `TransitionRequest` from the two currently loaded decks, the DJ-selected `transitionMacroStyle` (`beatSyncedBassSwap`, `filterEchoWash`, or `hardCutOnDrop`), and `transitionPhraseBars` (`8`, `16`, or `32` bars).
+  2. `toggleAutoPilot()` arms this pre-configured request with `TransitionExecutionService.armAutoPilot(request:)`.
+  3. The transition service monitors the active outgoing deck's playhead against its cached `mixOutCue`.
+  4. When the outgoing playhead crosses `mixOutCue`, the service dispatches the armed transition request, executing the chosen macro across the selected phrase duration.
+  5. Upon completion, the incoming deck becomes the active on-air deck, and Auto-Pilot disarms.
+* **One-Shot Scope:** Auto-Pilot executes exactly one transition per arming. It does not query an AI advisor or heuristically choose transition strategies dynamically at the cue point, nor does it autonomously load tracks or perform continuous unattended multi-track mixing.
+* **DJ Controls:** Arming, disarming, and aborting are controlled via the UI buttons (`ARM` / `DISARM` / `CANCEL`) in the Deck Studio transition panel.
 
 ### 9.5 Master Talkover Ducking Macro (`T` Key)
-* **Duck Level:** Reduces Master FOH music output level **to** approximately 15% of its original linear amplitude (a ~-16.5 dB drop down to 0.15 linear gain multiplier) over an 800ms smooth logarithmic ramp.
+* **Duck Level:** Reduces Master FOH music output level **to** approximately 15% of its original linear amplitude (a ~-16.5 dB drop down to 0.15 linear gain multiplier) over an 800ms linear ramp.
 * **Vocal Carve EQ:** Applies a broad -4.0 dB parametric dip across 300 Hz to 3 kHz on the master bus, carving acoustic room for the DJ/MC microphone.
-* **Restore:** Toggling `T` off ramps master volume and EQ back to unity over 800ms.
+* **Restore:** Toggling `T` off ramps master volume and EQ back to unity over 800ms linear ramp.
+* **SFX Bypass:** Master-only Soundboard drops bypass the ducking bus downstream, remaining full-volume and punchy even during active talkover announcements.
 
 ### 9.6 RAM-Preloaded Soundboard (`F1`–`F8` Keys)
 * **Eight High-Priority Nodes:** Dedicated `AVAudioPlayerNode` per pad connected to an intermediate `soundboardMixerNode: AVAudioMixerNode` attached exclusively to `masterAudioEngine.rawEngine` and feeding `masterAudioEngine.subMixer`.
@@ -455,19 +462,25 @@ graph TD
 * **Keyboard Routing (`ProjectorKeyboardRouter`):** Dispatches keys 1–4 to switch modes, drops OS repeat events, debounces rapid multi-route events, and checks first responder text editing (`NSTextField`, `NSTextView`, `NSText`) to ensure digits 1–4 are never stolen while editing the event banner.
 * **State Isolation (`ProjectorViewModel`):** Stored in a separate `@MainActor` observable object without adding new stored properties to `AppState`.
 
-### 10.3 Master Deck Safety Locks
+### 10.3 Master Deck Safety Lock
 To prevent catastrophic accidental dropouts during live performance:
-* The deck currently broadcasting to Master cannot be stopped, paused, or scrubbed via mouse or keyboard unless the **Master Safety Lock** is disengaged or a confirmation modifier (`Shift + Space`) is held.
+* **Default-On Protection:** Enabled by default upon startup. Protects any loaded deck actively playing to a running Master engine with nonzero channel or crossfader gain.
+* **Control-Queue Graph Authority:** On-air membership is evaluated synchronously on the audio control queue directly against real graph state, ensuring both decks are protected during crossfades.
+* **Guarded Actions:** Manual pause, stop, track load, and live playhead seek commands are intercepted and rejected with nonmodal UI warning feedback while locked.
+* **One-Shot Override (`Shift + Space`):** Pressing `Shift + Space` allows a one-shot intentional pause of the focused on-air deck without modifying the persistent lock state.
+* **Automation & Cue Isolation:** Automated transitions (Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot) execute unimpeded. Headphone Cue audition, pre-fader listening, and non-destructive waveform cue marker editing (`I`/`O`/`V`/`M`/drag) are completely exempt and never seek or interrupt live Master audio.
+* **Status:** Fully merged to `main` in PR #19.
 
 ---
 
 ## 11. Phase Sequence & Architectural Verification Matrix
 
-| Phase | Title | Core Technical Deliverables | Verification Mechanism |
+| Phase | Title | Core Technical Deliverables | Status & Verification Mechanism |
 | :---: | :--- | :--- | :--- |
-| **0** | **Operational Foundation & Docs** | Swift 6 package, SwiftUI dark shell, library scanner, cache schema v1, atomic persistence, protocol contracts, docs | `swift build`, `swift test`, `python3 scripts/pulsedeck_cache.py` |
-| **1** | **Dual Audio Engines & Metering** | CoreAudio HAL routing, dual `AVAudioEngine`, 3-band EQ, resonant filter, SPSC lock-free metering | Audio output verification on dual interfaces, lock-free thread benchmarking |
-| **2** | **Offline DSP & Hybrid Advisor** | vDSP FFT, beat tracking, vocal estimation, Gemini 2.5 Flash / Ollama advisor, cache generation | Cache generation on `00_Test_Tracks_Dev`, rate limit stress testing |
-| **3** | **Waveforms, Cues & Interactive Browser** | Multi-band Canvas waveform, 4 bounded cue handles, manual override preservation, cue scrubbing | Visual waveform inspection, manual cue adjustment persistence test |
-| **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot state machine, Talkover ducking (`T`, reducing master to ~15% linear amplitude), Soundboard (`F1`–`F8`) | Quantized transition timing tests, SFX latency verification |
-| **5** | **Projector Display & Safety Locks** | Multi-screen HDMI window, 4 visualizer modes, master deck safety lock, finalized manual | External display resolution scaling, safety lock intercept tests |
+| **0** | **Operational Foundation & Docs** | Swift 6 package, SwiftUI dark shell, library scanner, cache schema v1, atomic persistence, protocol contracts, docs | **Merged** (`swift build`, `swift test`, `python3 scripts/pulsedeck_cache.py`) |
+| **1** | **Dual Audio Engines & Metering** | CoreAudio HAL routing, dual `AVAudioEngine`, 3-band EQ, resonant filter, SPSC lock-free metering | **Merged** (PR #4, PR #6; offline audio graph tests, lock-free ring buffer verification) |
+| **2** | **Offline DSP & Hybrid Advisor** | vDSP FFT, beat tracking, heuristic cue estimation, Gemini 2.5 Flash / Ollama advisor, cache generation | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`, rate limit stress testing) |
+| **3** | **Waveforms, Cues & Interactive Browser** | Multi-band Canvas waveform, 4 bounded cue handles, manual override preservation, cue scrubbing, headphone audition player | **Merged** (PR #9, PR #13, PR #14; waveform render tests, override preservation, audition engine tests) |
+| **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot state machine, Talkover ducking (`T`), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing tests, SFX RAM preload & trailing PCM preservation tests) |
+| **5A** | **Projector Display & Safety Locks** | Multi-screen secondary window, 4 visualizer modes, text editing protection, Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |
+| **5B** | **Final Documentation & Product Polish** | Authoritative user manual, architecture docs, phase status, continuation records | **In Progress** (Phase 5B documentation PR) |

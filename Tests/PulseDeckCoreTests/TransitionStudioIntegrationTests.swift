@@ -257,6 +257,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertEqual(appState.crossfaderPosition, 1, accuracy: 0.001)
         XCTAssertNil(appState.transitionErrorMessage)
 
+        appState.setMasterSafetyLockEnabled(false)
         appState.toggleDeckPlay(deck: .deckB)
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
         appState.updateCrossfader(position: 0.25)

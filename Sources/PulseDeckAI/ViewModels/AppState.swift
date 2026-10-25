@@ -64,6 +64,11 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
 
+    // Manual Master transport protection; internal engine cleanup never passes through this policy.
+    @Published public private(set) var isMasterSafetyLockEnabled = true
+    @Published public private(set) var masterSafetyLockMessage: String?
+    @Published public private(set) var focusedMasterDeck: DeckIdentifier = .deckA
+
     // Master-only Talkover State
     @Published public private(set) var isTalkoverActive: Bool = false
     @Published public private(set) var talkoverProgress: Double = 0.0
@@ -95,6 +100,9 @@ public final class AppState: ObservableObject {
     private var previewIsReady = false
     private var previewPollingTask: Task<Void, Never>?
     private var transitionObservationTask: Task<Void, Never>?
+    private var pendingSafetyLockAutomationCommands = 0
+    /// Installed before a test request to hold a validated start at its actor handoff.
+    var safetyLockBeforeTransitionStartForTesting: (@MainActor () async -> Void)?
     private let beforePreviewFilePreparation: (@Sendable (URL) async -> Void)?
     private var loadedCacheRootURL: URL?
     private let cacheLoader: @Sendable (URL) async -> PulseDeckLibraryCache?
@@ -484,6 +492,100 @@ public final class AppState: ObservableObject {
 
     // MARK: - Dual-Deck Studio Controls
 
+    public func setMasterSafetyLockEnabled(_ enabled: Bool) {
+        isMasterSafetyLockEnabled = enabled
+        masterSafetyLockMessage = enabled
+            ? "Master Safety Lock on — on-air decks are protected."
+            : "Master Safety Lock off — manual on-air changes are allowed outside automation."
+    }
+
+    public func focusMasterDeck(_ deck: DeckIdentifier) {
+        focusedMasterDeck = deck
+    }
+
+    public func isMasterDeckOnAir(_ deck: DeckIdentifier) -> Bool {
+        guard let coordinator = audioCoordinator else { return false }
+        return coordinator.monitor.performOnControlQueue {
+            let graph = deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+            return MasterSafetyLock.isOnAir(
+                masterIsRunning: coordinator.masterAudioEngine.isRunning,
+                isPlaying: graph.isMasterPlaying, hasLoadedTrack: graph.loadedTrackURL != nil,
+                channelVolume: graph.volume, crossfaderWeight: graph.crossfaderWeight)
+        }
+    }
+
+    public func isMasterDeckProtected(_ deck: DeckIdentifier) -> Bool {
+        isMasterSafetyLockEnabled && isMasterDeckOnAir(deck)
+    }
+
+    /// The check and mutation share the audio control queue, so a crossfade cannot
+    /// move a deck on air between authorization and its transport change.
+    private func performManualDeckMutation(
+        deck: DeckIdentifier,
+        action: MasterSafetyLockAction,
+        confirmedPause: Bool = false,
+        mutation: @Sendable (DeckAudioGraph) throws -> Void
+    ) -> Bool {
+        guard !isTransitionBusy, pendingSafetyLockAutomationCommands == 0 else {
+            masterSafetyLockMessage = "Automation owns deck transport; finish or cancel it first."
+            return false
+        }
+        guard let coordinator = audioCoordinator else { return false }
+        let locked = isMasterSafetyLockEnabled
+        do {
+            let result = try coordinator.monitor.performOnControlQueue { () throws -> MasterSafetyLockMutationResult in
+                let graph = deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+                let onAir = MasterSafetyLock.isOnAir(
+                    masterIsRunning: coordinator.masterAudioEngine.isRunning,
+                    isPlaying: graph.isMasterPlaying, hasLoadedTrack: graph.loadedTrackURL != nil,
+                    channelVolume: graph.volume, crossfaderWeight: graph.crossfaderWeight)
+                if confirmedPause && !onAir { return .notOnAir }
+                if locked && onAir && !confirmedPause { return .blocked }
+                try mutation(graph)
+                return .applied(isPlaying: graph.isMasterPlaying)
+            }
+            switch result {
+            case .blocked:
+                masterSafetyLockMessage = "Master Safety Lock blocked \(action.rawValue) on \(deck.rawValue). Use Shift+Space for one pause, or switch the lock off."
+                return false
+            case .notOnAir:
+                masterSafetyLockMessage = "\(deck.rawValue) is not on air; no forced pause was needed."
+                return false
+            case .applied(let playing):
+                if deck == .deckA { isDeckAPlaying = playing } else { isDeckBPlaying = playing }
+                masterSafetyLockMessage = confirmedPause
+                    ? "Confirmed pause on \(deck.rawValue). Master Safety Lock remains \(locked ? "on" : "off")."
+                    : nil
+                return true
+            }
+        } catch {
+            statusMessage = "Deck \(action.rawValue) failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    @discardableResult
+    public func pauseDeck(deck: DeckIdentifier) -> Bool {
+        performManualDeckMutation(deck: deck, action: .pause) { $0.pause() }
+    }
+
+    @discardableResult
+    public func stopDeck(deck: DeckIdentifier) -> Bool {
+        performManualDeckMutation(deck: deck, action: .stop) { $0.stop() }
+    }
+
+    @discardableResult
+    public func seekDeck(deck: DeckIdentifier, to seconds: Double) -> Bool {
+        guard seconds.isFinite else { return false }
+        return performManualDeckMutation(deck: deck, action: .seek) { $0.seek(to: seconds) }
+    }
+
+    /// One explicit pause only; this does not unlock transport or override automation.
+    @discardableResult
+    public func forcePauseFocusedMasterDeck() -> Bool {
+        performManualDeckMutation(deck: focusedMasterDeck, action: .pause, confirmedPause: true) { $0.pause() }
+    }
+
     /// Loads the currently selected library track into the designated deck.
     public func loadSelectedTrackIntoDeck(deck: DeckIdentifier) {
         guard !isTransitionBusy,
@@ -504,26 +606,12 @@ public final class AppState: ObservableObject {
             return
         }
 
-        do {
-            switch deck {
-            case .deckA:
-                try coordinator.monitor.performOnControlQueue {
-                    try coordinator.deckA.loadTrack(url: trackURL)
-                    coordinator.deckA.volume = 1.0
-                }
-                self.deckATrack = track
-                self.isDeckAPlaying = false
-            case .deckB:
-                try coordinator.monitor.performOnControlQueue {
-                    try coordinator.deckB.loadTrack(url: trackURL)
-                    coordinator.deckB.volume = 1.0
-                }
-                self.deckBTrack = track
-                self.isDeckBPlaying = false
-            }
-            self.statusMessage = "Loaded \(track.relativePath) into \(deck.rawValue)"
-        } catch {
-            self.statusMessage = "Failed to load \(track.relativePath) into \(deck.rawValue): \(error.localizedDescription)"
+        if performManualDeckMutation(deck: deck, action: .replace, mutation: { graph in
+            try graph.loadTrack(url: trackURL)
+            graph.volume = 1
+        }) {
+            if deck == .deckA { deckATrack = track } else { deckBTrack = track }
+            statusMessage = "Loaded \(track.relativePath) into \(deck.rawValue)"
         }
     }
 
@@ -559,28 +647,12 @@ public final class AppState: ObservableObject {
             acknowledgeAudioStartupRecovery()
         }
 
-        switch deck {
-        case .deckA:
-            if coordinator.deckAGraph.isMasterPlaying {
-                coordinator.deckA.pause()
-                isDeckAPlaying = false
+        _ = performManualDeckMutation(deck: deck, action: .pause) { graph in
+            if graph.isMasterPlaying {
+                graph.pause()
             } else {
-                coordinator.monitor.performOnControlQueue {
-                    coordinator.deckA.volume = 1.0
-                    coordinator.deckA.play()
-                }
-                isDeckAPlaying = true
-            }
-        case .deckB:
-            if coordinator.deckBGraph.isMasterPlaying {
-                coordinator.deckB.pause()
-                isDeckBPlaying = false
-            } else {
-                coordinator.monitor.performOnControlQueue {
-                    coordinator.deckB.volume = 1.0
-                    coordinator.deckB.play()
-                }
-                isDeckBPlaying = true
+                graph.volume = 1
+                graph.play()
             }
         }
     }
@@ -739,12 +811,15 @@ public final class AppState: ObservableObject {
 
     /// Starts the selected macro from the outgoing deck's current playhead.
     public func executeTransition() async {
+        pendingSafetyLockAutomationCommands += 1
+        defer { pendingSafetyLockAutomationCommands -= 1 }
         do {
             guard let coordinator = audioCoordinator else {
                 throw TransitionExecutionServiceError.invalidRequest("Audio coordinator unavailable")
             }
             let request = try makeTransitionRequest(coordinator: coordinator, autoPilot: false)
             let service = coordinator.transitionExecutionService
+            if let beforeStart = safetyLockBeforeTransitionStartForTesting { await beforeStart() }
             _ = try await service.startTransition(request: request)
             transitionErrorMessage = nil
             await refreshTransitionSnapshot(using: service)
@@ -756,6 +831,8 @@ public final class AppState: ObservableObject {
 
     /// Arms or disarms the selected macro at the outgoing track's mix-out cue.
     public func toggleAutoPilot() async {
+        pendingSafetyLockAutomationCommands += 1
+        defer { pendingSafetyLockAutomationCommands -= 1 }
         guard let coordinator = audioCoordinator else {
             transitionErrorMessage = "Audio coordinator unavailable"
             return
@@ -786,6 +863,8 @@ public final class AppState: ObservableObject {
 
     /// Cancels an armed AutoPilot or active transition and synchronizes published transport state.
     public func cancelTransition() async {
+        pendingSafetyLockAutomationCommands += 1
+        defer { pendingSafetyLockAutomationCommands -= 1 }
         guard let coordinator = audioCoordinator else { return }
         let service = coordinator.transitionExecutionService
         _ = await service.cancelTransition()

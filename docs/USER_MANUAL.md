@@ -1,6 +1,5 @@
 # PulseDeck AI — Event DJ User Manual
 
-> **Product Version:** 0.1.0 (Phase 0 Operational Shell)  
 > **Platform:** macOS Sonoma (14.0+) / macOS Sequoia (15.0+), Apple Silicon (M1 Pro / 16GB Baseline)  
 > **Target Audience:** Live Performance, Wedding, Corporate, and Event DJs
 
@@ -8,17 +7,18 @@
 
 ## 1. Welcome to PulseDeck AI
 
-Welcome to **PulseDeck AI**, an intelligent, dual-engine DJ performance workstation engineered from the ground up for Apple Silicon. PulseDeck AI is built to give wedding, event, and club DJs total peace of mind during live sets by combining rock-solid CoreAudio real-time stability with offline audio analysis and an intelligent AI DJ advisor.
+Welcome to **PulseDeck AI**, an intelligent, dual-engine DJ performance workstation engineered from the ground up for Apple Silicon. PulseDeck AI is built to give wedding, event, and club DJs total peace of mind during live sets by combining rock-solid CoreAudio real-time stability with offline audio analysis, automated performance transitions, an 8-pad RAM soundboard, secondary video projector visuals, and an intelligent AI DJ advisor.
 
-### Understanding Operational Phase Status
+### System Verification & Delivery Status
 
-> [!IMPORTANT]
-> **Phase 0 Operational Status:**  
-> PulseDeck AI is released in structured phases. The current version ships as **Phase 0 (Operational Foundation)**.
-> * **Available Today (Phase 0):** The native SwiftUI dark interface, 10-crate library browser, filesystem scanner, real local test track inspection (`00_Test_Tracks_Dev`), cache schema v1.0.0 definitions, atomic cache persistence, and Python companion validator.
-> * **Planned for Subsequent Phases (Phases 1–5):** Real-time CoreAudio playback, dual-device routing, interactive waveforms, automated transitions, Auto-Pilot, soundboard triggers, and external projector displays.
-> 
-> This manual serves both as your guide to operating the **Phase 0 foundation today** and as your authoritative field manual for upcoming phase releases.
+PulseDeck AI delivers a complete, verified DJ workstation:
+* **Dual Output Engines:** Segregated CoreAudio output pipelines for Master Front-of-House (FOH) and Cue (Headphones) monitoring without aggregate device configuration.
+* **Strict Output-Only Guarantee:** Zero access to `engine.inputNode`, eliminating microphone permission prompts, Bluetooth audio codec degradation, and acoustic feedback risks.
+* **Real-Time Thread Safety:** Render callbacks execute without heap allocations (`malloc`), locks, mutexes, Swift runtime actor hops, or Objective-C ARC retain/release cycles.
+* **Deterministic Cache & Human DJ Provenance:** High-precision automated DSP cue analysis backed by atomic file persistence that never clobbers manual user adjustments.
+* **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`), and RAM-preloaded soundboard (`F1`–`F8`).
+* **Secondary Projector Visuals:** Dedicated presentation window (`Cmd + Shift + P`) offering 24-band FFT spectrum visualizer, Ken Burns photo slideshow and muted video loops, Now Playing card with event banner, and blackout screen.
+* **Master Deck Safety Lock:** Default-on transport guard protecting active on-air decks on the audio control queue from accidental drops, with `Shift + Space` one-shot override (merged in PR #19).
 
 ---
 
@@ -26,9 +26,10 @@ Welcome to **PulseDeck AI**, an intelligent, dual-engine DJ performance workstat
 
 ### 2.1 Hardware Baseline
 * **Computer:** Apple MacBook Pro (14" or 16", Apple Silicon M1 Pro with 16GB Unified Memory or better).
-* **Operating System:** macOS Sonoma 14.0 or newer.
-* **Storage:** Fast internal SSD for instantaneous waveform and audio streaming.
-* **Audio Interfaces:** At least two independent stereo output channels (e.g. built-in 3.5mm jack + USB audio interface).
+* **Operating System:** macOS Sonoma 14.0 or newer (macOS 15 Sequoia supported).
+* **Storage:** Fast internal SSD for instantaneous waveform display and audio streaming.
+* **Audio Interfaces:** At least two independent stereo output channels (e.g. built-in 3.5mm jack + external USB audio interface).
+* **Video Output:** Built-in display + secondary external HDMI / USB-C DisplayPort / AirPlay display for audience visuals.
 
 ### 2.2 Live DJ Setup Scenarios
 
@@ -55,7 +56,7 @@ graph TD
 #### Scenario B: Wired PA + Bluetooth Headphones (Mobile / Wireless Monitoring)
 * **Master (FOH):** USB audio interface or 3.5mm audio jack connected to the room speakers.
 * **Cue (Headphones):** Bluetooth wireless headphones (e.g. AirPods Max, Sony WH-1000XM5) paired via macOS Bluetooth.
-* **Latency Compensation:** Bluetooth audio introduces variable latency depending on device hardware, codec negotiation, and RF environment. Use the Master/Cue Latency Offset slider in PulseDeck AI to calibrate the Master PA delay until the house sound and headphone cue clicks align perfectly in real time.
+* **Latency Compensation:** Bluetooth audio introduces variable latency depending on device hardware, codec negotiation, and RF environment. Use the Master/Cue Latency Offset slider in PulseDeck AI to calibrate the Master PA delay until house sound and headphone cue clicks align perfectly.
 
 > [!WARNING]
 > **Bluetooth Audio Limitations & Clock Drift:**  
@@ -64,229 +65,232 @@ graph TD
 ### 2.3 The Strict No-Microphone Guarantee
 PulseDeck AI **never** requests or opens an audio input channel (`engine.inputNode`).
 * **Why this matters for your gig:**
-  1. Your Bluetooth headphones will **never** be downgraded into low-quality mono telephone mode (HFP/SCO).
-  2. You will **never** see an unexpected macOS microphone permission popup in the middle of a set.
-  3. There is **zero risk** of an accidental open microphone causing feedback through the venue PA speakers.
+  1. Your Bluetooth headphones will **never** be downgraded into low-quality mono telephone mode (HFP/SCO @ 8kHz/16kHz).
+  2. You will **never** see an unexpected macOS microphone permission popup in the middle of a live set.
+  3. There is **zero risk** of an accidental open microphone causing feedback loops through the venue PA speakers.
 
 ---
 
-## 3. Phase 0 Operational Walkthrough (Available Today)
-
-### 3.1 Launching PulseDeck AI
-From your terminal workspace:
-
-```bash
-# 1. Build the Swift 6 project
-swift build
-
-# 2. Run unit tests verifying audio contracts and cache schemas
-swift test
-
-# 3. Launch the operational dark UI
-swift run PulseDeckAI
-```
-
-### 3.2 Navigating the Interface
-The Phase 0 operational window is organized into three primary sections:
+## 3. Performance Studio Interface Walkthrough
 
 ```
-+-----------------------------------------------------------------------------------+
-|  [●] PulseDeck AI  [PHASE 0]      Apple Silicon M1 Pro / 16GB   macOS 14+ [Rescan]|
-|  LIBRARY: /.../PulseDeck_Library   STATUS: Library Verified: 10 Crates, 7 Tracks  |
-+-----------------------------------------------------------------------------------+
-|  DJ CRATES (10)            |  00_Test_Tracks_Dev       [7 TRACKS DETECTED]        |
-|  ------------------------- |  --------------------------------------------------  |
-|  [00] Test Tracks Dev (7)  |  01  Queen - Don't Stop Me Now.mp3  [MEDIA PRESERVED]|
-|  [01] Warmup Chill Lounge  |  02  Ed Sheeran - Perfect.mp3        [MEDIA PRESERVED]|
-|  [02] Ceremony Slow Rom... |  03  KABÁT - Pohoda.mp3              [MEDIA PRESERVED]|
-|  [03] Oldies 70s 80s 90s   |  04  Daft Punk - One More Time.mp3   [MEDIA PRESERVED]|
-|  ...                       |  05  ABBA - Gimme! Gimme! Gimme!...  [MEDIA PRESERVED]|
-|  [09] Visual Backgrounds   |  ...                                                 |
-+-----------------------------------------------------------------------------------+
-|  PHASE 0 ARCHITECTURAL CONTRACTS VERIFICATION                                     |
-|  [DUAL OUTPUT ENGINES]      [AUDIO-THREAD SAFETY]      [CACHE & AI ADVISOR]       |
-|  • Exactly 2 AVAudioEngines • 0 mallocs, 0 locks       • startTrim ≤ vocalEntry...|
-|  • Zero inputNode / mic     • Lock-free SPSC buffers   • Manual edits preserved   |
-|  • Deck A/B: EQ & Filter    • Latency: -300..+300ms    • Gemini 12 RPM + Ollama   |
-+-----------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------+
+|  [●] PulseDeck AI        Apple Silicon M1 Pro / 16GB   macOS 14+     [Projector] [Rescan (Cmd+R)] |
+|  LIBRARY: /.../PulseDeck_Library   STATUS: 10 Crates, 7 Tracks Verified                           |
++---------------------------------------------------------------------------------------------------+
+|  OUTPUT ROUTING: Master [Built-in Output ▼] Latency: [===|===] | Cue [Headphones ▼] Latency: [===] |
+|  METERS: Master L [========  ] R [======    ]  |  Cue L [=====     ] R [=====     ] (SPSC Lock-Free)|
++---------------------------------------------------------------------------------------------------+
+|  DECK A (Teal)             [LOAD]  |  CENTER MIXER STRIP               |  DECK B (Amber)    [LOAD]|
+|  Queen - Don't Stop Me Now.mp3     |  [SAFETY LOCK: ON (Shift+Space)]  |  Daft Punk - One More... |
+|  3:29 • 156.0 BPM • 11B            |  CROSSFADER: [======|======]      |  5:20 • 123.0 BPM • 8B   |
+|  [ PLAY / PAUSE ]  [ ■ ]  [ CUE ]  |  [ TALKOVER DUCKING (Hotkey: T) ] |  [ PLAY / PAUSE ] [■] [CUE]|
+|  -----------------------------------------------------------------------------------------------  |
+|  TRANSITIONS: [Bass Swap ▼] [16 BARS ▼]  [ EXECUTE ]  [ ARM / DISARM ]  [ CANCEL ]   (Ready)       |
+|  SOUNDBOARD SFX (F1-F8): [F1 Stinger] [F2 Kick] [F3 Snare] [F4 Chime] [F5 Rim] [F6 Siren] [F7] [F8] |
++---------------------------------------------------------------------------------------------------+
+|  SHARED WAVEFORM CUE EDITOR (Selected Track): Queen - Don't Stop Me Now.mp3                       |
+|  [AI TRIM: ACTIVE]  Zoom: [-][+]  Scroll: [ [ ][ ] ]  Nudge: [◀][▶]  [Reset Cues]                 |
+|  [=========================== Canvas Multi-Band Waveform (60 FPS) ==============================] |
+|        ▲ startTrim (I)      ▲ vocalEntry (V)                 ▲ mixOut (M)          ▲ endTrim (O)  |
++---------------------------------------------------------------------------------------------------+
+|  DJ CRATES (10)            |  TRACK BROWSER: 05_MainStage_Dance_120_128BPM                        |
+|  ------------------------- |  Ref Deck: [Deck A ▼] • Compatibility: Camelot Harmonic & Tempo      |
+|  [00] Test Tracks Dev (7)  |  01  Avicii - Levels.mp3         126 BPM  4B  [EXACT KEY] [TEMPO OK] |
+|  [01] Warmup Chill Lounge  |  02  Calvin Harris - Summer.mp3  128 BPM  4B  [EXACT KEY] [TEMPO OK] |
+|  [05] MainStage Dance (12) |  03  Tiësto - The Business.mp3   120 BPM  5A  [ADJACENT]  [TEMPO OK] |
+|  ...                       |  [AUDITION CUE BAR] [▶ Play] [■ Stop] Scrub: [===|===] [|◀] [▶|]     |
++---------------------------------------------------------------------------------------------------+
+|  ARCHITECTURE STATUS: Master Audio: RUNNING | Cue Audio: RUNNING | Ring Buffers: 0 Drops          |
++---------------------------------------------------------------------------------------------------+
 ```
 
-1. **Status Header & Ribbon:**
-   * Displays hardware baseline verification (`Apple Silicon M1 Pro, 16GB Unified Memory`).
-   * Displays compiler runtime environment (`macOS 14+ / Swift 6`).
-   * Active library root path and scan status message.
-   * **[Rescan] Button:** Instantly rescans the filesystem for newly added crates or audio files without restarting the app.
-2. **DJ Crates Navigation Panel (Left Column):**
-   * Lists the 10 standardized DJ crates.
-   * Shows real-time audio file counts and `.gitkeep` presence.
-   * Clicking any crate highlights it and loads its contents in the right-hand panel.
-3. **Crate Detail & Track Browser (Right Column):**
-   * Displays detected audio files with track indices and real cached analysis metadata (BPM and Musical Key).
-   * **Compatibility Reference Selector:** Allows selecting either **DECK A** or **DECK B** as the active mixing reference.
-   * **Harmonic & Tempo Compatibility Badges:** Displays real-time compatibility badges against the reference deck based on the Camelot wheel (Exact, Relative, Adjacent, Clash) and planner tempo threshold ($< 6.0\%$ differential). Unanalyzed tracks or unknown-tempo sentinels display honest `UNKNOWN` badges.
-   * **Headphone Audition (Cue Preview):** Dedicated Cue audition player wired exclusively to `CuePreviewPlayer` on the headphones audio graph. Features Play/Pause, Stop, bounded continuous slider scrubbing, and beat/bar step buttons (disabled when genuine beat grid is absent).
-4. **Architectural Contracts Verification Panel (Bottom Bar):**
-   * Real-time verification cards showing the exact operational rules governing audio engines, thread safety, and cache schemas.
+### 3.1 Top Status Header & Library Rescanning
+* **Hardware & Runtime Validation:** Displays verified Apple Silicon architecture, memory profile, and Swift 6 concurrency runtime.
+* **Library Status:** Reports crate discovery, track counts, and validation status.
+* **Rescan Button (`Cmd + R`):** Triggers an asynchronous, non-blocking scan of `PulseDeck_Library`. Newly added crates or audio files appear immediately without restarting the application.
+* **Projector Window Button (`Cmd + Shift + P`):** Toggles the secondary external presentation window.
 
-### 3.3 Running the Python Cache Companion
-PulseDeck AI includes a cross-language Python companion script that validates `.pulsedeck_ai_cache.json` against the schema specification:
+### 3.2 Crates Browser & Harmonic Compatibility Badges
+* **10 Standard DJ Crates:** Structured navigation across wedding and event crates (see Section 8).
+* **Reference Deck Selector:** Toggle between **Deck A** and **Deck B** as the harmonic mixing reference.
+* **Compatibility Badges (Cached Key Matching):**
+  * `HarmonicCompatibility` compares Camelot keys **already present in track cache metadata or manual overrides**. Local offline analyzers (`LocalTrackAnalyzer` and the Python companion script) do not detect musical keys from audio waveforms (writing `musicalKey: "Unknown"` by default).
+  * **Camelot Key Badges:** When keys are populated in cache, displays `EXACT KEY` (matching key number and letter), `RELATIVE` (same number, opposite letter e.g. 8A to 8B), `ADJACENT` (±1 Camelot number e.g. 8A to 7A/9A), or `CLASH` (incompatible musical key). Tracks with unknown tempo or unanalyzed key display honest `UNKNOWN` indicators.
+  * **Tempo Badges:** Tracks within $\le 6.0\%$ tempo difference display `TEMPO OK`; larger differences show relative differential percentage.
 
-```bash
-python3 scripts/pulsedeck_cache.py PulseDeck_Library/.pulsedeck_ai_cache.json
-```
+### 3.3 Headphone Cue Audition Bar (Cue Preview)
+* Dedicated preview player wired directly to the Headphone Cue audio engine (`CuePreviewPlayer`).
+* **Zero Master Leakage:** Audition playback routes exclusively to DJ headphones; zero preview audio ever reaches Master FOH speakers.
+* **Controls:** Play/Pause (`Space` when audition bar is focused), Stop, continuous slider scrubbing, and beat/bar step buttons (`[|◀]`, `[▶|]`). Beat step is disabled for unanalyzed tracks or unknown tempo sentinels.
+
+### 3.4 Dual Deck Studio Controls (Deck A & Deck B)
+`DeckStudioView` provides live transport, deck loading, on-air monitoring, crossfader, and master ducking:
+* **Deck Panels (Deck A & Deck B):**
+  * **`LOAD` Button:** Loads the track currently selected in the Library Browser into the respective deck.
+  * **Track Metadata Display:** Shows loaded track filename, formatted duration, analyzed BPM, and Camelot musical key. Displays "No Track Loaded" when empty.
+  * **On-Air & Safety Status:** When a deck has nonzero broadcast gain to Master, displays `ON AIR · LOCKED` (or `ON AIR · UNLOCKED`).
+  * **`PLAY / PAUSE` Button:** Toggles playback. Can also be triggered via `Space` when the studio view is focused. If the deck is playing on-air and Master Safety Lock is enabled, manual pause is rejected with nonmodal feedback (use `Shift + Space` for one-shot pause).
+  * **`STOP` Button (`■`):** Stops playback and rewinds the deck to the beginning. Intercepted by Master Safety Lock if on-air.
+  * **`CUE` Button:** Toggles Pre-Fader Listen (PFL) in DJ monitoring headphones (`isCueActive`). Completely isolated from Master FOH sound.
+  * **Deck Focus:** Click anywhere inside Deck A or Deck B panel to set focus for keyboard transport (`Space` / `Shift + Space`).
+* **Center Mixer Strip:**
+  * **Master Safety Lock Button:** One-click toggle to enable or disable persistent transport safety protection (default ON).
+  * **Crossfader Slider:** Smooth continuous horizontal crossfader routing between Deck A ($0.0$) and Deck B ($1.0$).
+  * **`TALKOVER` Button:** Toggles Master Talkover ducking (-16.5 dB attenuation + vocal pocket EQ, also bound to `T` hotkey).
+* **Backend-Only DSP Architecture (Under the Hood):**
+  * The CoreAudio audio graph architecture implements real-time 3-band isolator EQs (Low Shelf 250 Hz, Mid 1200 Hz, High Shelf 3500 Hz), dual-pole resonant sweep filters (LPF/HPF), and AVAudioUnitTimePitch stretching within the backend audio pipeline (`DeckAudioGraph`).
+  * In the shipped UI shell, these DSP capabilities are automated via transition macros and audio graph processing rather than manual on-screen channel-strip knobs or tempo faders.
+
+### 3.5 Interactive Canvas Waveforms & Cue Editing
+PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) directly below the deck studio, bound to the currently selected track in the library or active deck model, providing full 60 FPS multi-band timeline visualization and cue editing:
+* **Frequency Band Colors:**
+  * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Kick drums, basslines, 808 subs.
+  * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, pianos, guitars.
+  * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, acoustic presence.
+* **The Four Ordered Cue Markers (Metadata & Transition Planning):**
+  1. `startTrimCue` (Yellow Handle): Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero. Set to current playhead via `I` key.
+  2. `vocalEntryCue` (Green Handle): Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection. Set to current playhead via `V` key.
+  3. `mixOutCue` (Red Handle): Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot. Set to current playhead via `M` key.
+  4. `endTrimCue` (Purple Handle): Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`). Set to current playhead via `O` key.
+* **Waveform Keyboard Controls (Active when waveform editor is focused):**
+  * **`I`**: Snap `startTrimCue` to current playhead position.
+  * **`O`**: Snap `endTrimCue` to current playhead position.
+  * **`V`**: Snap `vocalEntryCue` to current playhead position.
+  * **`M`**: Snap `mixOutCue` to current playhead position.
+  * **`+` / `=`**: Zoom in timeline.
+  * **`-` / `_`**: Zoom out timeline.
+  * **`[` / `]`**: Scroll timeline left / right by 5 seconds.
+  * **`Left / Right Arrow`**: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
+* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles display and auditioning of track boundaries in the waveform editor without altering persisted cue values. It does **not** alter CoreAudio deck playback scheduling or stop playback on loaded decks. There is **no** keyboard shortcut for bypass; use the toolbar button.
+* **Human Override Protection:** Dragging cue handles or setting hotkeys flags fields as user-customized in `.pulsedeck_ai_cache.json`. Rescanning will **never** overwrite your custom cue adjustments.
+
+> [!IMPORTANT]
+> **Non-Destructive Cue Editing:** Moving cue handles or scrubbing the playhead in the waveform editor is strictly non-destructive. The cue editor playhead does **not** seek live playing Master audio.
+
+### 3.6 Automated Performance Transitions & One-Shot Auto-Pilot
+Performance transitions are configured and triggered via the **TRANSITION** controls strip in `DeckStudioView` (there are no keyboard hotkeys for transitions; use the on-screen controls):
+* **Macro Style Picker:** Selects the transition algorithm:
+  * **Bass Swap:** Aligns to downbeats, cuts outgoing low frequencies while cutting in incoming bass, and smoothly crossfades mid/high frequencies across the phrase.
+  * **Filter Echo Wash:** Sweeps outgoing high-pass filter upward into an echo delay wash, crossfades with an equal-power S-curve, and drops the incoming track on the 1.
+  * **Hard Cut:** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from outgoing to incoming deck.
+* **Phrase Bars Picker:** Selects transition duration: `8 BARS`, `16 BARS`, or `32 BARS`.
+* **`EXECUTE` Button:** Immediately launches the selected transition macro from the outgoing deck's current playhead position. Requires both decks to be loaded and one deck to be playing.
+* **Auto-Pilot One-Shot Cue-Armed Mix Engine (`ARM` / `DISARM` / `CANCEL` Buttons):**
+  * Auto-Pilot is an implemented **one-shot, cue-armed transition runner** for the two pre-loaded decks. It does **not** dynamically query an AI advisor or autonomously select transition styles at the cue point, nor does it perform unattended continuous multi-song mixing.
+  * **The One-Shot Auto-Pilot Workflow (One Transition per Arming):**
+    1. **Load Both Decks:** Ensure the outgoing track is loaded on one deck and the incoming track on the other.
+    2. **Start Outgoing Deck:** Begin playing the outgoing track to Master.
+    3. **Configure Transition:** Select the desired macro style (`Bass Swap`, `Filter Echo Wash`, or `Hard Cut`) and phrase length (`8`, `16`, or `32` bars) in the transition strip.
+    4. **Click `ARM`:** `AppState.buildTransitionRequest` packages the loaded tracks, macro style, and phrase bars into an armed transition request targeting the outgoing track's `mixOutCue`. The status updates to `AUTOPILOT ARMED AT MIX OUT`.
+    5. **Automated Trigger:** When the outgoing track's playhead crosses its `mixOutCue`, the system triggers the armed transition automatically.
+    6. **Transition Completion:** The incoming track takes over on-air playback, and Auto-Pilot disarms automatically.
+    7. **Disarm / Cancel:** To disarm before reaching the cue, click `DISARM`. To abort an active transition in progress and restore the outgoing deck, click `CANCEL`.
+
+### 3.7 Master Talkover Ducking (`T` Key)
+* Press `T` to make an announcement over the MC microphone.
+* **Linear 800ms Duck:** Smoothly attenuates Master FOH music **to** 15% linear amplitude (0.15 multiplier, ~-16.5 dB) over an 800ms linear ramp.
+* **Vocal Pocket EQ:** Carves a -4.0 dB parametric notch across 300 Hz to 3 kHz on the master bus, leaving the backing track subtly present while maximizing vocal clarity.
+* Press `T` again to restore full dancefloor volume over an 800ms linear ramp.
+* **SFX Bypass:** Master-only Soundboard drops bypass the ducking bus downstream, remaining full-volume and punchy during announcements.
+
+### 3.8 RAM-Preloaded Soundboard (`F1` through `F8` Keys)
+* Preloads up to 8 sound effects from `PulseDeck_Library/08_Soundboard_SFX` in alphabetical order directly into unified RAM.
+* **Zero-I/O Trigger Path:** Audio files are pre-decoded and converted to canonical 44.1 kHz, 32-bit Float, stereo buffers off the render path during startup. Triggering a pad performs zero disk I/O, zero decoding, and zero buffer allocations.
+* **Procedural Synthesized Fallbacks:** Missing, corrupt, unsupported, or oversized (>15s / 12MB) files safely substitute pre-synthesized musical procedural buffers (1 kHz stinger, 808 sub kick, noise snare, chime, rimshot, siren, laser zap, airhorn triad).
+* **Polyphonic & Choke-Self Retrigger:** Independent pads overlap polyphonically without cutting each other or deck playback off. Retriggering the same active pad cuts and restarts that pad monophonically (choke self) to enable stutter performance effects.
+* **Audio Routing:** Soundboard routes exclusively to Master FOH sound. Headphone Cue receives zero SFX signal.
+* **macOS Function Key Behavior:** On Apple keyboards, macOS defaults function keys to system controls (brightness, media). Trigger Soundboard pads by holding `Fn` (or Globe) while pressing `F1`–`F8`, or enable *"Use F1, F2, etc. keys as standard function keys"* in macOS System Settings > Keyboard > Keyboard Shortcuts > Function Keys.
 
 ---
 
-## 4. Planned Audio & DJ Controls (Phases 1–4 Preview)
+## 4. Secondary Projector Display & Event Visuals (Phase 5A)
 
-### 4.1 Dual Deck Signal Chain (Deck A & Deck B)
-Each deck features an independent, full-featured DJ channel strip:
-* **Transport:** Play, Pause, Cue, Seek, and playhead scrubbing.
-* **TimePitch & Key Lock:**
-  * Tempo adjustment slider ($\pm 8.0\%$ range, $0.92\text{--}1.08\times$ rate).
-  * Key Lock toggle holds original musical key pitch constant during tempo changes.
-* **3-Band Equalizer (Isolator):**
-  * **Low Shelf ($250\,\text{Hz}$):** Kill the kick/sub bass during mixes ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-  * **Mid Parametric ($1200\,\text{Hz}$):** Balance lead vocals and guitars ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-  * **High Shelf ($3500\,\text{Hz}$):** Control hi-hat and cymbal presence ($-24\,\text{dB}$ to $+6\,\text{dB}$).
-* **Dual-Pole Resonant Sweep Filter:**
-  * Turn counter-clockwise from center ($0.0$ to $-1.0$) for Low-Pass Filter sweep.
-  * Turn clockwise from center ($0.0$ to $+1.0$) for High-Pass Filter sweep.
-  * Resonance ($Q$) knob sharpens the sweep peak for dramatic builds.
+PulseDeck AI provides a dedicated secondary video presentation window designed for external HDMI video projectors, LED walls, or AirPlay displays:
 
-### 4.2 Headphone Cue Monitoring & Latency Alignment
-* **Pre-Fader Listen (PFL):** Press the `Cue` button on Deck A or Deck B to route audio pre-fader to your headphones while keeping the house output clean.
-* **Master/Cue Latency Offset Slider:**
-  * Adjusts timing between FOH PA and Headphone Cue from **$-300\,\text{ms}$** to **$+300\,\text{ms}$**.
-  * When using Bluetooth headphones, slide toward negative values to delay the house output until it snaps into synchronization with your headphones.
-
-### 4.3 Interactive Waveforms & The Four Bounded Cues (Phase 3)
-In Phase 3, PulseDeck AI renders high-contrast multi-band waveforms using SwiftUI Canvas:
-* **Waveform Color Coding:**
-  * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Bass drums, 808 subs, bassline riffs.
-  * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, piano, synths.
-  * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, acoustic air.
-
-```
-Waveform Overview:
-[  Intro Silence  |====== Intro Beat ======|=== Verse 1 (Vocals) ===|=== Outro ===| Trailing Silence ]
-                  ▲                         ▲                       ▲             ▲
-            startTrimCue              vocalEntryCue              mixOutCue    endTrimCue
-```
-
-#### The Four Ordered Cue Markers
-1. **`startTrimCue` (Yellow Handle):** Positioned where the first active musical beat drops. When loaded, the deck automatically jumps to this point, skipping vinyl crackle or spoken intros.
-2. **`vocalEntryCue` (Green Handle):** Marks the exact second lead vocals start. Used by Auto-Pilot and visual alerts to prevent overlapping vocal clashes.
-3. **`mixOutCue` (Red Handle):** The designated mix-out point where the outro transition should start.
-4. **`endTrimCue` (Purple Handle):** Trims trailing room silence or audience banter. Playback stops at this point.
-
-#### Setting and Adjusting Cues
-* Press `I` to set or snap the `startTrimCue` to the current playhead position.
-* Press `O` to set or snap the `mixOutCue` to the current playhead position.
-* Drag any cue handle on the waveform with your mouse.
-* **AI Trim Bypass Toggle:** Want to hear the original track without automated trim points? Flip the `AI Trim Bypass` switch. The cue points are preserved in the background and can be re-engaged instantly.
-* **Human Override Protection:** The moment you move a cue handle manually, PulseDeck AI flags that field as user-adjusted. Future automated scans will **never** overwrite your custom positions.
-
-### 4.4 Automated Performance Transitions (Phase 4)
-PulseDeck AI features three transition algorithms accessible via dedicated keyboard shortcuts or the Auto-Pilot engine:
-
-1. **Bass Swap (`B` Key):**
-   * *When to use:* Mixing between two house or dance tracks with similar tempos ($\le 6.0\%$ BPM difference).
-   * *What it does:* Waits for the downbeat (beat 1), instantly cuts the outgoing track's bass while engaging the incoming track's bass, and smoothly crossfades mid/high frequencies over 16 bars.
-2. **Filter Echo Wash (`W` Key):**
-   * *When to use:* Transitioning between completely different genres or tempos (e.g. from 128 BPM EDM into 95 BPM Hip-Hop).
-   * *What it does:* Sweeps the outgoing deck's high-pass filter upward into an echo wash, executes an equal-power S-curve crossfade, and drops the new track cleanly on the 1.
-3. **Hard Cut (`C` Key):**
-   * *When to use:* Sudden drops, rock singalongs, or surprise tracks.
-   * *What it does:* Snaps to the upcoming bar boundary and cuts instantaneously ($0\,\text{ms}$) from Deck A to Deck B.
-
-### 4.5 Performance Macros: Talkover & Soundboard (Phase 4)
-* **Master Talkover Ducking (`T` Key):**
-  * Need to make a wedding announcement or bridal party entrance? Press `T`.
-  * PulseDeck AI smoothly reduces the master music output **to** approximately 15% of its original linear amplitude (a ~-16.5 dB duck down to 0.15 linear gain) over an 800ms logarithmic curve, while carving a -4.0 dB parametric dip across 300 Hz to 3 kHz. This leaves the backing track subtly audible while providing crystal-clear vocal intelligibility for the MC microphone. Press `T` again to restore full dancefloor volume over 800ms.
-* **RAM-Preloaded Soundboard (`F1` through `F8` Keys):**
-  * Preloads up to 8 sound effects from `PulseDeck_Library/08_Soundboard_SFX` directly into unified RAM.
-  * Press any key from `F1` to `F8` or click the accessible pad buttons in the studio view for instant drops (air horns, stingers, risers, chimes).
-  * **Zero-I/O Triggering:** Audio assets are pre-decoded and pre-converted into canonical 44.1 kHz 32-bit Float buffers in RAM during library startup or root changes. Triggering a pad performs zero disk I/O, zero decoding, and zero buffer allocations.
-  * **Procedural Synthesized Fallback:** If an SFX audio file is missing, corrupt, unsupported, or exceeds bounds (>15s / 12MB), PulseDeck AI automatically substitutes a musical procedural fallback tone (1 kHz stinger pip, 808 sub kick, noise snare, chime, rimshot, siren, laser zap, airhorn triad) ahead of time, preventing dead air while honestly displaying fallback status in the UI.
-  * **Retrigger & Polyphony Semantics:** Independent pads overlap polyphonically without cutting each other or deck music off. Retriggering the same active pad executes a monophonic cut-and-restart (choke self) to enable stutter performance effects without runaway voice buildup.
-  * **Audio Routing & Isolation:** Soundboard SFX routes exclusively to Master FOH sound, downstream of deck crossfaders and vocal pocket EQ. Drops punch through at full volume even during talkover ducking, while Headphone Cue remains strictly isolated with zero SFX bleed.
-  * **macOS Function Key Behavior:** On Apple keyboards, macOS defaults function keys to system controls (brightness, Mission Control, media). Depending on your macOS configuration, trigger Soundboard pads by holding `Fn` (or Globe) while pressing `F1`–`F8`, or enable *"Use F1, F2, etc. keys as standard function keys"* in macOS System Settings > Keyboard > Keyboard Shortcuts > Function Keys. PulseDeck AI respects user system settings and never mutates OS configuration.
-
----
-
-## 5. Secondary Projector Display & Event Visuals (Phase 5A)
-
-PulseDeck AI includes a dedicated secondary video presentation window designed for external HDMI video projectors, LED walls, or AirPlay screens:
-
-### 5.1 Projector Modes (Keys `1` through `4`)
-* **Mode 1 (`Key 1`) — Dynamic Audio Spectrum:** Renders a 24-band FFT audio visualizer that pulses and dances in real time with the master dancefloor sound. Uses existing published output meter frames without audio real-time allocations, decaying cleanly to zero on silence without random noise.
-* **Mode 2 (`Key 2`) — Ken Burns Media Slideshow:** Smoothly pans and zooms through photos (JPG, PNG, HEIC, WEBP, TIFF) or muted looping videos (MP4, MOV, M4V) loaded from `PulseDeck_Library/09_Visual_Backgrounds_Media`. Video audio is strictly muted (`volume = 0.0`) preventing any Master/Cue leakage.
-* **Mode 3 (`Key 3`) — Now Playing & Event Title:** Displays an elegant title card with the currently playing song title, artist, BPM, musical key, and a customizable event header (e.g. *"Sarah & Michael's Wedding — October 14, 2026"*).
-* **Mode 4 (`Key 4`) — Blackout Screen:** Turns the projector display completely black for speeches, formal dinner toasts, or cake cuttings, leaving controls and audio completely uninterrupted in the DJ booth.
-
-### 5.2 Projector Controls & Window Management
-* **Open / Close Projector:** Press `Cmd + Shift + P` or choose **Projector > Open Projector Window**. PulseDeck AI automatically detects external HDMI/AirPlay displays and places the window on the external screen. If disconnected, it falls back safely to the primary display.
+### 4.1 Opening & Managing the Projector Window
+* **Open / Close Projector:** Press `Cmd + Shift + P` or choose **Projector > Open Projector Window**. PulseDeck AI automatically detects connected external displays via `NSScreen` and positions the window on the external screen. If disconnected, it falls back safely to the primary display.
 * **Toggle Fullscreen:** Press `Cmd + Ctrl + F` or choose **Projector > Toggle Fullscreen**.
-* **Configure Event Banner:** Choose **Projector > Configure Event Banner...** to open the DJ control sheet. Edit wedding or gala titles directly without displaying editing controls to the audience. Digit keys 1–4 are never stolen while typing in text fields.
+* **Display Disconnect Safety:** If an external HDMI cable is unplugged during a set, PulseDeck AI listens for `NSApplication.didChangeScreenParametersNotification` and repositions windows without interrupting audio playback or transport.
 
-### 5.3 Master Deck Safety Lock
-* When a deck is actively playing to the Master PA, its transport controls are locked.
-* Pressing `Space` (Play/Pause) or scrubbing the active master deck will not stop the music unless you hold `Shift + Space` or toggle the Safety Lock off in the toolbar. This eliminates accidental dancefloor dropouts.
+### 4.2 Projector Modes (Keys `1` through `4`)
+* **Mode 1 (`Key 1`) — Dynamic Audio Spectrum:** Renders a 24-band FFT audio visualizer responding dynamically to Master dancefloor sound. Consumes published output meter frames with zero audio real-time allocations, decaying smoothly on silence without random noise.
+* **Mode 2 (`Key 2`) — Ken Burns Media Slideshow & Video Loops:** Smoothly pans and zooms through photos (JPG, PNG, HEIC, WEBP, TIFF) or plays looping videos (MP4, MOV, M4V) from `PulseDeck_Library/09_Visual_Backgrounds_Media`. Features bounded discovery, thumbnail downsampling (48 MB / 20 photo RAM cache), and honest idle fallback.
+  * **Strictly Muted Videos:** Video playback is strictly muted (`isMuted = true`, `volume = 0.0`), guaranteeing zero audio leakage into Master PA or Headphone Cue.
+* **Mode 3 (`Key 3`) — Now Playing & Event Title:** Displays an elegant title card with active track title, artist, BPM, musical key, and a customizable event banner (e.g. *"Sarah & Michael's Wedding — October 14, 2026"*).
+* **Mode 4 (`Key 4`) — Blackout Screen:** Turns the projector display completely black (`Color.black`) for speeches, dinner toasts, or formal moments, leaving DJ booth controls and audio completely uninterrupted.
+
+### 4.3 Context-Sensitive Keyboard Routing
+* Keys 1–4 switch projector modes when the projector window is open.
+* **First-Responder Text Protection:** When editing event banner text or typing into any text field (`NSTextField`, `NSTextView`), digits 1–4 are passed directly to text input and are **never** stolen by the projector router.
+* Repeat suppression drops held-key repeats; rapid multi-route dispatches within 120 ms are safely debounced.
+
+---
+
+## 5. Master Deck Safety Lock
+
+To prevent accidental dancefloor silence during live sets:
+* **Default-On Protection:** Enabled by default upon app startup. Protects any loaded deck actively playing to a running Master engine with nonzero channel or crossfader gain.
+* **Control-Queue Graph Authority:** On-air status is evaluated synchronously on the audio control queue against real graph state, protecting both decks simultaneously during crossfades.
+* **Guarded Actions:** Manual pause, stop, track replacement/load, and live playhead seek commands are intercepted and rejected with nonmodal warning feedback while locked.
+* **One-Shot Override (`Shift + Space`):** Pressing `Shift + Space` allows an intentional one-shot pause of the focused on-air deck without clearing the persistent lock state.
+* **Automation & Cue Exceptions:** Automated transitions, headphone Cue audition, and non-destructive waveform cue editing are completely exempt from manual transport locking.
 
 ---
 
 ## 6. Master Keyboard Shortcuts Map
 
-| Key / Shortcut | Context / Scope | Action Description | Phase |
+| Key / Shortcut | Scope / Context | Action Description | Phase |
 | :--- | :--- | :--- | :---: |
-| **`Space`** | Active Deck | Toggle Play / Pause on selected deck | Phase 1 |
-| **`Shift + Space`** | Master Deck | Force Stop / Pause on on-air master deck (overrides safety lock) | Phase 1 |
-| **`A`** | System | Select Deck A as active focus deck | Phase 1 |
-| **`B`** | System | Select Deck B as active focus deck | Phase 1 |
-| **`Q`** | Deck A | Trigger Pre-Fader Cue (PFL) for Deck A | Phase 1 |
-| **`W`** | Deck B | Trigger Pre-Fader Cue (PFL) for Deck B | Phase 1 |
-| **`I`** | Waveform | Set `startTrimCue` to current playhead position | Phase 3 |
-| **`O`** | Waveform | Set `mixOutCue` to current playhead position | Phase 3 |
-| **`Y`** | Waveform | Toggle `aiTrimBypass` on active deck | Phase 3 |
-| **`Left / Right Arrow`**| Waveform / Audition | Nudge selected cue (waveform) / Step 1 beat (audition focused) | Phase 3 |
-| **`Shift + Left / Right`**| Waveform / Audition | Step 4 beats / 1 bar (audition focused, disabled for sentinels) | Phase 3 |
-| **`Space`** | Audition | Toggle preview Play / Pause (when audition bar focused) | Phase 3 |
-| **`B` (Transition Mode)**| Crossfader | Execute bar-aligned **Bass Swap Transition** | Phase 4 |
-| **`W` (Transition Mode)**| Crossfader | Execute **Filter Echo Wash Transition** | Phase 4 |
-| **`C`** | Crossfader | Arm and trigger bar-aligned **Hard Cut Transition** | Phase 4 |
-| **`Shift + A`** | Automation | Toggle **Auto-Pilot** automated mix engine | Phase 4 |
-| **`T`** | Master Bus | Toggle **Master Talkover Ducking** (reduces master to ~15% linear amplitude over 800ms + mid-dip) | Phase 4 |
-| **`F1` – `F8`** | Soundboard | Trigger RAM-preloaded sound effects (1 through 8, hold `Fn` if required by macOS function key settings) | Phase 4 |
-| **`1`** | Projector | Switch Projector to **Mode 1: Audio Spectrum Visualizer** | Phase 5 |
-| **`2`** | Projector | Switch Projector to **Mode 2: Ken Burns Media Slideshow** | Phase 5 |
-| **`3`** | Projector | Switch Projector to **Mode 3: Now Playing / Event Title** | Phase 5 |
-| **`4`** | Projector | Switch Projector to **Mode 4: Blackout / Idle Logo** | Phase 5 |
-| **`Cmd + R`** | Library | Rescan music library crates and refresh cache | Phase 0 |
+| **`Space`** | Studio Deck | Toggle Play / Pause on focused deck (guarded when on-air and locked) | Phase 1 / 5A |
+| **`Shift + Space`** | Studio Deck | One-shot Force Pause on focused on-air master deck (overrides safety lock) | Phase 5A |
+| **`Space`** | Audition Bar | Toggle preview Play / Pause (when audition bar is focused) | Phase 3B |
+| **`[|◀] / [▶|]`** (`Left / Right Arrow`) | Audition Bar | Step preview playhead 1 beat forward / backward (audition focused) | Phase 3B |
+| **`Shift + Left / Right Arrow`** | Audition Bar | Step preview playhead 4 beats / 1 bar forward / backward (disabled for sentinels) | Phase 3B |
+| **`I`** | Waveform | Snap `startTrimCue` to current waveform playhead position | Phase 3A |
+| **`O`** | Waveform | Snap `endTrimCue` to current waveform playhead position | Phase 3A |
+| **`V`** | Waveform | Snap `vocalEntryCue` to current waveform playhead position | Phase 3A |
+| **`M`** | Waveform | Snap `mixOutCue` to current waveform playhead position | Phase 3A |
+| **`+` / `=`** | Waveform | Zoom in waveform timeline | Phase 3A |
+| **`-` / `_`** | Waveform | Zoom out waveform timeline | Phase 3A |
+| **`[` / `]`** | Waveform | Scroll waveform timeline left / right by 5 seconds | Phase 3A |
+| **`Left / Right Arrow`** | Waveform | Nudge selected cue handle forward / backward by ±50ms | Phase 3A |
+| **`T`** | Master Bus | Toggle **Master Talkover Ducking** (800ms linear duck to 0.15 gain + mid dip) | Phase 4B |
+| **`F1` – `F8`** | Soundboard | Trigger RAM Soundboard pads 1–8 (hold `Fn`/Globe if macOS standard keys disabled) | Phase 4B |
+| **`1`** | Projector | Switch Projector to **Mode 1: Audio Spectrum Visualizer** | Phase 5A |
+| **`2`** | Projector | Switch Projector to **Mode 2: Ken Burns Media Slideshow** | Phase 5A |
+| **`3`** | Projector | Switch Projector to **Mode 3: Now Playing / Event Title** | Phase 5A |
+| **`4`** | Projector | Switch Projector to **Mode 4: True Blackout Screen** | Phase 5A |
+| **`Cmd + Shift + P`** | Window | Open / Close Secondary Projector Window | Phase 5A |
+| **`Cmd + Ctrl + F`** | Projector | Toggle Fullscreen on active Projector Window | Phase 5A |
+| **`Cmd + R`** | Library | Rescan music library crates and refresh cache asynchronously | Phase 0 |
+
+> [!NOTE]
+> **On-Screen Button Workflows:** Deck focus is selected by clicking on Deck A or Deck B panel. Headphone Pre-Fader Listen (PFL) is toggled via the on-screen **CUE** button on each deck. Transition macros and phrase lengths are selected via the **TRANSITION** pickers and launched via **EXECUTE**, **ARM**, or **CANCEL** buttons. Waveform AI Trim Bypass is toggled via the toolbar button. These operations do not have keyboard shortcut bindings.
 
 ---
 
 ## 7. AI DJ Advisor Setup & Google AI Studio Key Handling
 
-PulseDeck AI features a hybrid recommendation engine that suggests harmonious track transitions based on Camelot key compatibility, energy progression, and song structure.
+PulseDeck AI features a hybrid recommendation engine suggesting transitions based on Camelot key compatibility, energy progression, and song structure.
 
 ### 7.1 Cloud Advisor Configuration (Google Gemini 2.5 Flash)
-The cloud advisor defaults to Google's `gemini-2.5-flash` model. Model and HTTPS endpoint are configurable; the client does not silently substitute another model. Google currently documents restricted access for new projects, so access may require an existing eligible project. See [Gemini 2.5 Flash availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash).
-1. **Get an API Key:** Sign in to [Google AI Studio](https://aistudio.google.com/) and create a free or paid API key.
+The cloud advisor defaults to Google's `gemini-2.5-flash` model. Model and HTTPS endpoint are configurable; the client does not silently substitute another model.
+1. **Get an API Key:** Sign in to [Google AI Studio](https://aistudio.google.com/) and create an API key.
 2. **Configure Your Environment:** Set your API key in your terminal shell profile (`~/.zshrc`):
    ```bash
    export GEMINI_API_KEY="your-actual-api-key-here"
    ```
-3. **Security Guarantee:** PulseDeck AI **never** commits your API key to git repositories or stores it in `.pulsedeck_ai_cache.json`. The key is read from the configured process environment variable at runtime and sent only in Google's `x-goog-api-key` header, never in the URL.
+3. **Security Guarantee:** PulseDeck AI **never** commits your API key to git repositories or stores it in `.pulsedeck_ai_cache.json`. The key is read from the process environment variable at runtime and sent only in Google's `x-goog-api-key` header, never in URLs or log files.
 
 ### 7.2 Rate Limits & Provider Quota Disclaimer
 * **Rate Limit Ceiling:** PulseDeck AI strictly enforces **12 cloud HTTP attempts in any rolling 60 seconds**, including retries and concurrent callers.
-* **Automatic Backoff:** Transient network errors and retryable HTTP statuses use at most 3 retries. The client honors `Retry-After`, capped at 30 seconds, and bounds each request timeout.
-* **Local Recommendation Cache:** Valid recommendations use a bounded in-memory cache. No recommendation or API key is written to the analysis cache.
+* **Automatic Backoff:** Transient network errors use at most 3 retries, honoring `Retry-After` up to 30 seconds.
+* **Local In-Memory Cache:** Valid recommendations use a bounded in-memory cache. No cloud recommendation is written to the persistent file cache.
 
 > [!NOTE]
-> **API Availability & Free Tier Disclaimer:**  
-> Free tier quotas, model availability, and pricing terms are determined exclusively by Google AI Studio and may vary over time. Core playback and local analysis do **not** require cloud access. Advisor requests need a running local Ollama instance when Gemini is unavailable.
+> **API Availability Disclaimer:**  
+> Free tier quotas, model availability, and pricing terms are determined exclusively by Google AI Studio. Core playback and local analysis do **not** require cloud access.
 
 ### 7.3 Offline Local Advisor Fallback (Ollama)
 For venues with zero cellular or Wi-Fi coverage:
@@ -296,23 +300,22 @@ For venues with zero cellular or Wi-Fi coverage:
    ollama pull llama3
    ```
 3. Ensure the Ollama daemon is running at `http://localhost:11434`.
-4. If no Gemini API key is configured or a cloud request fails, PulseDeck AI tries the local Ollama daemon. If Ollama is unavailable, the advisor returns a bounded error; playback and offline analysis continue.
+4. If no Gemini API key is configured or a cloud request fails, PulseDeck AI tries the local Ollama daemon. If Ollama is unavailable, the advisor returns a bounded error; playback and offline analysis continue uninterrupted.
 
 ### 7.4 Offline Batch Library Analysis
-Install the optional dependencies and preview analysis first. Preview mode is the default and does not write audio or cache files:
+Preview analysis without writing files:
 ```bash
 python3 -m pip install -r requirements-analysis.txt
 python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --dry-run
 ```
-Write a validated schema v1 cache copy only with an explicit output path outside the library:
+To write a validated schema v1 cache copy, specify an explicit output path outside the library:
 ```bash
 python3 scripts/analyze_library.py --library-root PulseDeck_Library --cache PulseDeck_Library/.pulsedeck_ai_cache.json --output-cache /tmp/pulsedeck-analysis.json
 ```
-Manual overrides remain intact. Unknown tempo uses BPM/confidence `0`, no beat timestamps, and a positive `1.0` second interval sentinel; the analyzer does not use that sentinel to invent beats or cues. `vocalSegments` stays empty because this batch tool does not claim semantic vocal detection.
 
 ---
 
-## 8. DJ Library Organization & Media Management
+## 8. DJ Library Organization & Supported Media Formats
 
 ### 8.1 The 10 Standardized Crates
 PulseDeck AI organizes your library into 10 structured folders under `PulseDeck_Library/`. Keep folder names unchanged for seamless operation:
@@ -331,13 +334,13 @@ PulseDeck_Library/
 └── 09_Visual_Backgrounds_Media/    # High-resolution video loops and event background photos
 ```
 
-### 8.2 Supported Audio Formats
-PulseDeck AI supports all major uncompressed and compressed audio formats through CoreAudio:
-* Uncompressed / Lossless: `.wav`, `.aif`, `.aiff`, `.flac`, `.m4a` (ALAC)
-* Compressed: `.mp3`, `.aac`, `.ogg`, `.mp4`
+### 8.2 Supported Audio & Video Formats
+* **Audio:** `.wav`, `.aif`, `.aiff`, `.flac`, `.m4a` (ALAC/AAC), `.mp3`, `.aac`, `.ogg`, `.mp4`
+* **Projector Photos:** `.jpg`, `.jpeg`, `.png`, `.heic`, `.webp`, `.tiff`
+* **Projector Videos:** `.mp4`, `.mov`, `.m4v` (strictly muted playback)
 
 ### 8.3 Git Exclusions & Media Privacy
-Audio tracks in `PulseDeck_Library` are strictly excluded from version control via `.gitignore`. Your copyrighted music files and client wedding media will **never** be committed or published.
+Audio and video files in `PulseDeck_Library` are strictly excluded from version control via `.gitignore`. Copyrighted music and private client photos/videos are never committed or published.
 
 ---
 
@@ -347,17 +350,20 @@ Audio tracks in `PulseDeck_Library` are strictly excluded from version control v
 
 | Issue Encountered | Probable Cause | Actionable Resolution |
 | :--- | :--- | :--- |
-| **Audio out of sync between headphones and PA** | Variable wireless headphone latency | Adjust the Master/Cue Latency Offset slider to inject delay into the master output until cue clicks align with the room. |
+| **Audio out of sync between headphones and PA** | Variable wireless headphone latency | Adjust the Master/Cue Latency Offset slider in Output Routing to inject delay into the master output until cue clicks align with room sound. |
 | **Headphones sound tinny / low bandwidth** | App accessed `inputNode` or microphone | Verify you are running PulseDeck AI (which strictly disables `inputNode`). Check macOS Sound settings to ensure microphone input is set to Internal Mic, not Bluetooth headset. |
 | **New audio files not showing in Crate** | Filesystem cache not refreshed | Click the **[Rescan]** button in the top status header or press `Cmd + R`. |
 | **AI Advisor returns error / no suggestions** | Missing API key or offline venue | Verify `GEMINI_API_KEY` in terminal, or start local Ollama (`ollama serve`) on `localhost:11434`. |
-| **Cues reset to default positions** | Manual override flag was cleared | Ensure `manualOverrides.isManual = true` in the cache file. Manual edits made via `I` and `O` are automatically protected. |
+| **Cues reset to default positions** | Manual override flag was cleared | Ensure `manualOverrides.isManual = true` in cache file. Manual edits made via `I`/`O`/`V`/`M` hotkeys or handle dragging are automatically protected. |
+| **Soundboard pads do not trigger with F1–F8** | macOS Function Key system mapping | Hold `Fn` (or Globe) while pressing `F1`–`F8`, or enable standard function keys in macOS System Settings > Keyboard > Function Keys. |
+| **Projector window opens on laptop display** | External HDMI display not detected | Connect HDMI cable, verify display in macOS Displays settings, and press `Cmd + Shift + P` to reopen projector window. |
+| **Deck transport buttons do not respond** | Master Deck Safety Lock is engaged | If deck is on-air to Master, use `Shift + Space` to pause, or toggle Safety Lock off in mixer toolbar. |
 
 ### 9.2 The 15-Minute DJ Pre-Flight Checklist
 Before opening the room to guests:
 1. **Power & Hardware:** Connect MacBook Pro to MagSafe power. Connect USB DAC interface to PA system and verify signal lights.
-2. **Headphone Check:** Plug headphones into 3.5mm jack (or pair Bluetooth headphones). Run a test track in `00_Test_Tracks_Dev` and verify pre-fader cueing (`Q` key).
+2. **Headphone Check:** Plug headphones into 3.5mm jack (or pair Bluetooth headphones). Run a test track in `00_Test_Tracks_Dev` and verify pre-fader cueing (click the **CUE** button on the deck panel).
 3. **Latency Calibration:** If using Bluetooth headphones, adjust latency offset until cue clicks align with master output.
-4. **Projector Screen:** Connect HDMI cable to external projector. Press `Key 1` to confirm audio visualizer and `Key 3` to verify wedding couple's name card.
-5. **Soundboard Test:** Press `F1` to verify airhorn / entrance stinger volume.
-6. **Engage Safety Lock:** Verify Master Safety Lock is engaged to prevent accidental pauses during the event.
+4. **Projector Screen:** Connect HDMI cable to external projector. Press `Cmd + Shift + P`. Press `Key 1` to verify audio spectrum visualizer and `Key 3` to verify wedding couple's name card.
+5. **Soundboard Test:** Press `F1` (or `Fn + F1`) to verify stinger / airhorn volume through venue PA.
+6. **Engage Safety Lock:** Verify Master Safety Lock is engaged in the central mixer to prevent accidental pauses during the event.

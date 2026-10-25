@@ -7,13 +7,15 @@
 
 ## Overview
 
-PulseDeck AI is a professional, high-reliability DJ performance workstation designed specifically for live event, wedding, and mobile DJs on macOS. Built from the ground up to take full advantage of Apple Silicon unified memory architecture and CoreAudio real-time guarantees, PulseDeck AI bridges traditional hands-on dual-deck DJ performance with offline DSP analysis and hybrid artificial intelligence advising.
+PulseDeck AI is a professional, high-reliability DJ performance workstation designed specifically for live event, wedding, and mobile DJs on macOS. Built from the ground up to take full advantage of Apple Silicon unified memory architecture and CoreAudio real-time guarantees, PulseDeck AI bridges traditional hands-on dual-deck DJ performance with offline DSP analysis, automated performance transitions, RAM-preloaded soundboard SFX, secondary video projector visuals, and hybrid artificial intelligence advising.
 
 Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI adheres to strict real-time audio engineering principles:
 * **Dual Independent Output Engines:** Completely segregated CoreAudio output pipelines for Master Front-of-House (FOH) and Cue (Headphones) monitoring without aggregate device clutter.
 * **Strict Output-Only Guarantee:** Absolutely zero interaction with audio input hardware (`engine.inputNode`). Preserves high-fidelity Bluetooth A2DP audio codecs and eliminates the risk of feedback loops or OS microphone privacy interrupts.
 * **Deterministic Real-Time Safety:** Render callbacks execute free of heap allocations (`malloc`), locks, mutexes, Swift runtime actor hops, or Objective-C ARC retain/release cycles.
 * **Protected Human DJ Provenance:** High-precision automated DSP cue analysis that never clobbers manual user adjustments, backed by atomic file persistence.
+* **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), one-shot cue-armed Auto-Pilot, Master talkover ducking (`T`, 800ms linear ramp to 0.15 linear gain with vocal pocket EQ), and 8-pad zero-I/O RAM soundboard (`F1`–`F8`).
+* **Secondary Projector Visuals:** Dedicated presentation window (`Cmd + Shift + P`) offering 24-band FFT spectrum visualizer, Ken Burns photo slideshow and muted video loops, Now Playing card with event banner, and blackout screen.
 * **Hybrid Intelligent Advisor:** Offline-first vDSP feature extraction augmented with an optional, rate-limited Google Gemini (`gemini-2.5-flash`) cloud advisor or local Ollama (`localhost:11434`) model.
 
 ---
@@ -25,31 +27,23 @@ Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI
 | **Hardware Baseline** | MacBook Pro 14" / 16" (M1 Pro, 16GB Unified Memory) | Baseline development and benchmarking platform |
 | **Operating System** | macOS Sonoma 14.0 or newer | macOS 14+ required for Swift 6 structured concurrency |
 | **Language & Toolchain** | Swift 6.0 (`swift-tools-version: 6.0`) | Strict concurrency checks (`.swiftLanguageMode(.v6)`) |
-| **Frameworks** | AVFAudio, CoreAudio HAL, Accelerate (vDSP), SwiftUI | Native Apple frameworks only (zero third-party binary blobs) |
+| **Frameworks** | AVFAudio, CoreAudio HAL, Accelerate (vDSP), SwiftUI, AppKit | Native Apple frameworks only (zero third-party binary blobs) |
 | **Python Companion** | Python 3.10+; standard library for validation, optional `librosa`/`soundfile` for batch analysis | Analyzer dependencies live in `requirements-analysis.txt` |
 
 ---
 
-## Current Status: Phase 0 (Operational Foundation)
+## System Status & Delivered Capabilities
 
-PulseDeck AI follows a phased, verification-driven development lifecycle. It is critical to distinguish between **operational Phase 0 features shipping today** and **planned features specified for future phases**.
+PulseDeck AI is developed through a verification-driven lifecycle. The core performance engine, audio graphs, offline DSP, UI, transitions, soundboard, and projector visuals are fully implemented and verified on `main`:
 
-### Operational Today (Phase 0 Deliverables)
-* [x] **Complete Swift 6 SPM Project Structure:** Executable target `PulseDeckAI` and library target `PulseDeckCore` with zero compilation warnings under strict Swift 6 concurrency.
-* [x] **Native Dark-Themed GUI Shell:** High-contrast macOS DJ interface styled with high-visibility colors (Deck A Teal `#00E5FF`, Deck B Amber `#FF9100`, Master Emerald `#00E676`, Cue Purple `#D500F9`).
-* [x] **Hardware & Architecture Status Display:** Real-time visual validation panel verifying hardware baselines, audio thread rules, and cache contracts.
-* [x] **Crate & Library Scanner:** Automatic discovery and structural validation of all standard DJ crates in `PulseDeck_Library`, including dynamic track count enumeration, error detection, `.gitkeep` checks, and single in-flight rescan (`Cmd + R`).
-* [x] **Local Test Media Preservation:** Integration of real test MP3 files in `00_Test_Tracks_Dev` (media files remain strictly local and git-ignored).
-* [x] **Unified Cache Schema v1.0.0:** Production-grade JSON Schema specification (`docs/cache_schema_v1.json`), Swift Codable models (`CacheSchema.swift`), and Python companion classes (`scripts/pulsedeck_cache.py`) with 30 unit tests.
-* [x] **Atomic Persistence Service:** Crash-safe temporary-file serialization with synchronous hardware flush (`F_FULLFSYNC` on macOS / `fsync` on Linux) before atomic file replacement guarantees against cache corruption.
-* [x] **Codified Architectural Protocols:** Formal Swift protocol specifications for dual audio engines, deck signal processing graphs, latency compensation, and AI advisors.
-
-### Implementation Roadmap
-* [x] **Phase 1:** Output-only CoreAudio device handling, dual `AVAudioEngine` graphs, and lock-free SPSC metering; physical routing and Bluetooth timing still require hardware validation.
-* [x] **Phase 2:** Offline vDSP waveform/transient/BPM/silence analysis, schema-v1 cache persistence, optional Gemini/Ollama advice, and a dry-run librosa batch companion. Live providers remain unverified; no semantic vocal detection is claimed.
-* [ ] **Phase 3:** SwiftUI Canvas multi-band waveform visualizer, interactive colored cue handles (I/O keys), AI trim bypass, and cue scrubbing.
-* [ ] **Phase 4:** Automated transition engine (Bass Swap, Filter Echo Wash, Hard Cut), Auto-Pilot state machine, Master talkover ducking (`T`, reducing master music to ~15% linear amplitude over 800ms with mid dip), and RAM-preloaded soundboard (`F1`–`F8`).
-* [ ] **Phase 5:** Secondary projector display window (FFT visualizer, Ken Burns background media, Now Playing), external display management, and Master Deck safety locks.
+### Implemented & Verified Capabilities
+* [x] **Dual Independent CoreAudio Output Pipeline (Phase 1):** Segregated `masterAudioEngine` (FOH speakers) and `cueAudioEngine` (headphones) running output-only graphs, 3-band isolator EQ, dual-pole resonant sweep filters, and C11 lock-free SPSC output metering.
+* [x] **Offline DSP & Unified Cache Schema v1.0.0 (Phase 2):** Accelerate vDSP feature extraction, beat grid estimation, 4 bounded cue markers, Camelot wheel harmonic key compatibility matching on cached/override metadata, atomic file persistence (`.pulsedeck_ai_cache.json`), override preservation, and Gemini 2.5 Flash / Ollama hybrid advising.
+* [x] **Interactive Waveforms & Library Audition Engine (Phase 3):** 60 FPS multi-band SwiftUI Canvas waveforms with frequency-color mapping, 4 draggable cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, non-destructive cue playhead scrubbing, and dedicated headphone Cue preview player with beat-step stepping.
+* [x] **Performance Transitions, Auto-Pilot, Talkover & Soundboard (Phase 4):** Bar-aligned macro transitions (Bass Swap, Filter Echo Wash, Hard Cut) with on-screen Macro/Phrase pickers and `EXECUTE` button, one-shot cue-armed Auto-Pilot mix engine (`ARM` / `DISARM` / `CANCEL`), Master Talkover Ducking (`T`, 800ms linear ramp to 0.15 Master music level with -4 dB 300 Hz–3 kHz mid dip, SFX bypass), and 8-pad zero-I/O RAM Soundboard (`F1`–`F8`) with procedural synthesized fallbacks, choke-self retrigger, polyphonic overlap, and strict Master-only routing with Cue isolation.
+* [x] **Secondary Projector Presentation Window (Phase 5A):** Dedicated fullscreen-capable external window (`Cmd + Shift + P`) supporting 4 presentation modes on Keys 1–4 (24-band FFT visualizer, Ken Burns photo slideshow and muted video loops with 48 MB / 20 photo RAM cache and idle fallback, Now Playing & customizable event banner, and true blackout). Includes first-responder text editing protection, display disconnect fallback, and strictly muted videos (`volume = 0.0`).
+* [x] **Master Deck Safety Lock (Phase 5A):** Protects playing on-air decks on the audio control queue during playback and crossfades from accidental pauses, stops, seeks, or track loads. `Shift + Space` provides a one-shot pause override. Fully merged in PR #19.
+* [ ] **Final Documentation Polish (Phase 5B — In Progress):** Complete user manual, architectural specification, continuation tracking, and phase status.
 
 ---
 
@@ -68,20 +62,24 @@ graph TD
     end
 
     subgraph MasterPipeline["Master Engine (Device A: FOH)"]
-        MFader["Master Volume & Crossfader"]
+        MFader["Master Crossfader"]
+        MDuck["Talkover Ducking (T) & Pocket EQ"]
+        MSoundboard["Soundboard SFX (F1-F8, Master-Only)"]
         MDelay["Master Latency Delay Buffer"]
         MHAL["CoreAudio HAL Device A"]
         DA -->|Post-Fader| MFader
         DB -->|Post-Fader| MFader
-        MFader --> MDelay --> MHAL
+        MFader --> MDuck --> MSoundboard --> MDelay --> MHAL
     end
 
     subgraph CuePipeline["Cue Engine (Device B: Headphones)"]
         CueMixer["Pre-Fader Cue Router (PFL)"]
+        CuePreview["Library Cue Preview Player"]
         CDelay["Cue Latency Delay Buffer"]
         CHAL["CoreAudio HAL Device B"]
         DA -.->|Pre-Fader Cue Send| CueMixer
         DB -.->|Pre-Fader Cue Send| CueMixer
+        CuePreview -.->|Audition Only| CueMixer
         CueMixer --> CDelay --> CHAL
     end
 ```
@@ -93,7 +91,7 @@ graph TD
 To eliminate audio dropouts, glitches, and priority inversion:
 * **Render Callbacks:** Strictly forbid `malloc`, `free`, class instantiation, Objective-C/Swift ARC retains/releases, file I/O, network sockets, or OS locks (`os_unfair_lock`, `pthread_mutex`).
 * **Inter-Thread Communication:** Bounded Single-Producer Single-Consumer (SPSC) lock-free ring buffers and atomic variables transfer metering and playhead data from the audio thread to `@MainActor` UI components.
-* **Graph Topology Changes:** Reconfigurations (node connections, device reassignments) are strictly serialized on a private background audio queue.
+* **Graph Topology Changes:** Reconfigurations (node connections, device reassignments) are strictly serialized on a private background audio queue (`com.pulsedeck.audio.graph`).
 
 ### 3. Master / Cue Latency Compensation & Bluetooth Constraints
 Because physical latency cannot be negative, latency alignment within $[-300\,\text{ms}, +300\,\text{ms}]$ is achieved by delaying the faster audio path:
@@ -101,19 +99,74 @@ Because physical latency cannot be negative, latency alignment within $[-300\,\t
 * **Cue Lags Master ($offset < 0$):** We inject positive delay into the **Master path**.
 * **Bluetooth Audio Limitations:** Wireless Bluetooth audio inherently introduces variable, device-dependent buffer latency and independent hardware clock drift across different headphone chipsets, codecs, and RF environments. While PulseDeck AI provides calibration delay compensation and advisory indicators, physical sample-accurate cueing and scratch beatmatching require wired CoreAudio outputs (USB DAC or 3.5mm jack).
 
-### 4. Cache Schema & Human Provenance Protection
+### 4. Cache Schema & Human DJ Provenance Protection
 The library cache file (`PulseDeck_Library/.pulsedeck_ai_cache.json`) defines four strictly bounded cue timestamps:
 $$\text{0.0} \le \text{startTrimCue} \le \text{vocalEntryCue} \le \text{mixOutCue} \le \text{endTrimCue} \le \text{duration}$$
 
 When a human DJ manually adjusts cues, BPM, or musical key, the track entry records `manualOverrides.isManual = true` along with the list of overridden fields. Re-running automated DSP analysis or re-scanning the library will **never** overwrite manually adjusted fields.
 
-### 5. Hybrid Advisor Safety & Rate Limiting
-The AI DJ Advisor evaluates harmonic compatibility (Camelot wheel), energy progression, and transition bar counts:
+> [!NOTE]
+> **Analysis Limitations & Cached Key Matching:**
+> * `LocalTrackAnalyzer` and the Python companion script write `musicalKey: "Unknown"` and empty `vocalSegments: []`. They do not extract musical keys or lead-vocal onsets from raw audio. `HarmonicCompatibility` matches Camelot keys already present in cached metadata or manual overrides.
+> * `vocalEntryCue` is computed via a temporal span heuristic (`span * 0.12`).
+> * `startTrimCue` and `endTrimCue` are bounded metadata timestamps for transition planning. They do **not** automatically crop or stop ordinary deck playback in CoreAudio (`DeckAudioGraph.loadTrack` schedules from frame zero to `file.length`).
+
+### 5. Interactive Waveforms & Non-Destructive Cue Editing
+The multi-band Canvas waveform visually differentiates audio frequencies:
+* **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Bass drums, 808 subs, basslines.
+* **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Lead vocals, snares, guitars.
+* **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, air.
+* **Waveform Keybindings (Waveform Focused):**
+  * `I`: Snap `startTrimCue` to current playhead.
+  * `O`: Snap `endTrimCue` to current playhead.
+  * `V`: Snap `vocalEntryCue` to current playhead.
+  * `M`: Snap `mixOutCue` to current playhead.
+  * `+` / `=`: Zoom in timeline; `-` / `_`: Zoom out timeline.
+  * `[` / `]`: Scroll timeline left / right (5 seconds).
+  * `Left / Right Arrow`: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
+* **AI Trim Bypass:** Clickable toolbar button (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles display and auditioning of unedited track bounds in the waveform editor without losing cue markers. It does **not** alter CoreAudio deck playback scheduling or stop playback. Bypass is button-only with no keyboard shortcut.
+
+> [!NOTE]
+> **Non-Destructive Cue Playhead:** The cue editing playhead in the waveform editor is strictly isolated to cue point positioning and visual scrubbing. It **never** seeks or interrupts live Master audio playback.
+
+### 6. Automated Transitions & One-Shot Auto-Pilot
+* **Transition Macros & Phrase Picker:** Controlled via the on-screen transition strip in `DeckStudioView` (Macro picker + Phrase bars picker + `EXECUTE` button; no transition hotkeys):
+  * **Bass Swap:** Aligns to downbeats, cuts outgoing bass while swapping incoming bass, and smoothly crossfades mid/high frequencies over 8, 16, or 32 bars.
+  * **Filter Echo Wash:** Sweeps outgoing high-pass filter upward into an echo wash, executes an equal-power crossfade, and drops the incoming track on the 1.
+  * **Hard Cut:** Quantizes to the upcoming bar boundary and cuts instantaneously ($0.0\,\text{ms}$) from Deck A to Deck B.
+* **One-Shot Cue-Armed Auto-Pilot:** Arms the pre-configured transition request across both pre-loaded decks at the outgoing track's `mixOutCue` via on-screen `ARM` / `DISARM` / `CANCEL` buttons. Executes exactly one transition per arming (no dynamic advisor querying at the cue, no autonomous strategy selection, and no continuous multi-track mixing).
+
+### 7. Master Talkover Ducking (`T` Key)
+* **Linear 800ms Ramp:** Smoothly reduces Master FOH music output **to** 15% linear amplitude (0.15 multiplier, ~-16.5 dB) over an 800ms linear ramp.
+* **Vocal Pocket EQ:** Carves a -4.0 dB parametric notch across 300 Hz to 3 kHz for clean MC/DJ vocal intelligibility.
+* **SFX Bypass:** Master-only Soundboard drops bypass the ducking stage downstream, punching through at full volume during announcements.
+
+### 8. RAM-Preloaded Soundboard (`F1`–`F8` Keys)
+* **Zero-I/O Triggering:** Discovers up to 8 SFX assets from `PulseDeck_Library/08_Soundboard_SFX` in alphabetical order, pre-decoding and converting them into canonical 44.1 kHz, 32-bit Float, stereo RAM buffers during library startup.
+* **Procedural Synthesized Fallbacks:** Missing, corrupt, unsupported, or oversized (>15s / 12MB) files safely fall back to pre-synthesized musical procedural buffers (1 kHz stinger, 808 kick, noise snare, chime, rimshot, siren, laser, airhorn).
+* **Polyphonic & Choke-Self Retrigger:** Independent pads overlap polyphonically without cutting each other or deck music off. Retriggering the same pad cuts and restarts that pad monophonically (choke self).
+* **Master-Only & Cue Isolation:** Connected to `soundboardMixerNode` feeding `masterAudioEngine.subMixer`. Zero soundboard signal reaches Headphone Cue.
+* **macOS Function Keys:** On Apple keyboards, hold `Fn` (or Globe) while pressing `F1`–`F8`, or configure standard function keys in macOS System Settings.
+
+### 9. Secondary Projector Window (`Cmd + Shift + P`)
+* **Mode 1 (`Key 1`):** Real-time 24-band FFT audio spectrum visualizer consuming published output meter frames with smooth decay on silence.
+* **Mode 2 (`Key 2`):** Ken Burns photo slideshow and muted video loops from `PulseDeck_Library/09_Visual_Backgrounds_Media` with a 48 MB / 20 photo RAM cache, honest idle fallback, and strictly muted `AVPlayer` instances (`volume = 0.0`).
+* **Mode 3 (`Key 3`):** Now Playing track metadata card with active song title, artist, BPM, musical key, and customizable event banner.
+* **Mode 4 (`Key 4`):** True blackout canvas (`Color.black`) with zero light or controls leaking onto the audience display.
+* **Contextual Protection:** First-responder text editing guards ensure keys 1–4 are never stolen while typing event banner text. Automatic external display selection falls back safely on disconnect.
+
+### 10. Master Deck Safety Lock
+* **Default-On Live Protection:** Enabled by default upon startup. Protects any loaded deck actively broadcasting to Master with nonzero channel or crossfader gain.
+* **Control Queue Authority:** On-air membership is evaluated synchronously on the audio control queue, protecting both decks during crossfades.
+* **Guarded Actions:** Manual pause, stop, track load, and live playhead seek commands are intercepted and rejected while locked.
+* **One-Shot Override (`Shift + Space`):** Pressing `Shift + Space` allows a one-shot pause of the focused on-air deck without clearing persistent lock protection.
+* **Automation & Cue Exceptions:** Automated transitions, headphone Cue audition, and non-destructive waveform cue editing are completely exempt from manual transport locking. Fully merged in PR #19.
+
+### 11. Hybrid Advisor Safety & Rate Limiting
 * **Primary Provider:** Google Gemini API configured for `gemini-2.5-flash`.
-* **Rate Limiting:** A rolling window limits all cloud attempts, including retries, to 12 requests in any 60 seconds. Retry count and delay are bounded; `Retry-After` is honored up to 30 seconds.
-* **Local Fallback:** Optional local Ollama runs at `http://localhost:11434` by default. If it is unavailable, advisor requests fail with bounded errors; library analysis and playback remain offline.
-* **Privacy:** Gemini keys come from `GEMINI_API_KEY` or the configured environment variable and travel only in the `x-goog-api-key` header. Keys never enter URLs, logs, repository, or cache files.
-* **Model availability:** `gemini-2.5-flash` remains the default model ID. Google currently limits new-project access; endpoint and model are configurable. See [Google model availability](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash).
+* **Rate Limiting:** A rolling window limits cloud attempts to 12 requests in any 60 seconds with bounded exponential backoff.
+* **Local Fallback:** Optional local Ollama runs at `http://localhost:11434` for offline venues.
+* **Privacy:** API keys are read from `GEMINI_API_KEY` and transmitted exclusively via the `x-goog-api-key` header, never stored in cache files or logs.
 
 ---
 
@@ -126,38 +179,73 @@ pulsedeckai/
 ├── docs/
 │   ├── TECHNICAL_ARCHITECTURE.md             # Deep architectural specification (Phases 0-5)
 │   ├── USER_MANUAL.md                        # Event DJ operating manual, setup, keyboard map
+│   ├── PHASE_STATUS.md                       # Phase status and verification matrix
 │   └── cache_schema_v1.json                  # JSON Schema (Draft 2020-12) for library cache
 ├── scripts/
-│   ├── analyze_library.py                    # Offline librosa batch estimates; dry run by default
-│   └── pulsedeck_cache.py                    # Python companion cache validator & dataclasses
+│   ├── analyze_library.py                    # Offline librosa batch estimates (dry run by default)
+│   ├── pulsedeck_cache.py                    # Python companion cache validator & dataclasses
+│   └── tests/                                # Python unit test suite (40 tests)
 ├── Sources/
+│   ├── PulseDeckAtomics/                     # C11 atomic primitives & lock-free SPSC ring buffers
+│   │   ├── include/PulseDeckAtomics.h
+│   │   └── PulseDeckAtomics.c
 │   ├── PulseDeckCore/                        # Headless DJ Engine Core Library
 │   │   ├── PulseDeckCore.swift               # Constants, versions, standard crate definitions
 │   │   ├── Models/
 │   │   │   ├── AudioContracts.swift          # Protocols & models for dual engines, EQ, latency
 │   │   │   ├── CacheSchema.swift             # CueMarkers, TrackCacheEntry, PulseDeckLibraryCache
+│   │   │   ├── HarmonicCompatibility.swift    # Camelot wheel harmonic key matching
 │   │   │   ├── LibraryModels.swift           # Crate and scan summary data structures
 │   │   │   └── AIAdvisorContracts.swift      # Gemini config, Ollama fallback, advisor protocols
-│   │   └── Services/
-│   │       ├── CachePersistence.swift       # Atomic JSON read/write & override preservation
-│   │       └── LibraryScanner.swift          # Filesystem crate discovery and audio file finder
+│   │   ├── Services/
+│   │   │   ├── AudioEngineCoordinator.swift  # Master/Cue engine lifecycle coordinator
+│   │   │   ├── OutputAudioEngine.swift       # Segregated CoreAudio output engine
+│   │   │   ├── DeckAudioGraph.swift          # Deck audio graph pipeline (TimePitch, EQ, Filter)
+│   │   │   ├── CoreAudioHardwareInterface.swift # CoreAudio HAL device routing
+│   │   │   ├── AudioMeteringService.swift    # Lock-free SPSC vDSP output metering
+│   │   │   ├── CuePreviewPlayer.swift        # Library headphone audition player
+│   │   │   ├── TalkoverController.swift      # Master-only talkover ducking & vocal pocket EQ
+│   │   │   ├── SoundboardController.swift    # 8-pad RAM soundboard & procedural SFX
+│   │   │   ├── CachePersistence.swift       # Atomic JSON read/write & override preservation
+│   │   │   ├── LibraryScanner.swift          # Filesystem crate discovery
+│   │   │   ├── HybridAIAdvisorService.swift  # Gemini / Ollama hybrid advisor
+│   │   │   └── TransitionExecutionService.swift # Real-time transition execution
+│   │   └── Transitions/
+│   │       ├── TransitionPlanner.swift       # Transition strategy selector
+│   │       ├── TransitionStateMachine.swift  # Downbeat/bar quantized transition state machine
+│   │       └── TransitionTypes.swift         # Bass Swap, Filter Echo Wash, Hard Cut
 │   └── PulseDeckAI/                          # SwiftUI Application Executable
 │       ├── PulseDeckApp.swift                # App entrypoint, window sizing, MainActor state
+│       ├── Models/
+│       │   └── MasterSafetyLock.swift        # Master safety lock state & eligibility models
 │       ├── ViewModels/
-│       │   └── AppState.swift                # Published application state and scanning triggers
-│       └── UI/
-│           ├── Theme.swift                   # High-contrast DJ color palette & styling
-│           ├── ContentView.swift             # Root layout container
-│           ├── StatusHeaderView.swift        # App branding, specs, and status ribbon
-│           ├── LibraryBrowserView.swift      # Crates browser, track counts, track inspection
-│           └── ArchitectureStatusView.swift  # Phase 0 architectural contract verification cards
+│       │   ├── AppState.swift                # Published application state & audio bridge
+│       │   └── WaveformEditorModel.swift     # Waveform zoom, pan, and cue marker editing
+│       ├── UI/
+│       │   ├── Theme.swift                   # High-contrast DJ color palette & styling
+│       │   ├── ContentView.swift             # Root layout container
+│       │   ├── StatusHeaderView.swift        # App branding, specs, and status ribbon
+│       │   ├── LibraryBrowserView.swift      # Crates browser, track counts, Cue audition bar
+│       │   ├── DeckStudioView.swift          # Dual-deck DJ controls, mixer, soundboard grid
+│       │   ├── WaveformEditorView.swift      # Multi-band Canvas waveform & cue handles
+│       │   ├── OutputRoutingView.swift       # CoreAudio device selection & latency calibration
+│       │   ├── AudioMeterStatusView.swift    # Master & Cue output dB meters
+│       │   ├── MasterSafetyLockKeyboardRouter.swift # Shift+Space override router
+│       │   └── SoundboardKeyboardRouter.swift # F1-F8 hotkey router with repeat suppression
+│       └── Projector/                        # Secondary Video Projector Module
+│           ├── ProjectorWindowController.swift # Multi-display lifecycle controller
+│           ├── ProjectorWindowView.swift     # Presentation canvas root
+│           ├── ProjectorViewModel.swift      # Projector presentation state
+│           ├── ProjectorSpectrumView.swift   # Mode 1: 24-band FFT spectrum visualizer
+│           ├── ProjectorSlideshowView.swift  # Mode 2: Ken Burns slideshow & muted video loops
+│           ├── ProjectorNowPlayingView.swift  # Mode 3: Now Playing track card & event banner
+│           ├── ProjectorBlackoutView.swift    # Mode 4: True blackout screen
+│           ├── ProjectorBannerEditorView.swift # DJ control sheet for event banner editing
+│           └── ProjectorKeyboardRouter.swift # Window-scoped Keys 1-4 routing with text guard
 ├── Tests/
-│   └── PulseDeckCoreTests/                   # Swift Testing / XCTest test suite
-│       ├── AudioContractsTests.swift         # Latency math, EQ parameters, filter tests
-│       ├── CacheSchemaTests.swift            # Cue ordering, atomic save, override protection tests
-│       └── LibraryScannerTests.swift         # Crate discovery and media extension tests
+│   └── PulseDeckCoreTests/                   # Swift Testing / XCTest test suite (329 tests)
 └── PulseDeck_Library/                        # Standard DJ crate hierarchy (Media git-ignored)
-    ├── .pulsedeck_ai_cache.json              # Versioned audio analysis cache (Phase 2+)
+    ├── .pulsedeck_ai_cache.json              # Versioned audio analysis cache
     ├── 00_Test_Tracks_Dev/                   # Verified test audio files (7 songs, MP3)
     ├── 01_Warmup_Chill_Lounge/               # .gitkeep
     ├── 02_Ceremony_Slow_Romantic/            # .gitkeep
@@ -166,39 +254,45 @@ pulsedeckai/
     ├── 05_MainStage_Dance_120_128BPM/        # .gitkeep
     ├── 06_2000s_Millennium_Hits/             # .gitkeep
     ├── 07_Rock_PopPunk_LateNight/            # .gitkeep
-    ├── 08_Soundboard_SFX/                    # .gitkeep
-    └── 09_Visual_Backgrounds_Media/          # .gitkeep
+    ├── 08_Soundboard_SFX/                    # Preloaded SFX audio assets (.gitkeep)
+    └── 09_Visual_Backgrounds_Media/          # Background photos & video loops (.gitkeep)
 ```
 
 ---
 
-## Building and Running (Phase 0)
+## Building and Running
 
 ### 1. Compile the Swift Package
 ```bash
-# Verify build across library and executable
+# Verify build across library and executable with Swift 6 concurrency
 swift build
 ```
 
 ### 2. Execute the Test Suite
 ```bash
-# Run unit tests validating audio contracts and cache schemas
+# Run 329 Swift unit & integration tests
 swift test
 ```
 
-### 3. Launch the PulseDeck AI Application
+### 3. Run Python Companion Tests
 ```bash
-# Run the SwiftUI operational foundation app
+# Run 40 Python companion unit tests
+python3 -m unittest discover -s scripts/tests -q
+```
+
+### 4. Launch PulseDeck AI Application
+```bash
+# Launch the full SwiftUI performance application
 swift run PulseDeckAI
 ```
 
-### 4. Validate the Library Cache with Python Companion
+### 5. Validate the Library Cache with Python Companion
 ```bash
 # Verify the Python companion script against the library cache
 python3 scripts/pulsedeck_cache.py PulseDeck_Library/.pulsedeck_ai_cache.json
 ```
 
-### 5. Run Offline Batch Estimates Safely
+### 6. Run Offline Batch Estimates Safely
 Install optional analyzer dependencies, then preview estimates without writing files:
 ```bash
 python3 -m pip install -r requirements-analysis.txt
@@ -226,24 +320,29 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 | `[09]` | `09_Visual_Backgrounds_Media` | High-res video loops and photos for external projector |
 
 > [!NOTE]
-> All audio tracks (`.mp3`, `.wav`, `.flac`, `.m4a`, etc.) within `PulseDeck_Library` are strictly excluded from git tracking via `.gitignore`. The folder structure is preserved across clones via `.gitkeep` files.
+> All audio and video media files within `PulseDeck_Library` are strictly excluded from git tracking via `.gitignore`. The folder structure is preserved across clones via `.gitkeep` files.
 
 ---
 
-## Phase Roadmap
+## Phase Roadmap & Verification Matrix
 
-| Phase | Milestone Name | Scope & Core Deliverables | Status |
+| Phase | Milestone Name | Scope & Core Deliverables | Status & Verification |
 | :---: | :--- | :--- | :---: |
-| **0** | **Operational Foundation & Documentation** | Swift 6 SPM workspace, SwiftUI dark GUI, library scanner, cache schema v1, architectural protocols, comprehensive docs | **COMPLETE** |
-| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine` startup, 3-band EQ, resonant filter, lock-free SPSC metering | **Implemented; hardware validation pending** |
-| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP analysis, beat grid estimation, optional Gemini/Ollama advice, validated cache and batch companion | **Implemented; live-provider validation pending** |
-| **3** | **Waveforms, Cues & Interactive Browser** | Multi-band SwiftUI Canvas waveforms, 4 bounded cue handles, keyboard cueing (`I`/`O`), AI trim bypass, cue scrubbing | *Planned* |
-| **4** | **Transitions, Auto-Pilot & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot engine, Talkover ducking (`T`, reducing master to ~15% linear level), RAM soundboard (`F1`–`F8`) | *Planned* |
-| **5** | **Projector Screen & Final Polish** | Secondary external presentation window (FFT visualizer, Ken Burns media, Now Playing), master safety locks | *Planned* |
+| **0** | **Operational Foundation & Docs** | Swift 6 SPM workspace, SwiftUI dark GUI, library scanner, cache schema v1, architectural protocols | **Merged** (`swift build`, `swift test`) |
+| **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine`, 3-band EQ, resonant filter, lock-free SPSC metering | **Merged** (PR #4, PR #6; offline graph & ring buffer tests) |
+| **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP analysis, beat grid estimation, optional Gemini/Ollama advice, validated cache & batch companion | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`) |
+| **3** | **Waveforms, Cues & Audition** | Multi-band Canvas waveforms, 4 bounded cue handles, `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, headphone Cue audition player | **Merged** (PR #9, PR #13, PR #14; waveform render & audition tests) |
+| **4** | **Transitions, Talkover & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot, Talkover ducking (`T`, 800ms linear ramp to 0.15 gain), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing & SFX RAM tests) |
+| **5A** | **Projector Display & Safety Locks** | Secondary presentation window (`Cmd + Shift + P`, Modes 1–4, Keys 1–4), Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |
+| **5B** | **Final Documentation & Product Polish** | Complete Event DJ User Manual, Technical Architecture, Phase Status, and Continuation tracking | **In Progress** (Phase 5B documentation PR) |
+
+> [!NOTE]
+> **Hardware Verification Scope:** Automated CI tests verify CoreAudio graphs, PCM math, vDSP analysis, transition curves, RAM soundboard preloading, and secondary window event routing offline. Physical output audio devices, HDMI display scaling, Bluetooth latency/clock drift, live cloud provider endpoints, and physical pointer automation remain unverified.
 
 ---
 
 ## Documentation Links
 
 * [**Technical Architecture Specification**](docs/TECHNICAL_ARCHITECTURE.md): Deep technical breakdown of dual-engine audio graphs, real-time thread safety, latency alignment, cache serialization, and transition contracts.
-* [**Event DJ User Manual**](docs/USER_MANUAL.md): Step-by-step operational guide for live performance, hardware setups, keyboard shortcuts, AI Studio API configuration, and troubleshooting.
+* [**Event DJ User Manual**](docs/USER_MANUAL.md): Comprehensive step-by-step operational guide for live performance, hardware setups, keyboard shortcuts, AI Studio API configuration, and troubleshooting.
+* [**Phase Status & Verification History**](docs/PHASE_STATUS.md): Historical milestone tracking, PR merge proofs, CI runs, and review records.

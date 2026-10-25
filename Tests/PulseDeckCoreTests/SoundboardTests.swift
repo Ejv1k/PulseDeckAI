@@ -611,4 +611,72 @@ final class SoundboardTests: XCTestCase {
             XCTAssertGreaterThan(shortMaxAmp, 0.3, "Short converted asset must retain audible PCM")
         }
     }
+
+    // MARK: - 11. Coordinator Teardown & Rescan Asset Reload
+
+    @MainActor
+    func testAppStateDeallocationReleasesCoordinatorAndSoundboard() throws {
+        let tempDir = try createTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        weak var weakCoordinator: AudioEngineCoordinator?
+        weak var weakAppState: AppState?
+
+        let createBlock: () -> Void = {
+            let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            weakCoordinator = coordinator
+            let appState = AppState(
+                libraryRootURL: tempDir,
+                waveformEditorModel: WaveformEditorModel(libraryRootURL: tempDir),
+                audioCoordinator: coordinator,
+                startCoordinator: false
+            )
+            weakAppState = appState
+            XCTAssertNotNil(weakAppState)
+            XCTAssertNotNil(weakCoordinator)
+        }
+        createBlock()
+
+        XCTAssertNil(weakAppState, "AppState must deallocate without retain cycle")
+        XCTAssertNil(weakCoordinator, "AudioEngineCoordinator must deallocate when AppState is released")
+    }
+
+    @MainActor
+    func testRescanReloadsSoundboardAssetsAddedAfterStartup() throws {
+        let tempDir = try createTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sfxDir = tempDir.appendingPathComponent("08_Soundboard_SFX")
+        try FileManager.default.createDirectory(at: sfxDir, withIntermediateDirectories: true)
+
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let appState = AppState(
+            libraryRootURL: tempDir,
+            waveformEditorModel: WaveformEditorModel(libraryRootURL: tempDir),
+            audioCoordinator: coordinator,
+            startCoordinator: false
+        )
+
+        // Initially no assets exist; pad 0 is procedural fallback
+        XCTAssertTrue(appState.soundboardPads[0].isFallback)
+
+        // Add 01_Airhorn.wav after startup
+        _ = try createSineWavFile(in: sfxDir, filename: "01_Airhorn.wav", durationSeconds: 0.2)
+
+        // Rescan library
+        let expectation = expectation(description: "Rescan reloads soundboard asset")
+        coordinator.soundboardController.onPadsChanged = { snapshots in
+            if !snapshots[0].isFallback {
+                expectation.fulfill()
+            }
+        }
+
+        appState.refreshLibrary()
+        wait(for: [expectation], timeout: 5.0)
+        coordinator.soundboardController.onPadsChanged = nil
+
+        // Verify pad 0 is now ready with the new file
+        XCTAssertFalse(coordinator.soundboardController.padSnapshots[0].isFallback)
+        XCTAssertEqual(coordinator.soundboardController.padSnapshots[0].title, "01_Airhorn")
+    }
 }

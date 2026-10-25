@@ -274,7 +274,7 @@ public final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.soundboardPads = pads
-                self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
+                self.soundboardTotalRAMBytes = self.audioCoordinator?.soundboardController.totalRAMBytes ?? 0
             }
         }
         self.soundboardPads = coordinator.soundboardController.padSnapshots
@@ -345,6 +345,7 @@ public final class AppState: ObservableObject {
                     self.statusMessage = "Library Error: \(error)"
                 } else {
                     self.statusMessage = "Library Verified: \(summary.totalCrates) Crates, \(summary.totalAudioTracks) Tracks"
+                    self.preloadSoundboard()
                 }
             }
         }

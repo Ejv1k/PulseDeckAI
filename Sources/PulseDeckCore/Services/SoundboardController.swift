@@ -477,8 +477,11 @@ public final class SoundboardController: @unchecked Sendable {
             // Stop any in-flight playback on this pad to restart deterministically
             player.stop()
 
-            // Schedule buffer from RAM
-            player.scheduleBuffer(bufferToPlay, at: nil, options: []) { [weak self] in
+            let isManual = self.masterEngine?.rawEngine.isInManualRenderingMode ?? false
+            let callbackType: AVAudioPlayerNodeCompletionCallbackType = isManual ? .dataRendered : .dataPlayedBack
+
+            // Schedule buffer from RAM with explicit playback completion tracking
+            player.scheduleBuffer(bufferToPlay, at: nil, options: [], completionCallbackType: callbackType) { [weak self] _ in
                 guard let self = self else { return }
                 DispatchQueue.global().async {
                     self.executeOnControlQueue {

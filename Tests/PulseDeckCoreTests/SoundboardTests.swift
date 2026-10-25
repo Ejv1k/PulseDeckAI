@@ -679,4 +679,39 @@ final class SoundboardTests: XCTestCase {
         XCTAssertFalse(coordinator.soundboardController.padSnapshots[0].isFallback)
         XCTAssertEqual(coordinator.soundboardController.padSnapshots[0].title, "01_Airhorn")
     }
+
+    func testPadPlaybackIndicatorRemainsActiveThroughPlaybackAndClearsAtCompletion() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        try coordinator.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.start()
+        defer { coordinator.stop() }
+
+        let soundboard = coordinator.soundboardController
+
+        // Procedural pad 0 (Pip) is 0.2s = 8820 frames at 44.1kHz
+        soundboard.triggerPad(index: 0)
+        XCTAssertTrue(soundboard.padSnapshots[0].isPlaying, "Pad indicator must be active immediately after trigger")
+
+        // Render first 4096 frames (less than 8820 frames total)
+        _ = try render(coordinator.masterAudioEngine.rawEngine, frames: 4096)
+        XCTAssertTrue(soundboard.padSnapshots[0].isPlaying, "Pad indicator must remain active while buffer is still playing")
+
+        // Expect completion callback when remaining frames are rendered
+        let completionExpectation = expectation(description: "Playback completion clears indicator")
+        soundboard.onPadsChanged = { snapshots in
+            if !snapshots[0].isPlaying {
+                completionExpectation.fulfill()
+            }
+        }
+
+        // Render next 4096 frames + 2048 frames to exceed 8820 frames
+        _ = try render(coordinator.masterAudioEngine.rawEngine, frames: 4096)
+        _ = try render(coordinator.masterAudioEngine.rawEngine, frames: 2048)
+
+        wait(for: [completionExpectation], timeout: 2.0)
+        soundboard.onPadsChanged = nil
+
+        XCTAssertFalse(soundboard.padSnapshots[0].isPlaying, "Pad indicator must clear once playback has completely finished")
+    }
 }

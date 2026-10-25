@@ -1,12 +1,16 @@
 # PulseDeck AI continuation
 
-Updated: 2026-10-24
+Updated: 2026-10-25
 
 ## Project state
 
-Current merged `main` is `5a639de99b6ffc00ebeddd6fcf2eef77cf896526`. PR #16 merged at `2026-10-24T21:38:46Z` via normal AO squash (parent `2d428d22c1f0ef3f54c271391589d35b605b859a`). Its merge tree `cf4e6e096349ad33f8b61098f7c453087c2325e1` exactly matches approved PR head `93a0ae78c91df4d805edb36dc4efadbb15080e2c`. PR CI `40128488045` and post-merge main push CI `40135135430` both completed **SUCCESS** with 270 Swift and 40 Python tests. Native independent Sol audit `657f3d2e-cdae-4e70-b713-b575be1076d7` completed **APPROVED / up_to_date**; provider review `5639788733` commented internal approval, and both review threads were resolved.
+Current merged `main` is `a8095ca64e09c5ba78dc17fff26e76c320e2b430`. PR #17 merged at `2026-10-25T01:49:21Z` via normal AO squash (parent `5a639de99b6ffc00ebeddd6fcf2eef77cf896526`, merge tree `5a590278a041c69e581819c59f213178f2638024` exactly matching approved PR head `eb37e03b915eadb208ac8b8988c31746824da1cf` tree). PR CI `40149873229` and post-merge main push CI `40152111078` both completed **SUCCESS** with 283 Swift and 40 Python tests. Native independent Sol audit `d6879f3c-e2e6-45c6-b0f0-da6d92137b61` completed **APPROVED / up_to_date**; provider review `5640912647` commented internal approval, and all four review threads were resolved. Prior native Grok attempt failed with pre-model failure and valid CLI 900s timeout with no verdict; coordinator authorized fallback to native Sol/high.
 
-Phase 4B is now fully implemented with the addition of the RAM-preloaded Soundboard slice on isolated branch `ao/unattended-caveman-mode-17/root` (worker `pulsedeckai-82`, coordinator `pulsedeckai-77`). See [phase status](docs/PHASE_STATUS.md) and [user manual](docs/USER_MANUAL.md).
+Phase 4B is now fully merged to `main`.
+
+Phase 5A remains in progress. Projector PR #18 is under review; Master Safety Lock is an independent parallel slice:
+1. **Worker `pulsedeckai-84` (PR #18 continuation, coordinator `pulsedeckai-77`)**: Owns **Projector Window & Visuals**, plus `AudioMeterStatusView.swift` and the UI snapshot distributor required for shared metering. Repairs start from published head `bcd983507acdf7b6cecfc10d3386cfc442e3a59b` on isolated branch `ao/projector-fixes/repair-six`; fast-forward publication targets the existing PR source `ao/unattended-caveman-mode-18/root`. Former worker83's worktree and unverified drafts remain preserved.
+2. **Worker `pulsedeckai-80` (branch `ao/pr15-fixes/root`, coordinator `pulsedeckai-77`)**: Concurrently and independently owns **Master Safety Lock** (`AppState.swift`, `DeckStudioView.swift`, and safety lock files/tests). Master Safety Lock is tracked separately in PR #19 and remains in progress; it is not merged or included in PR #18.
 
 Relevant merged work:
 
@@ -17,62 +21,76 @@ Relevant merged work:
 - [PR #14](https://github.com/Ejv1k/PulseDeckAI/pull/14): Phase 3B Block 2 library cue preview and audition engine, merged at `ec582558c6a0ffd9a3ddfb3b4b943ca28ec43b43`.
 - [PR #15](https://github.com/Ejv1k/PulseDeckAI/pull/15): Phase 4A transition studio controls and AutoPilot integration, merged at `2d428d22c1f0ef3f54c271391589d35b605b859a`.
 - [PR #16](https://github.com/Ejv1k/PulseDeckAI/pull/16): Phase 4B Master-only talkover ducking and vocal pocket EQ, merged at `5a639de99b6ffc00ebeddd6fcf2eef77cf896526`.
+- [PR #17](https://github.com/Ejv1k/PulseDeckAI/pull/17): Phase 4B RAM-preloaded 8-pad soundboard and F1–F8 hotkeys, merged at `a8095ca64e09c5ba78dc17fff26e76c320e2b430`.
 
-## Implemented Phase 4B slice: RAM Soundboard (`F1`–`F8`)
+## Implemented Phase 5A slice: Projector Secondary Window & Visuals (Keys `1`–`4`)
 
-The bounded Phase 4B Soundboard slice implements instant, zero-I/O SFX playback in `PulseDeckCore` and `PulseDeckAI`:
+The bounded Phase 5A Projector slice implements a dedicated secondary presentation window in `PulseDeckAI`:
 
-1. **Audio Graph Architecture**:
-   - `SoundboardController` manages eight high-priority `AVAudioPlayerNode` instances feeding a dedicated intermediate `soundboardMixerNode: AVAudioMixerNode`.
-   - `soundboardMixerNode` attaches exclusively to `masterAudioEngine.rawEngine` and connects directly to `masterAudioEngine.subMixer`.
-   - The Cue (headphone PFL) audio engine receives zero soundboard audio, guaranteeing complete audition isolation.
-   - Strictly output-only: zero calls or connections to `inputNode`, zero live microphone access.
-   - Preserves Deck A and Deck B channel volume, crossfader weight, and talkover attenuation parameters. Soundboard audio mixes cleanly at full punch without resetting or ducking deck music.
+1. **Four Presentation Modes (`Keys 1–4`)**:
+   - **Mode 1 (`Key 1`) — Master FFT Visualizer**: Aggregates the 512 linear FFT bins from `AudioMeterSnapshot` into 24 perceptually-spaced visualizer bands with smooth attack/decay ballistics. Strictly consumes existing published snapshots from `AudioMeteringService` with zero audio RT allocation, zero locking, and zero fake or random noise. Stale audio frames or silence smoothly decay to 0.0.
+   - **Mode 2 (`Key 2`) — Media Slideshow & Video Loops**: Discovers photos (JPG, PNG, HEIC, WEBP, TIFF) and video loops (MP4, MOV, M4V) from `09_Visual_Backgrounds_Media`. Downsamples high-resolution photos via `CGImageSourceCreateThumbnailAtIndex` with a finite RAM cache cap (48 MB / 20 photos). Video `AVPlayer` instances are strictly muted (`isMuted = true`, `volume = 0.0`), guaranteeing zero audio leakage into Master PA or Cue headphones. Seamlessly loops videos via `AVPlayerItemDidPlayToEndTime`. Corrupt media or empty crate (e.g. `.gitkeep` only) safely displays an ambient honest idle fallback.
+   - **Mode 3 (`Key 3`) — Now Playing & Event Title**: Displays active on-air track title, artist, BPM, and musical key determined from `AppState` Master deck playback state (`crossfaderPosition`, `isDeckAPlaying`, `isDeckBPlaying`). Includes a customizable event banner (e.g. *"Sarah & Michael's Wedding — October 14, 2026"*) stored in `ProjectorViewModel`. Smooth Master handoff prevents flickering during crossfades.
+   - **Mode 4 (`Key 4`) — True Blackout**: Solid pitch-black canvas (`Color.black`) with zero controls, buttons, or light leakage on the audience display. Mode changes and blackout never alter audio gains, crossfader, talkover, or Cue audition.
 
-2. **Deterministic Asset Mapping & Bounded RAM Caching**:
-   - Discovers up to 8 supported audio files from `PulseDeck_Library/08_Soundboard_SFX`, sorted alphabetically and mapped deterministically to Pads F1–F8. Non-audio files, `.gitkeep`, and hidden files are ignored.
-   - All files are pre-decoded and pre-converted into canonical 44.1 kHz, 32-bit Float, stereo buffers off the trigger and render paths during preload. Buffers are retained in unified RAM for the lifetime of playback.
-   - Per-asset duration cap $\le 15.0\,\text{s}$, per-asset RAM ceiling $\le 12\,\text{MB}$, and total soundboard RAM cap $\le 64\,\text{MB}$.
-   - Files exceeding duration/RAM bounds, corrupted files, or unsupported formats safely fall back to pre-synthesized procedural tones while surfacing honest UI diagnostic state.
+2. **Window Lifecycle & External Display Selection**:
+   - Managed via `ProjectorWindowController` (`NSWindowController`).
+   - Automatically discovers connected displays (`NSScreen.screens`), prioritizing external secondary displays and falling back to the main display.
+   - Observes `NSApplication.didChangeScreenParametersNotification` to safely reposition windows if an external display is disconnected, without interrupting audio playback or transport.
+   - Standard macOS fullscreen support (`window.toggleFullScreen`).
 
-3. **Pre-Synthesized Procedural Fallbacks**:
-   - Eight distinct procedural fallback tone buffers are synthesized ahead of time during initialization (1 kHz stinger pip, 808 sub kick, white noise snare, high chime, metallic rimshot, alternating siren beep, laser zap, airhorn triad chord).
-   - If an audio file is missing (e.g. empty crate with `.gitkeep`), corrupt, or oversized, the pad immediately utilizes its ready fallback buffer with zero synthesis overhead or allocation in render callbacks.
+3. **Context-Sensitive Keyboard Routing (`ProjectorKeyboardRouter`)**:
+   - Routes keys 1–4 to switch projector modes.
+   - Text editing guard: `isEditingText` inspects first responder (`NSTextField`, `NSTextView`, `NSText`). When the user is editing the event banner text or any text input, keys 1–4 are passed directly to text editing and NEVER stolen.
+   - Drops OS repeat events (`press.phase == .repeat` / `event.isARepeat`).
+   - Debounces rapid multi-route dispatches within 120 ms.
+   - Preserves all existing hotkeys (T, F1–F8, Space, A, B, Q, W, I, O, Y) by returning `.ignored` for non-1–4 keys.
+   - Zero global event monitoring outside active application windows.
 
-4. **Retrigger, Overlap & Lifecycle Semantics**:
-   - Independent pads overlap polyphonically without cutting off other pads or deck playback.
-   - Retriggering the same active pad executes a monophonic cut-and-restart (choke self), preventing runaway voice growth while enabling stutter performance drops.
-   - Lifecycle generation counters reject stale background preloads across library root changes and stop/restart transitions.
-   - All player mutation and scheduling is serialized through `OutputDeviceMonitor.controlQueue` (with a reentrant serial fallback in monitor-free test mode).
+4. **DJ-Side Control Sheet (`ProjectorBannerEditorView`)**:
+   - Accessible via application menu `Projector` > `Configure Event Banner...`.
+   - Allows editing event banner text, manually stepping slideshow items, switching modes, and toggling fullscreen from the DJ's primary screen without leaking UI controls onto the projector screen.
 
-5. **Keyboard Routing & Studio UI**:
-   - Dispatched via `SoundboardKeyboardRouter` in `DeckStudioView` and `ContentView`.
-   - Drops OS key-repeat events (`press.phase == .repeat` / `event.isARepeat == true`) and suppresses duplicate multi-route dispatches within the same runloop tick.
-   - Zero global event monitoring outside the active PulseDeck AI window.
-   - Studio view features an 8-pad interactive grid displaying key labels `[F1]`–`[F8]`, pad titles, duration, RAM footprint, readiness dots (green file, orange fallback, flashing yellow when active), and full button click triggering.
-   - Application menu bar includes accessible `Soundboard` menu commands for all 8 pads.
-   - Documents macOS `Fn` / Globe key requirements for standard function keys.
+5. **Resource Cleanup & Stale Work Cancellation**:
+   - Generation counters reject stale background media scans and thumbnail decodes across library root switches or window closures.
+   - Invalidation of slideshow timers and notification observers on teardown.
 
 6. **Verification Proof**:
-   - 9 comprehensive soundboard tests in `SoundboardTests.swift`:
-     1. `testAssetMappingAllEightPads`: Sorted 8-file mapping, labels F1–F8, buffer capacities.
-     2. `testEmptyCrateFallbackAudibleActualPCM`: Empty crate with `.gitkeep` renders audible non-zero PCM (>0.05).
-     3. `testPartialCorruptAndOversizedFilesSafeBehavior`: 2 valid, 1 corrupt, 1 oversized (>15s), 4 missing pads safely render audio without crashing.
-     4. `testPreloadedBuffersTriggerWithoutFileAccess`: Deleting fixture files from disk after preload proves trigger path plays directly from RAM with zero file access.
-     5. `testSimultaneousPadsAndRetriggerPolicy`: Concurrent playback of Pad 0 + Pad 1, monophonic retrigger, and stop isolation.
-     6. `testMasterPCMWithCueUnchanged`: Master renders audible SFX PCM (>0.05), while Cue remains strictly silent (peak 0.00000).
-     7. `testDeckCrossfaderAndTalkoverIsolation`: Deck crossfader at full Deck B and talkover at -16.5 dB ducking are completely untouched by SFX trigger.
-     8. `testCancellationRootChangeStaleCompletionStopRestartTeardown`: Rejects stale root 1 completion after root 2 switch; stopping coordinator stops all pads.
-     9. `testKeyboardRepeatAndRoutingBehavior`: Real NSEvent F1–F8 keycode dispatch, repeat suppression, and duplicate routing debounce.
-   - Local gates: `swift build -q`, `swift test -q` (**279 Swift tests, zero failures**), and Python companion discovery (**40 tests, zero failures**).
+   - 14 comprehensive tests in `ProjectorTests.swift`:
+     1. `testProjectorModeEnumAndKeyMappings`: Mode enum, titles, descriptions, and key mappings (1–4).
+     2. `testKeyboardRouterModeExtractionFromNSEvent`: ANSI keycodes 18–21 mapped, non-projector keys ignored.
+     3. `testKeyboardRouterRepeatSuppressionAndDebounce`: Repeat dropped, debounce prevents multi-trigger.
+     4. `testKeyboardRouterTextfieldEditingProtection`: Focus in `NSTextField` ignores hotkeys to allow typing digits.
+     5. `testMasterFFTProjectionAuthenticData`: 512 linear FFT bins mapped into 24 frequency bands, bounded in `[0.0, 1.0]`.
+     6. `testMasterFFTDecayOnSilenceAndStaleSnapshot`: Honest silence decay to 0.0 on nil or stale snapshots.
+     7. `testNowPlayingDeckDeterminationAndArtistTitleParsing`: Master deck determination across crossfader states, artist/title extraction.
+     8. `testNowPlayingBannerCustomization`: Event banner text storage and updates.
+     9. `testMediaScannerFilteringSortingAndBounds`: Photo/video filtering, skipping `.gitkeep`/hidden files, deterministic sorting.
+     10. `testEmptyAndCorruptMediaHonestFallback`: Empty crate and corrupted image handling with zero crashes.
+     11. `testStaleRootCancellationAndResourceCleanup`: Rejection of stale root scan completions and full teardown.
+     12. `testMutedLoopingVideoIntent`: Strict `isMuted = true` and `volume = 0.0` invariants.
+     13. `testDisplayEnumerationAndFallbackAbstraction`: Display enumeration, presentation screen selection, parameter change handling.
+     14. `testBlackoutBehaviorAndAudioIsolation`: Solid black state with zero controls and audio engine preservation.
+   - Historical gates on original projector head `e53dc4796fbc0372fa6b0419d6265158edfeed67`: 297 Swift and 40 Python tests; PR CI `40153526927` succeeded. Documentation-only head `bcd983507acdf7b6cecfc10d3386cfc442e3a59b` also passed CI `40153771606` with 297/40. Neither run proved the six review findings fixed.
+   - Independent native Sol review `2ca36428-e3c3-43f5-96b1-f596ec7bc560`, provider review `5641125819`, requested changes. No approval exists for these repairs.
+   - Worker84 repairs remove publications from render closures, share one per-AppState UI meter poll, forward actual media publications, route keys through the projector window, rescan explicitly, and gate playback/decoding/slideshow work on mode and window visibility.
+   - New regressions first reproduced unchanged-metadata publication, missing media forwarding, and hidden startup video creation. All three failed before repairs and passed afterward. Additional focused coverage exercises real transfer queues, AppKit event dispatch, photo decode/slide notifications, explicit added-file rescans, and close/reopen/stale-root cancellation.
+   - Six-fix head `8e773598165bc9e06af295996e22c989b2654d1f` passed local gates and automatic exact-head CI `40189405700`: build, 309 Swift tests (26 projector), and 40 Python tests. Its six original review threads were resolved.
+   - Fresh separate native Sol/high audit `5c58e2fe-75d1-4553-8ae3-ff8249e571f6` / provider `5643025524` requested three further changes: toolbar media refresh, decoded-photo Ken Burns startup, and failed-video fallback. No approval was granted.
+   - The bounded follow-up shares one guarded toolbar/menu refresh action, starts each photo's animation from its own mounted view, and handles actual AVPlayerItem status/playback failures with generation guards and observer/player cleanup. No worker80 files are changed.
+   - Follow-up proof: the actual stored toolbar Button action discovers a photo added after both startup scans complete and suppresses duplicate dispatch. Restoring its original library-only action fails that regression. A corrupt local MP4 failed the pre-fix service regression and now publishes fallback/releases its player. Mounted decoded-photo lifecycle and stale video/root/close callbacks are covered.
+   - Final follow-up local gate passed: `swift build -q`, 313 Swift tests (30 projector), and 40 Python tests. Automatic exact-head follow-up CI and fresh independent audit results are recorded in PR #18 and coordinator reports. Coordinator owns the next independent audit after green CI; no self-approval or merge is authorized.
 
-## Next concrete slice: Phase 5A Projector Secondary Window
+## Non-blocking Followups & Hardening Notes
 
-After PR for Phase 4B Soundboard merges:
-- Secondary presentation window for external HDMI projectors / AirPlay screens.
-- Modes 1–4 (FFT spectrum visualizer, Ken Burns slideshow, Now Playing card, Blackout screen) mapped to Keys 1–4.
-- Master deck safety lock to prevent accidental dancefloor interruptions.
+- **PR #17 Rescan Test Hardening**: In test fixtures using background library preloading, ensure initial startup preloading completes before adding new fixture files to prevent race conditions during directory scanning.
+- **PR #16 Keyboard Coverage Followup**: Maintained comprehensive test coverage for keyboard routers with repeat and textfield focus suppression across Soundboard and Projector modules.
+
+## Next concrete slice: Complete Phase 5A Master Safety Lock & Phase 5B Documentation
+
+- Worker `pulsedeckai-80` completes Master Safety Lock slice (`Shift + Space` transport guard, `isMasterLocked` property in `AppState`, toolbar indicator in `DeckStudioView`).
+- Phase 5B: Final user manual completion in `docs/USER_MANUAL.md`, `README.md` polish, and end-to-end repository verification.
 
 ## Boundaries and invariants
 
-Offline AV rendering and mocked output HAL establish automated control and PCM behavior. Physical speakers/headphones, Bluetooth latency, live Gemini/Ollama providers, and pointer automation remain unverified. Strictly output-only: zero microphone permissions, zero input node access. All AO/Grok repair/backup/export/deployment tasks remain cancelled.
+Offline AV rendering and mocked output HAL establish automated control and PCM behavior. Physical displays/projectors, HDMI EDID scaling, Bluetooth latency, live Gemini/Ollama providers, and pointer automation remain unverified. Strictly output-only: zero microphone permissions, zero input node access. All AO/Grok repair/backup/export/deployment tasks remain cancelled.

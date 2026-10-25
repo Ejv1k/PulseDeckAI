@@ -445,12 +445,17 @@ graph TD
 ```
 
 ### 10.1 Four Projector Modes
-* **Mode 1 (`Key 1`):** Real-time multi-band FFT audio spectrum visualizer responding dynamically to master output frequencies.
-* **Mode 2 (`Key 2`):** Ambient Ken Burns photo slideshow and looping background video loaded from `PulseDeck_Library/09_Visual_Backgrounds_Media`.
-* **Mode 3 (`Key 3`):** Elegant "Now Playing" metadata overlay displaying track title, artist, and custom wedding/event banner text.
-* **Mode 4 (`Key 4`):** Complete blackout screen or subtle venue logo for speeches and formal moments.
+* **Mode 1 (`Key 1`):** Real-time 24-band FFT audio spectrum visualizer responding dynamically to master output frequencies with smooth peak ballistics and honest silence decay (zero audio real-time allocations, consumes existing `AudioMeterSnapshot` publications).
+* **Mode 2 (`Key 2`):** Ambient Ken Burns photo slideshow and looping background video loaded from `PulseDeck_Library/09_Visual_Backgrounds_Media`. Features bounded discovery, thumbnail downsampling (`CGImageSourceCreateThumbnailAtIndex` with a 48 MB / 20 photo RAM cache), honest idle fallback, and strictly muted `AVPlayer` instances (`volume = 0.0`) guaranteeing zero Master/Cue audio leakage.
+* **Mode 3 (`Key 3`):** Elegant "Now Playing" metadata overlay displaying on-air track title, artist, BPM, and musical key derived from active Master deck state, plus customizable wedding/event banner text.
+* **Mode 4 (`Key 4`):** Complete blackout screen (`Color.black`) with zero controls or light leakage on the projector, preserving all audio playback and transport untouched.
 
-### 10.2 Master Deck Safety Locks
+### 10.2 Window Lifecycle & Contextual Routing
+* **External Display Detection (`ProjectorWindowController`):** Discovers displays via `NSScreen.screens`, prioritizing external non-main displays with fallback to main screen. Listens for `NSApplication.didChangeScreenParametersNotification` to safely reposition windows on disconnect without interrupting playback.
+* **Keyboard Routing (`ProjectorKeyboardRouter`):** Dispatches keys 1–4 to switch modes, drops OS repeat events, debounces rapid multi-route events, and checks first responder text editing (`NSTextField`, `NSTextView`, `NSText`) to ensure digits 1–4 are never stolen while editing the event banner.
+* **State Isolation (`ProjectorViewModel`):** Stored in a separate `@MainActor` observable object without adding new stored properties to `AppState`.
+
+### 10.3 Master Deck Safety Locks
 To prevent catastrophic accidental dropouts during live performance:
 * The deck currently broadcasting to Master cannot be stopped, paused, or scrubbed via mouse or keyboard unless the **Master Safety Lock** is disengaged or a confirmation modifier (`Shift + Space`) is held.
 

@@ -462,7 +462,7 @@ To prevent catastrophic accidental dropouts during live performance:
 * **Control-Queue Graph Authority:** On-air membership is evaluated synchronously on the audio control queue directly against real graph state, ensuring both decks are protected during crossfades.
 * **Guarded Actions:** Manual pause, stop, track load, and live playhead seek commands are intercepted and rejected with nonmodal UI warning feedback while locked.
 * **One-Shot Override (`Shift + Space`):** Pressing `Shift + Space` allows a one-shot intentional pause of the focused on-air deck without modifying the persistent lock state.
-* **Automation & Cue Isolation:** Automated transitions (Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot) execute unimpeded. Headphone Cue audition, pre-fader listening, and non-destructive waveform cue marker editing (`I`/`O`/drag) are completely exempt and never seek or interrupt live Master audio.
+* **Automation & Cue Isolation:** Automated transitions (Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot) execute unimpeded. Headphone Cue audition, pre-fader listening, and non-destructive waveform cue marker editing (`I`/`O`/`V`/`M`/drag) are completely exempt and never seek or interrupt live Master audio.
 * **Status:** Fully merged to `main` in PR #19.
 
 ---

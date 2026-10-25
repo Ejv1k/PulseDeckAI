@@ -58,11 +58,13 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 ## Next Concrete Steps: Complete Phase 5B Documentation
 
 1. **Worker 82 (Phase 5B)**:
-   - Run required Phase 5B final verification gate: `swift build -q`, `swift test -q` (329 tests), `python3 -m unittest discover -s scripts/tests -q` (40 tests).
-   - Push docs branch `ao/phase5b-docs/root` to origin and open single scoped Phase 5B Documentation PR.
+   - PR #21 opened at https://github.com/Ejv1k/PulseDeckAI/pull/21 (base `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`). Initial CI passed (329 Swift, 40 Python).
+   - Addressed review comment regarding cue-editing hotkeys (`I` for startTrim, `O` for endTrim, `V` for vocalEntry, `M` for mixOut) and clarified AI trim bypass is button-only (no `Y` key).
+   - Commit and push fix commit to `origin ao/phase5b-docs/final-docs`.
+   - Resolve review thread `PRRT_kwDOVJOZu86wEieD`.
    - Watch automatic exact-head PR CI once.
-   - Report PR URL, head, base `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, test counts, and HOLD for coordinator independent native Sol/high docs audit.
-   - Execute authorized squash merge after review approval and green CI.
+   - Report checkpoint to AO orchestrator and message coordinator `pulsedeckai-77`.
+   - HOLD for coordinator independent native Sol/high docs audit and final merge instructions.
 
 ---
 

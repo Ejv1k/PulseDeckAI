@@ -134,12 +134,21 @@ Each deck features a 60 FPS multi-band waveform rendered with SwiftUI Canvas:
   * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, pianos, guitars.
   * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, acoustic presence.
 * **The Four Ordered Cue Markers:**
-  1. `startTrimCue` (Yellow Handle): Automatically loaded starting position, skipping dead space or ambient intro banter. Set via `I` key.
-  2. `vocalEntryCue` (Green Handle): First lead vocal entry. Used by Auto-Pilot to prevent vocal clashes.
-  3. `mixOutCue` (Red Handle): Optimal transition start marker. Set via `O` key.
-  4. `endTrimCue` (Purple Handle): Trailing silence cutoff. Playback automatically stops here.
-* **AI Trim Bypass Toggle (`Y` Key):** Disables automated trim cues to audition the original unedited track length without losing cue positions.
-* **Human Override Protection:** Dragging cue handles flags fields as user-customized in `.pulsedeck_ai_cache.json`. Rescanning will **never** overwrite your custom cue adjustments.
+  1. `startTrimCue` (Yellow Handle): Automatically loaded starting position, skipping dead space or ambient intro banter. Set to current playhead via `I` key.
+  2. `vocalEntryCue` (Green Handle): First lead vocal entry. Used by Auto-Pilot to prevent vocal clashes. Set to current playhead via `V` key.
+  3. `mixOutCue` (Red Handle): Optimal transition start marker. Used by Auto-Pilot. Set to current playhead via `M` key.
+  4. `endTrimCue` (Purple Handle): Trailing silence cutoff. Playback automatically stops here. Set to current playhead via `O` key.
+* **Waveform Keyboard Controls (Active when waveform editor is focused):**
+  * **`I`**: Snap `startTrimCue` to current playhead position.
+  * **`O`**: Snap `endTrimCue` to current playhead position.
+  * **`V`**: Snap `vocalEntryCue` to current playhead position.
+  * **`M`**: Snap `mixOutCue` to current playhead position.
+  * **`+` / `=`**: Zoom in timeline.
+  * **`-` / `_`**: Zoom out timeline.
+  * **`[` / `]`**: Scroll timeline left / right by 5 seconds.
+  * **`Left / Right Arrow`**: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
+* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) enables or disables automated trim cues non-destructively without altering persisted cue markers. There is **no** keyboard shortcut for bypass; use the toolbar button.
+* **Human Override Protection:** Dragging cue handles or setting hotkeys flags fields as user-customized in `.pulsedeck_ai_cache.json`. Rescanning will **never** overwrite your custom cue adjustments.
 
 > [!IMPORTANT]
 > **Non-Destructive Cue Editing:** Moving cue handles or scrubbing the playhead in the waveform editor is strictly non-destructive. The cue editor playhead does **not** seek live playing Master audio.
@@ -214,9 +223,13 @@ To prevent accidental dancefloor silence during live sets:
 | **`Q`** | Deck A | Trigger Pre-Fader Cue (PFL) for Deck A | Phase 1 |
 | **`W`** | Deck B | Trigger Pre-Fader Cue (PFL) for Deck B | Phase 1 |
 | **`I`** | Waveform | Snap `startTrimCue` to current waveform playhead position | Phase 3A |
-| **`O`** | Waveform | Snap `mixOutCue` to current waveform playhead position | Phase 3A |
-| **`Y`** | Waveform | Toggle `aiTrimBypass` on active deck | Phase 3A |
-| **`Left / Right Arrow`** | Waveform | Nudge selected cue handle forward / backward | Phase 3A |
+| **`O`** | Waveform | Snap `endTrimCue` to current waveform playhead position | Phase 3A |
+| **`V`** | Waveform | Snap `vocalEntryCue` to current waveform playhead position | Phase 3A |
+| **`M`** | Waveform | Snap `mixOutCue` to current waveform playhead position | Phase 3A |
+| **`+` / `=`** | Waveform | Zoom in waveform timeline | Phase 3A |
+| **`-` / `_`** | Waveform | Zoom out waveform timeline | Phase 3A |
+| **`[` / `]`** | Waveform | Scroll waveform timeline left / right by 5 seconds | Phase 3A |
+| **`Left / Right Arrow`** | Waveform | Nudge selected cue handle forward / backward by ±50ms | Phase 3A |
 | **`[|◀] / [▶|]`** | Audition Bar | Step preview playhead 1 beat (audition focused) | Phase 3B |
 | **`Shift + Left / Right`**| Audition Bar | Step preview playhead 4 beats / 1 bar (disabled for sentinels) | Phase 3B |
 | **`B`** (Transition Mode) | Crossfader | Execute bar-aligned **Bass Swap Transition** | Phase 4A |
@@ -319,7 +332,7 @@ Audio and video files in `PulseDeck_Library` are strictly excluded from version 
 | **Headphones sound tinny / low bandwidth** | App accessed `inputNode` or microphone | Verify you are running PulseDeck AI (which strictly disables `inputNode`). Check macOS Sound settings to ensure microphone input is set to Internal Mic, not Bluetooth headset. |
 | **New audio files not showing in Crate** | Filesystem cache not refreshed | Click the **[Rescan]** button in the top status header or press `Cmd + R`. |
 | **AI Advisor returns error / no suggestions** | Missing API key or offline venue | Verify `GEMINI_API_KEY` in terminal, or start local Ollama (`ollama serve`) on `localhost:11434`. |
-| **Cues reset to default positions** | Manual override flag was cleared | Ensure `manualOverrides.isManual = true` in cache file. Manual edits made via `I`/`O` or handle dragging are automatically protected. |
+| **Cues reset to default positions** | Manual override flag was cleared | Ensure `manualOverrides.isManual = true` in cache file. Manual edits made via `I`/`O`/`V`/`M` hotkeys or handle dragging are automatically protected. |
 | **Soundboard pads do not trigger with F1–F8** | macOS Function Key system mapping | Hold `Fn` (or Globe) while pressing `F1`–`F8`, or enable standard function keys in macOS System Settings > Keyboard > Function Keys. |
 | **Projector window opens on laptop display** | External HDMI display not detected | Connect HDMI cable, verify display in macOS Displays settings, and press `Cmd + Shift + P` to reopen projector window. |
 | **Deck transport buttons do not respond** | Master Deck Safety Lock is engaged | If deck is on-air to Master, use `Shift + Space` to pause, or toggle Safety Lock off in mixer toolbar. |

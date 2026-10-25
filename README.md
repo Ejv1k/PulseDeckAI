@@ -39,7 +39,7 @@ PulseDeck AI is developed through a verification-driven lifecycle. The core perf
 ### Implemented & Verified Capabilities
 * [x] **Dual Independent CoreAudio Output Pipeline (Phase 1):** Segregated `masterAudioEngine` (FOH speakers) and `cueAudioEngine` (headphones) running output-only graphs, 3-band isolator EQ, dual-pole resonant sweep filters, and C11 lock-free SPSC output metering.
 * [x] **Offline DSP & Unified Cache Schema v1.0.0 (Phase 2):** Accelerate vDSP feature extraction, beat grid estimation, 4 bounded cue markers, Camelot wheel harmonic key detection, atomic file persistence (`.pulsedeck_ai_cache.json`), override preservation, and Gemini 2.5 Flash / Ollama hybrid advising.
-* [x] **Interactive Waveforms & Library Audition Engine (Phase 3):** 60 FPS multi-band SwiftUI Canvas waveforms with frequency-color mapping, 4 draggable cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), `I`/`O` hotkeys, `Y` AI trim bypass, non-destructive cue playhead scrubbing, and dedicated headphone Cue preview player with beat-step stepping.
+* [x] **Interactive Waveforms & Library Audition Engine (Phase 3):** 60 FPS multi-band SwiftUI Canvas waveforms with frequency-color mapping, 4 draggable cue handles (`startTrimCue`, `vocalEntryCue`, `mixOutCue`, `endTrimCue`), `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, non-destructive cue playhead scrubbing, and dedicated headphone Cue preview player with beat-step stepping.
 * [x] **Performance Transitions, Auto-Pilot, Talkover & Soundboard (Phase 4):** Quantized Bass Swap (`B`), Filter Echo Wash (`W`), Hard Cut (`C`), Auto-Pilot mix engine (`Shift + A`), Master Talkover Ducking (`T`, 800ms linear ramp to 0.15 Master music level with -4 dB 300 Hz–3 kHz mid dip, SFX bypass), and 8-pad zero-I/O RAM Soundboard (`F1`–`F8`) with procedural synthesized fallbacks, choke-self retrigger, polyphonic overlap, and strict Master-only routing with Cue isolation.
 * [x] **Secondary Projector Presentation Window (Phase 5A):** Dedicated fullscreen-capable external window (`Cmd + Shift + P`) supporting 4 presentation modes on Keys 1–4 (24-band FFT visualizer, Ken Burns photo slideshow and muted video loops with 48 MB / 20 photo RAM cache and idle fallback, Now Playing & customizable event banner, and true blackout). Includes first-responder text editing protection, display disconnect fallback, and strictly muted videos (`volume = 0.0`).
 * [x] **Master Deck Safety Lock (Phase 5A):** Protects playing on-air decks on the audio control queue during playback and crossfades from accidental pauses, stops, seeks, or track loads. `Shift + Space` provides a one-shot pause override. Fully merged in PR #19.
@@ -110,6 +110,15 @@ The multi-band Canvas waveform visually differentiates audio frequencies:
 * **Red / Amber:** Low frequencies ($20\text{--}250\,\text{Hz}$) — Bass drums, 808 subs, basslines.
 * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Lead vocals, snares, guitars.
 * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, air.
+* **Waveform Keybindings (Waveform Focused):**
+  * `I`: Snap `startTrimCue` to current playhead.
+  * `O`: Snap `endTrimCue` to current playhead.
+  * `V`: Snap `vocalEntryCue` to current playhead.
+  * `M`: Snap `mixOutCue` to current playhead.
+  * `+` / `=`: Zoom in timeline; `-` / `_`: Zoom out timeline.
+  * `[` / `]`: Scroll timeline left / right (5 seconds).
+  * `Left / Right Arrow`: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
+* **AI Trim Bypass:** Clickable toolbar button (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles automated trim cues non-destructively without losing cue markers. Bypass is button-only with no keyboard shortcut.
 
 > [!NOTE]
 > **Non-Destructive Cue Playhead:** The cue editing playhead in the waveform editor is strictly isolated to cue point positioning and visual scrubbing. It **never** seeks or interrupts live Master audio playback.
@@ -315,7 +324,7 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 | **0** | **Operational Foundation & Docs** | Swift 6 SPM workspace, SwiftUI dark GUI, library scanner, cache schema v1, architectural protocols | **Merged** (`swift build`, `swift test`) |
 | **1** | **Dual-Engine Audio & Metering** | CoreAudio HAL device routing, dual `AVAudioEngine`, 3-band EQ, resonant filter, lock-free SPSC metering | **Merged** (PR #4, PR #6; offline graph & ring buffer tests) |
 | **2** | **Offline DSP & Hybrid Advisor** | Accelerate vDSP analysis, beat grid estimation, optional Gemini/Ollama advice, validated cache & batch companion | **Merged** (PR #5, PR #8; cache generation on `00_Test_Tracks_Dev`) |
-| **3** | **Waveforms, Cues & Audition** | Multi-band Canvas waveforms, 4 bounded cue handles, `I`/`O` hotkeys, AI trim bypass, headphone Cue audition player | **Merged** (PR #9, PR #13, PR #14; waveform render & audition tests) |
+| **3** | **Waveforms, Cues & Audition** | Multi-band Canvas waveforms, 4 bounded cue handles, `I`/`O`/`V`/`M` hotkeys, clickable AI trim bypass button, headphone Cue audition player | **Merged** (PR #9, PR #13, PR #14; waveform render & audition tests) |
 | **4** | **Transitions, Talkover & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot, Talkover ducking (`T`, 800ms linear ramp to 0.15 gain), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing & SFX RAM tests) |
 | **5A** | **Projector Display & Safety Locks** | Secondary presentation window (`Cmd + Shift + P`, Modes 1–4, Keys 1–4), Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |
 | **5B** | **Final Documentation & Product Polish** | Complete Event DJ User Manual, Technical Architecture, Phase Status, and Continuation tracking | **In Progress** (Phase 5B documentation PR) |

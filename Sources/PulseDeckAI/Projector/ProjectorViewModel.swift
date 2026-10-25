@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import AVFoundation
 import PulseDeckCore
@@ -19,7 +20,9 @@ public final class ProjectorViewModel: ObservableObject {
             handleModeChanged(from: oldValue, to: currentMode)
         }
     }
-    @Published public var isWindowOpen: Bool = false
+    @Published public var isWindowOpen: Bool = false {
+        didSet { if oldValue != isWindowOpen { synchronizeMediaActivity() } }
+    }
     @Published public var isFullscreen: Bool = false
     @Published public var eventBannerText: String = "Sarah & Michael's Wedding — October 14, 2026"
     @Published public var isBannerEditorPresented: Bool = false
@@ -30,7 +33,10 @@ public final class ProjectorViewModel: ObservableObject {
 
     // Mode 2: Media Slideshow & Muted Looping Video Service
     public let mediaService = ProjectorMediaService()
-    private var slideshowTimer: Timer?
+    private let slideshowInterval: Duration
+    private var slideshowTask: Task<Void, Never>?
+    private var mediaChanges: AnyCancellable?
+    var isSlideshowRunning: Bool { slideshowTask != nil }
 
     // Mode 3: Now Playing Metadata State
     @Published public private(set) var nowPlayingMetadata: ProjectorNowPlayingMetadata = .idle
@@ -38,12 +44,17 @@ public final class ProjectorViewModel: ObservableObject {
     // Window Management
     private var windowController: ProjectorWindowController?
 
-    public init() {
+    public init(slideshowInterval: Duration = .seconds(8)) {
+        self.slideshowInterval = slideshowInterval
         self.windowController = ProjectorWindowController(viewModel: self)
+        mediaChanges = mediaService.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
 
     deinit {
         // Timers and players are invalidated on teardown.
+        slideshowTask?.cancel()
     }
 
     // MARK: - Mode Switching (Keys 1–4)
@@ -55,19 +66,50 @@ public final class ProjectorViewModel: ObservableObject {
     }
 
     private func handleModeChanged(from oldMode: ProjectorMode, to newMode: ProjectorMode) {
-        if oldMode == .mediaSlideshow && newMode != .mediaSlideshow {
-            stopSlideshowTimer()
-        } else if newMode == .mediaSlideshow {
-            startSlideshowTimer()
-        }
+        guard oldMode != newMode else { return }
+        synchronizeMediaActivity()
+    }
+
+    private func synchronizeMediaActivity() {
+        let active = isWindowOpen && currentMode == .mediaSlideshow
+        mediaService.setPresentationActive(active)
+        if active { startSlideshowTimer() }
+        else { stopSlideshowTimer() }
     }
 
     // MARK: - Spectrum Visualizer (Mode 1)
 
-    /// Polls the master audio meter snapshot from AppState and updates the 24-band spectrum visualizer.
+    /// Reads the shared UI cache without draining the audio meter queue.
     public func updateVisualizer(from appState: AppState) {
-        let snapshot = appState.meterSnapshot(for: .master)
-        self.visualizerFrame = spectrumAnalyzer.processSnapshot(snapshot)
+        updateVisualizer(snapshot: AudioMeterSnapshotDistributor.shared(for: appState).master)
+    }
+
+    func updateVisualizer(snapshot: AudioMeterSnapshot?) {
+        let frame = spectrumAnalyzer.processSnapshot(snapshot)
+        if frame != visualizerFrame { visualizerFrame = frame }
+    }
+
+    /// Runs outside view construction. SwiftUI cancels this task on mode change or window removal.
+    func runPresentationUpdates(from appState: AppState) async {
+        switch currentMode {
+        case .fftVisualizer:
+            let meters = AudioMeterSnapshotDistributor.shared(for: appState)
+            async let _: Void = meters.observe()
+            while !Task.isCancelled, isWindowOpen, currentMode == .fftVisualizer {
+                updateVisualizer(snapshot: meters.master)
+                do { try await Task.sleep(for: .seconds(1.0 / 30.0)) }
+                catch { break }
+            }
+            // Leaving this scope cancels the child subscription, including the final polling owner.
+        case .nowPlaying:
+            while !Task.isCancelled, isWindowOpen, currentMode == .nowPlaying {
+                updateNowPlaying(from: appState)
+                do { try await Task.sleep(for: .milliseconds(250)) }
+                catch { break }
+            }
+        case .mediaSlideshow, .blackout:
+            break
+        }
     }
 
     // MARK: - Media Slideshow (Mode 2)
@@ -75,6 +117,11 @@ public final class ProjectorViewModel: ObservableObject {
     /// Starts scanning and preloading media from `09_Visual_Backgrounds_Media`.
     public func updateLibraryRoot(_ url: URL) {
         mediaService.setLibraryRoot(url)
+    }
+
+    /// Explicit refresh also discovers assets added beneath an unchanged library root.
+    public func rescanMedia() {
+        mediaService.rescan()
     }
 
     /// Advances to next media item manually or automatically.
@@ -89,28 +136,40 @@ public final class ProjectorViewModel: ObservableObject {
 
     private func startSlideshowTimer() {
         stopSlideshowTimer()
-        slideshowTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.currentMode == .mediaSlideshow else { return }
-                // Only advance automatically if current item is a photo (videos loop themselves)
-                if let item = self.mediaService.items.indices.contains(self.mediaService.currentIndex) ? self.mediaService.items[self.mediaService.currentIndex] : nil {
-                    if item.type == .photo {
-                        self.mediaService.nextMediaItem()
-                    }
-                }
+        let interval = slideshowInterval
+        slideshowTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                self?.advanceSlideshowIfNeeded()
             }
         }
     }
 
+    func advanceSlideshowIfNeeded() {
+        guard isWindowOpen, currentMode == .mediaSlideshow else { return }
+        // Only advance automatically if current item is a photo (videos loop themselves)
+        if mediaService.items.indices.contains(mediaService.currentIndex),
+           mediaService.items[mediaService.currentIndex].type == .photo {
+            mediaService.nextMediaItem()
+        }
+    }
+
     private func stopSlideshowTimer() {
-        slideshowTimer?.invalidate()
-        slideshowTimer = nil
+        slideshowTask?.cancel()
+        slideshowTask = nil
     }
 
     // MARK: - Now Playing Metadata (Mode 3)
 
     /// Determines current Master deck and updates Now Playing card metadata.
     public func updateNowPlaying(from appState: AppState) {
+        let metadata = nowPlayingMetadata(from: appState)
+        if metadata != nowPlayingMetadata { nowPlayingMetadata = metadata }
+    }
+
+    private func nowPlayingMetadata(from appState: AppState) -> ProjectorNowPlayingMetadata {
         let activeDeck = Self.determineMasterDeck(
             isDeckAPlaying: appState.isDeckAPlaying,
             isDeckBPlaying: appState.isDeckBPlaying,
@@ -119,7 +178,7 @@ public final class ProjectorViewModel: ObservableObject {
 
         let isPlaying = appState.isDeckAPlaying || appState.isDeckBPlaying
         guard let deck = activeDeck else {
-            self.nowPlayingMetadata = ProjectorNowPlayingMetadata(
+            return ProjectorNowPlayingMetadata(
                 title: "PulseDeck AI",
                 artist: "Ready to Play",
                 deck: nil,
@@ -128,12 +187,11 @@ public final class ProjectorViewModel: ObservableObject {
                 durationSeconds: nil,
                 isMasterPlaying: false
             )
-            return
         }
 
         let track = (deck == .deckA) ? appState.deckATrack : appState.deckBTrack
         guard let entry = track else {
-            self.nowPlayingMetadata = ProjectorNowPlayingMetadata(
+            return ProjectorNowPlayingMetadata(
                 title: "Deck \(deck.rawValue.capitalized)",
                 artist: "No Track Loaded",
                 deck: deck,
@@ -142,11 +200,10 @@ public final class ProjectorViewModel: ObservableObject {
                 durationSeconds: nil,
                 isMasterPlaying: isPlaying
             )
-            return
         }
 
         let parsed = Self.parseArtistAndTitle(from: entry.relativePath)
-        self.nowPlayingMetadata = ProjectorNowPlayingMetadata(
+        return ProjectorNowPlayingMetadata(
             title: parsed.title,
             artist: parsed.artist,
             deck: deck,
@@ -227,7 +284,6 @@ public final class ProjectorViewModel: ObservableObject {
         mediaService.teardown()
         spectrumAnalyzer.reset()
         windowController?.closeProjectorWindow()
-        windowController = nil
         isWindowOpen = false
     }
 }

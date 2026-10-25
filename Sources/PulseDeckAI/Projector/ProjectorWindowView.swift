@@ -36,8 +36,8 @@ public struct ProjectorWindowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.35), value: viewModel.currentMode)
-        .onKeyPress(phases: [.down, .repeat]) { press in
-            ProjectorKeyboardRouter.handleKeyPress(press, viewModel: viewModel)
+        .task(id: viewModel.currentMode) {
+            await viewModel.runPresentationUpdates(from: appState)
         }
     }
 }

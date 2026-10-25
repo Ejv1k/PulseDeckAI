@@ -11,6 +11,21 @@ private final class ProjectorNotificationToken: @unchecked Sendable {
     }
 }
 
+/// Window-local dispatch works in every presentation mode without SwiftUI focus prerequisites.
+@MainActor
+final class ProjectorPresentationWindow: NSWindow {
+    weak var projectorViewModel: ProjectorViewModel?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.window === self,
+           let projectorViewModel,
+           ProjectorKeyboardRouter.handleNSEvent(event, viewModel: projectorViewModel) {
+            return
+        }
+        super.sendEvent(event)
+    }
+}
+
 /// Window controller managing the presentation lifecycle, external display binding,
 /// and full-screen state of the secondary projector display.
 @MainActor
@@ -80,7 +95,7 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
             initialFrame = NSRect(x: 100, y: 100, width: 1280, height: 720)
         }
 
-        let newWindow = NSWindow(
+        let newWindow = ProjectorPresentationWindow(
             contentRect: initialFrame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -88,6 +103,8 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
             screen: targetScreen
         )
 
+        newWindow.projectorViewModel = viewModel
+        newWindow.isReleasedWhenClosed = false
         newWindow.title = "PulseDeck AI Projector"
         newWindow.backgroundColor = .black
         newWindow.isOpaque = true
@@ -106,7 +123,10 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
 
     /// Closes the projector window safely without terminating playback.
     public func closeProjectorWindow() {
-        guard let win = window else { return }
+        guard let win = window else {
+            viewModel?.isWindowOpen = false
+            return
+        }
         win.close()
         self.window = nil
         viewModel?.isWindowOpen = false
@@ -131,8 +151,11 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     public func windowWillClose(_ notification: Notification) {
+        // Removing the hosting view cancels its presentation task and shared meter subscription.
+        (notification.object as? NSWindow)?.contentView = nil
         self.window = nil
         viewModel?.isWindowOpen = false
+        viewModel?.isFullscreen = false
     }
 
     public func windowDidEnterFullScreen(_ notification: Notification) {

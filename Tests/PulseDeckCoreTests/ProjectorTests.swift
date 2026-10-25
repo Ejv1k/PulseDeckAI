@@ -1,4 +1,6 @@
 import XCTest
+import Combine
+import SwiftUI
 import AppKit
 import AVFoundation
 import CoreGraphics
@@ -437,4 +439,342 @@ final class ProjectorTests: XCTestCase {
 
         vm.teardown()
     }
+    private func temporaryRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return root
+    }
+
+    private func offlineState(root: URL) -> AppState {
+        AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
+                 audioCoordinator: AudioEngineCoordinator(hal: MockAudioHardware()), startCoordinator: false)
+    }
+
+    private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(condition(), "Timed out waiting for asynchronous production state")
+    }
+
+    func testUnchangedNowPlayingDoesNotPublish() throws {
+        let state = offlineState(root: try temporaryRoot())
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        var publications = 0
+        let token = vm.$nowPlayingMetadata.dropFirst().sink { _ in publications += 1 }
+        vm.updateNowPlaying(from: state)
+        vm.updateNowPlaying(from: state)
+        XCTAssertEqual(publications, 0, "Unchanged metadata must not invalidate its observer")
+        withExtendedLifetime(token) {}
+    }
+
+    func testNestedMediaScanForwardsToViewModelObservers() async throws {
+        let root = try temporaryRoot()
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        var publications = 0
+        let token = vm.objectWillChange.sink { publications += 1 }
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !vm.mediaService.isScanning }
+        XCTAssertGreaterThan(publications, 0, "Scan changes must invalidate slideshow, banner, and menu observers")
+        withExtendedLifetime(token) {}
+    }
+
+    func testStartupScanDoesNotCreateHiddenVideoPlayer() async throws {
+        let root = try temporaryRoot()
+        let media = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try Data().write(to: media.appendingPathComponent("loop.mp4"))
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !vm.mediaService.isScanning }
+        XCTAssertEqual(vm.mediaService.items.count, 1)
+        XCTAssertNil(vm.mediaService.currentVideoPlayer, "Startup scan must not instantiate a hidden looping player")
+    }
+
+    private func writePhoto(_ url: URL) throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let bytes = try XCTUnwrap(bitmap.bitmapData)
+        bytes.initialize(repeating: 255, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
+    }
+
+    func testSingleMeterPollingOwnerFansOutDestructiveSnapshotsAndCancels() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        var rings: [OpaquePointer] = []
+        let service = AudioMeteringService(coordinator: coordinator, allocateRingForTesting: {
+            let ring = pd_meter_ring_create()
+            if let ring { rings.append(ring) }
+            return ring
+        }, destroyRingForTesting: { pd_meter_ring_destroy($0) })
+        try service.start()
+        defer { service.stop() }
+        var masterReads = 0
+        let distributor = AudioMeterSnapshotDistributor { role in
+            if role == .master { masterReads += 1 }
+            return service.drainLatest(for: role)
+        }
+        let values = [Float](repeating: 0.5, count: 1024)
+        XCTAssertTrue(values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(rings[0], $0.baseAddress, nil, 1, 1024, 44100, 100)
+        })
+        XCTAssertTrue(values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(rings[1], $0.baseAddress, nil, 1, 1024, 44100, 200)
+        })
+        let statusConsumer = Task { await distributor.observe() }
+        let projectorConsumer = Task { await distributor.observe() }
+        defer { statusConsumer.cancel(); projectorConsumer.cancel() }
+        try await waitUntil { distributor.master != nil }
+        let statusSnapshot = try XCTUnwrap(distributor.master)
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.updateVisualizer(snapshot: distributor.master)
+        XCTAssertEqual(vm.visualizerFrame.rms, statusSnapshot.rms)
+        XCTAssertEqual(vm.visualizerFrame.timestamp, statusSnapshot.hostTime)
+        XCTAssertEqual(distributor.master, statusSnapshot, "A second view read must not consume the shared frame")
+        XCTAssertEqual(distributor.cue?.hostTime, 200, "Cue remains independent of Master")
+        XCTAssertEqual(masterReads, 1, "Two subscriptions must start only one polling owner")
+        XCTAssertNil(service.drainLatest(for: .master), "The real transfer queue was drained exactly once")
+        statusConsumer.cancel()
+        await statusConsumer.value
+        XCTAssertNotNil(distributor.master, "Projector subscription keeps polling alive")
+        projectorConsumer.cancel()
+        await projectorConsumer.value
+        let readsAtStop = masterReads
+        XCTAssertNil(distributor.master)
+        try await Task.sleep(for: .milliseconds(75))
+        XCTAssertEqual(masterReads, readsAtStop, "No poll may survive the final consumer")
+    }
+
+    func testSharedMeterIdentityAndPureViewConstruction() throws {
+        let state = offlineState(root: try temporaryRoot())
+        let meters = AudioMeterSnapshotDistributor.shared(for: state)
+        XCTAssertTrue(meters === AudioMeterSnapshotDistributor.shared(for: state))
+        let otherState = offlineState(root: try temporaryRoot())
+        XCTAssertFalse(meters === AudioMeterSnapshotDistributor.shared(for: otherState))
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        var publications = 0
+        let token = vm.objectWillChange.sink { publications += 1 }
+        _ = ProjectorSpectrumView(viewModel: vm, appState: state).body
+        _ = ProjectorNowPlayingView(viewModel: vm, appState: state).body
+        _ = ProjectorWindowView(viewModel: vm, appState: state).body
+        _ = AudioMeterStatusView(appState: state).body
+        XCTAssertEqual(publications, 0)
+        withExtendedLifetime(token) {}
+    }
+
+    func testPresentationTaskUpdatesOutsideRenderAndCancels() async throws {
+        let state = offlineState(root: try temporaryRoot())
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.isWindowOpen = true
+        // Use a genuine snapshot with energy, then let the production task decay it to silence.
+        vm.updateVisualizer(snapshot: makeSnapshot(rms: 0.5, peak: 0.8,
+                                                  spectrum: Array(repeating: 0.2, count: 512)))
+        var publications = 0
+        let token = vm.$visualizerFrame.dropFirst().sink { _ in publications += 1 }
+        let updates = Task { await vm.runPresentationUpdates(from: state) }
+        try await waitUntil { publications > 0 }
+        updates.cancel()
+        await updates.value
+        let stopped = publications
+        try await Task.sleep(for: .milliseconds(75))
+        XCTAssertEqual(publications, stopped)
+        withExtendedLifetime(token) {}
+    }
+
+    func testExplicitRescanFindsAddedAssetButRootSyncDoesNotRescan() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writePhoto(directory.appendingPathComponent("a.png"))
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !vm.mediaService.isScanning }
+        XCTAssertEqual(vm.mediaService.items.count, 1)
+        try writePhoto(directory.appendingPathComponent("b.png"))
+        vm.updateLibraryRoot(root.appendingPathComponent("."))
+        XCTAssertFalse(vm.mediaService.isScanning, "Ordinary same-root synchronization must remain idempotent")
+        XCTAssertEqual(vm.mediaService.items.count, 1)
+        vm.rescanMedia()
+        try await waitUntil { !vm.mediaService.isScanning }
+        XCTAssertEqual(vm.mediaService.items.map(\.fileName), ["a.png", "b.png"])
+    }
+
+    func testPhotoDecodeAndAutomaticSlideChangesForwardToObservers() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writePhoto(directory.appendingPathComponent("a.png"))
+        try writePhoto(directory.appendingPathComponent("b.png"))
+        let vm = ProjectorViewModel(slideshowInterval: .milliseconds(100))
+        defer { vm.teardown() }
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !vm.mediaService.isScanning }
+        var publications = 0
+        let token = vm.objectWillChange.sink { publications += 1 }
+        vm.setMode(.mediaSlideshow)
+        vm.isWindowOpen = true
+        let beforeDecode = publications
+        try await waitUntil { vm.mediaService.currentPhoto != nil }
+        XCTAssertGreaterThan(publications, beforeDecode, "The actual background decode must invalidate parent observers")
+        let beforeSlide = publications
+        try await waitUntil { vm.mediaService.currentIndex == 1 }
+        XCTAssertGreaterThan(publications, beforeSlide, "Automatic slideshow task must invalidate parent observers")
+        vm.isWindowOpen = false
+        XCTAssertFalse(vm.isSlideshowRunning)
+        XCTAssertNil(vm.mediaService.currentPhoto)
+        let stoppedIndex = vm.mediaService.currentIndex
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(vm.mediaService.currentIndex, stoppedIndex)
+        withExtendedLifetime(token) {}
+    }
+
+    private func key(_ character: String, in window: NSWindow, repeatKey: Bool = false) throws -> NSEvent {
+        let codes: [String: UInt16] = ["1": 18, "2": 19, "3": 20, "4": 21]
+        return try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil,
+            characters: character, charactersIgnoringModifiers: character,
+            isARepeat: repeatKey, keyCode: codes[character] ?? 0))
+    }
+
+    func testActualProjectorWindowRoutesEveryModeAndPreservesTextEditing() throws {
+        let state = offlineState(root: try temporaryRoot())
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.showWindow(appState: state)
+        let window = try XCTUnwrap(NSApplication.shared.windows.first {
+            $0 is ProjectorPresentationWindow && $0.isVisible
+        })
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertNotNil(window.contentView)
+        for character in ["2", "3", "4", "1"] {
+            window.sendEvent(try key(character, in: window))
+            XCTAssertEqual(vm.currentMode.rawValue, Int(character))
+        }
+        window.sendEvent(try key("4", in: window, repeatKey: true))
+        XCTAssertEqual(vm.currentMode, .fftVisualizer, "Held keys must not switch modes")
+        var changes = 0
+        let token = vm.$currentMode.dropFirst().sink { _ in changes += 1 }
+        window.sendEvent(try key("2", in: window))
+        window.sendEvent(try key("2", in: window))
+        XCTAssertEqual(changes, 1, "Duplicate dispatch must not publish or restart a mode")
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 30))
+        let container = NSView(frame: window.contentView?.frame ?? .zero)
+        if let hostedView = window.contentView { container.addSubview(hostedView) }
+        container.addSubview(editor)
+        window.contentView = container
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        window.sendEvent(try key("3", in: window))
+        XCTAssertEqual(vm.currentMode, .mediaSlideshow)
+        XCTAssertEqual(editor.string, "3", "Digit must reach the actual AppKit text editor")
+        withExtendedLifetime(token) {}
+    }
+
+    func testVideoAndTimerLifecycleUsesActualWindowCloseAndReopen() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data().write(to: directory.appendingPathComponent("loop.mp4"))
+        let state = offlineState(root: root)
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.updateLibraryRoot(root)
+        try await waitUntil { !vm.mediaService.isScanning }
+        vm.setMode(.mediaSlideshow)
+        XCTAssertNil(vm.mediaService.currentVideoPlayer)
+        XCTAssertFalse(vm.isSlideshowRunning)
+        vm.showWindow(appState: state)
+        let firstPlayer = try XCTUnwrap(vm.mediaService.currentVideoPlayer)
+        XCTAssertTrue(firstPlayer.isMuted)
+        XCTAssertEqual(firstPlayer.volume, 0)
+        XCTAssertTrue(vm.isSlideshowRunning)
+        vm.setMode(.blackout)
+        XCTAssertNil(vm.mediaService.currentVideoPlayer)
+        XCTAssertEqual(firstPlayer.rate, 0)
+        XCTAssertFalse(vm.isSlideshowRunning)
+        NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: firstPlayer.currentItem)
+        await Task.yield()
+        XCTAssertEqual(firstPlayer.rate, 0, "A stale loop notification must not restart an inactive player")
+        vm.setMode(.mediaSlideshow)
+        let secondPlayer = try XCTUnwrap(vm.mediaService.currentVideoPlayer)
+        XCTAssertFalse(secondPlayer === firstPlayer)
+        // Native close exercises the delegate path, rather than just a view-model flag.
+        let window = try XCTUnwrap(NSApplication.shared.windows.first {
+            $0 is ProjectorPresentationWindow && $0.isVisible
+        })
+        window.close()
+        XCTAssertFalse(vm.isWindowOpen)
+        XCTAssertNil(vm.mediaService.currentVideoPlayer)
+        XCTAssertFalse(vm.isSlideshowRunning)
+        XCTAssertNil(window.contentView)
+        vm.showWindow(appState: state)
+        XCTAssertTrue(vm.isWindowOpen)
+        XCTAssertTrue(vm.isSlideshowRunning)
+        let reopenedPlayer = try XCTUnwrap(vm.mediaService.currentVideoPlayer)
+        XCTAssertFalse(reopenedPlayer === secondPlayer)
+        XCTAssertTrue(reopenedPlayer.isMuted)
+        vm.closeWindow()
+        XCTAssertNil(vm.mediaService.currentVideoPlayer)
+    }
+
+    func testStaleRootAndCloseCancelRealScanAndPhotoWork() async throws {
+        let root1 = try temporaryRoot()
+        let root2 = try temporaryRoot()
+        for root in [root1, root2] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(ProjectorMediaService.mediaFolderName),
+                withIntermediateDirectories: true)
+        }
+        try writePhoto(root1.appendingPathComponent(ProjectorMediaService.mediaFolderName).appendingPathComponent("old.png"))
+        try writePhoto(root2.appendingPathComponent(ProjectorMediaService.mediaFolderName).appendingPathComponent("new.png"))
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.setMode(.mediaSlideshow)
+        vm.isWindowOpen = true
+        vm.updateLibraryRoot(root1)
+        vm.updateLibraryRoot(root2)
+        try await waitUntil { !vm.mediaService.isScanning && vm.mediaService.currentPhoto != nil }
+        XCTAssertEqual(vm.mediaService.items.map(\.fileName), ["new.png"])
+        vm.rescanMedia()
+        vm.isWindowOpen = false
+        XCTAssertFalse(vm.mediaService.isScanning)
+        XCTAssertNil(vm.mediaService.currentPhoto)
+        vm.isWindowOpen = true
+        try await waitUntil { !vm.mediaService.isScanning && vm.mediaService.currentPhoto != nil }
+        XCTAssertEqual(vm.mediaService.items.map(\.fileName), ["new.png"])
+        vm.teardown()
+        await Task.yield()
+        XCTAssertNil(vm.mediaService.currentPhoto)
+        XCTAssertNil(vm.mediaService.currentVideoPlayer)
+        XCTAssertFalse(vm.mediaService.isScanning)
+    }
+
+    func testInactiveResourcesDoNotRetainModelsOrAppState() throws {
+        var state: AppState? = offlineState(root: try temporaryRoot())
+        weak var weakState = state
+        let meters = AudioMeterSnapshotDistributor.shared(for: try XCTUnwrap(state))
+        state = nil
+        XCTAssertNil(weakState, "The per-AppState meter cache must not retain the audio owner")
+        withExtendedLifetime(meters) {}
+        var vm: ProjectorViewModel? = ProjectorViewModel()
+        weak var weakModel = vm
+        weak var weakMedia = vm?.mediaService
+        vm?.isWindowOpen = true
+        vm?.setMode(.mediaSlideshow)
+        vm = nil
+        XCTAssertNil(weakModel, "Slideshow task and media forwarding must not retain the model")
+        XCTAssertNil(weakMedia, "No player observer or decode task may retain inactive media services")
+    }
+
 }

@@ -15,10 +15,7 @@ public struct ProjectorSpectrumView: View {
     }
 
     public var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { _ in
-            let _ = viewModel.updateVisualizer(from: appState)
-            visualizerCanvas
-        }
+        visualizerCanvas
         .background(Color.black.ignoresSafeArea())
     }
 

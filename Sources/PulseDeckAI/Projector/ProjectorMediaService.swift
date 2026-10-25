@@ -45,12 +45,50 @@ public final class ProjectorMediaService: ObservableObject {
 
     private var libraryRootURL: URL?
     private var scanGeneration: UInt64 = 0
+    private var photoGeneration: UInt64 = 0
+    private var presentationActive = false
+    private var needsScan = false
     private var photoCache: [URL: (image: NSImage, bytes: Int)] = [:]
     private var photoCacheTotalBytes: Int = 0
     private var playerDidPlayToEndToken: MediaNotificationToken?
     private var activeScanTask: Task<Void, Never>?
+    private var activePhotoTask: Task<Void, Never>?
 
     public init() {}
+
+    deinit {
+        activeScanTask?.cancel()
+        activePhotoTask?.cancel()
+    }
+
+    /// Discovery can run while hidden; decoding, video playback, and loop observers cannot.
+    public func setPresentationActive(_ active: Bool) {
+        if active {
+            guard !presentationActive else { return }
+            presentationActive = true
+            if needsScan { rescan() }
+            else if !isScanning { loadMedia(at: currentIndex) }
+        } else {
+            presentationActive = false
+            needsScan = needsScan || isScanning
+            scanGeneration &+= 1
+            activeScanTask?.cancel()
+            activeScanTask = nil
+            isScanning = false
+            cancelPhotoLoad()
+            cleanupPlayer()
+            currentPhoto = nil
+            photoCache.removeAll()
+            photoCacheTotalBytes = 0
+            mediaState = items.isEmpty ? .empty : .ready(items: items)
+        }
+    }
+
+    private func cancelPhotoLoad() {
+        photoGeneration &+= 1
+        activePhotoTask?.cancel()
+        activePhotoTask = nil
+    }
 
     /// Sets the library root and scans `09_Visual_Backgrounds_Media`.
     public func setLibraryRoot(_ url: URL) {
@@ -66,8 +104,15 @@ public final class ProjectorMediaService: ObservableObject {
         let currentGen = scanGeneration
 
         activeScanTask?.cancel()
+        activeScanTask = nil
+        cancelPhotoLoad()
         cleanupPlayer()
         currentPhoto = nil
+        items = []
+        currentIndex = 0
+        photoCache.removeAll()
+        photoCacheTotalBytes = 0
+        needsScan = true
         mediaState = .loading
         isScanning = true
 
@@ -75,6 +120,7 @@ public final class ProjectorMediaService: ObservableObject {
             mediaState = .empty
             items = []
             isScanning = false
+            needsScan = false
             return
         }
 
@@ -86,13 +132,16 @@ public final class ProjectorMediaService: ObservableObject {
         }
 
         activeScanTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
             let discovered = Self.discoverMediaItems(in: mediaDirectoryURL)
 
             guard !Task.isCancelled else { return }
 
             await MainActor.run { [weak self] in
                 guard let self, self.scanGeneration == currentGen else { return }
+                self.activeScanTask = nil
                 self.isScanning = false
+                self.needsScan = false
                 self.items = discovered
 
                 if discovered.isEmpty {
@@ -103,7 +152,7 @@ public final class ProjectorMediaService: ObservableObject {
                 } else {
                     self.mediaState = .ready(items: discovered)
                     self.currentIndex = 0
-                    self.loadMedia(at: 0)
+                    if self.presentationActive { self.loadMedia(at: 0) }
                 }
             }
         }
@@ -167,6 +216,7 @@ public final class ProjectorMediaService: ObservableObject {
 
     /// Loads and activates the media item at the specified index.
     public func loadMedia(at index: Int) {
+        cancelPhotoLoad()
         guard !items.isEmpty, index >= 0, index < items.count else {
             cleanupPlayer()
             currentPhoto = nil
@@ -174,9 +224,11 @@ public final class ProjectorMediaService: ObservableObject {
         }
 
         self.currentIndex = index
+        cleanupPlayer()
+        currentPhoto = nil
+        guard presentationActive else { return }
         let item = items[index]
-        scanGeneration &+= 1
-        let currentGen = scanGeneration
+        let currentGen = photoGeneration
 
         switch item.type {
         case .photo:
@@ -208,8 +260,14 @@ public final class ProjectorMediaService: ObservableObject {
         scanGeneration &+= 1
         activeScanTask?.cancel()
         activeScanTask = nil
+        cancelPhotoLoad()
+        presentationActive = false
+        needsScan = libraryRootURL != nil
+        isScanning = false
         cleanupPlayer()
         currentPhoto = nil
+        items = []
+        currentIndex = 0
         photoCache.removeAll()
         photoCacheTotalBytes = 0
         mediaState = .empty
@@ -224,13 +282,15 @@ public final class ProjectorMediaService: ObservableObject {
         }
 
         let maxDim = Self.photoMaxPixelDimension
-        Task.detached(priority: .userInitiated) { [weak self] in
+        activePhotoTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
             let downsampled = Self.downsampleImage(at: item.fileURL, maxDimension: maxDim)
 
             guard !Task.isCancelled else { return }
 
             await MainActor.run { [weak self] in
-                guard let self, self.scanGeneration == generation else { return }
+                guard let self, self.presentationActive, self.photoGeneration == generation else { return }
+                self.activePhotoTask = nil
                 guard let image = downsampled else {
                     self.currentPhoto = nil
                     return
@@ -298,9 +358,13 @@ public final class ProjectorMediaService: ObservableObject {
             forName: .AVPlayerItemDidPlayToEndTime,
             object: playerItem,
             queue: .main
-        ) { [weak player] _ in
-            player?.seek(to: .zero)
-            player?.play()
+        ) { [weak self, weak player] _ in
+            Task { @MainActor [weak self, weak player] in
+                guard let self, self.presentationActive,
+                      let player, self.currentVideoPlayer === player else { return }
+                player.seek(to: .zero)
+                player.play()
+            }
         }
         self.playerDidPlayToEndToken = token
 

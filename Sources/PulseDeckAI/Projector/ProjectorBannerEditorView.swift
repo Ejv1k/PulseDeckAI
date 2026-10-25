@@ -94,7 +94,7 @@ public struct ProjectorBannerEditorView: View {
                     .disabled(viewModel.mediaService.items.isEmpty)
 
                     Button("Rescan Media Crate") {
-                        viewModel.updateLibraryRoot(appState.libraryRootURL)
+                        viewModel.rescanMedia()
                     }
 
                     Spacer()

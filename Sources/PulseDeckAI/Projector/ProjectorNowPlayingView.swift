@@ -15,10 +15,7 @@ public struct ProjectorNowPlayingView: View {
     }
 
     public var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 4.0)) { _ in
-            let _ = viewModel.updateNowPlaying(from: appState)
-            cardContent
-        }
+        cardContent
         .background(Color.black.ignoresSafeArea())
     }
 

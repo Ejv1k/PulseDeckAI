@@ -8,9 +8,9 @@ Current merged `main` is `a8095ca64e09c5ba78dc17fff26e76c320e2b430`. PR #17 merg
 
 Phase 4B is now fully merged to `main`.
 
-Phase 5A is actively being developed by two parallel, independent workers with zero overlapping files:
-1. **Worker `pulsedeckai-83` (this slice, branch `ao/unattended-caveman-mode-18/root`, coordinator `pulsedeckai-77`)**: Owns **Projector Window & Visuals** (`PulseDeckApp.swift`, `Projector*` viewmodel/service/router/views/tests, `CONTINUATION.md`, `PHASE_STATUS.md`).
-2. **Worker `pulsedeckai-80` (branch `ao/pr15-fixes/root`, coordinator `pulsedeckai-77`)**: Concurrently and independently owns **Master Safety Lock** (`AppState.swift`, `DeckStudioView.swift`, and safety lock files/tests). In-progress on isolated branch, no open PR yet.
+Phase 5A remains in progress. Projector PR #18 is under review; Master Safety Lock is an independent parallel slice:
+1. **Worker `pulsedeckai-84` (PR #18 continuation, coordinator `pulsedeckai-77`)**: Owns **Projector Window & Visuals**, plus `AudioMeterStatusView.swift` and the UI snapshot distributor required for shared metering. Repairs start from published head `bcd983507acdf7b6cecfc10d3386cfc442e3a59b` on isolated branch `ao/projector-fixes/repair-six`; fast-forward publication targets the existing PR source `ao/unattended-caveman-mode-18/root`. Former worker83's worktree and unverified drafts remain preserved.
+2. **Worker `pulsedeckai-80` (branch `ao/pr15-fixes/root`, coordinator `pulsedeckai-77`)**: Concurrently and independently owns **Master Safety Lock** (`AppState.swift`, `DeckStudioView.swift`, and safety lock files/tests). Master Safety Lock is tracked separately in PR #19 and remains in progress; it is not merged or included in PR #18.
 
 Relevant merged work:
 
@@ -71,7 +71,11 @@ The bounded Phase 5A Projector slice implements a dedicated secondary presentati
      12. `testMutedLoopingVideoIntent`: Strict `isMuted = true` and `volume = 0.0` invariants.
      13. `testDisplayEnumerationAndFallbackAbstraction`: Display enumeration, presentation screen selection, parameter change handling.
      14. `testBlackoutBehaviorAndAudioIsolation`: Solid black state with zero controls and audio engine preservation.
-   - Local gates: `swift build -q`, `swift test -q` (**297 Swift tests, zero failures**), and Python test suite (**40 tests, zero failures**).
+   - Historical gates on original projector head `e53dc4796fbc0372fa6b0419d6265158edfeed67`: 297 Swift and 40 Python tests; PR CI `40153526927` succeeded. Documentation-only head `bcd983507acdf7b6cecfc10d3386cfc442e3a59b` also passed CI `40153771606` with 297/40. Neither run proved the six review findings fixed.
+   - Independent native Sol review `2ca36428-e3c3-43f5-96b1-f596ec7bc560`, provider review `5641125819`, requested changes. No approval exists for these repairs.
+   - Worker84 repairs remove publications from render closures, share one per-AppState UI meter poll, forward actual media publications, route keys through the projector window, rescan explicitly, and gate playback/decoding/slideshow work on mode and window visibility.
+   - New regressions first reproduced unchanged-metadata publication, missing media forwarding, and hidden startup video creation. All three failed before repairs and passed afterward. Additional focused coverage exercises real transfer queues, AppKit event dispatch, photo decode/slide notifications, explicit added-file rescans, and close/reopen/stale-root cancellation.
+   - Final local gate passed: `swift build -q`, 309 Swift tests (including 26 projector tests), and 40 Python tests. Automatic CI for the repair head is pending publication; its exact head/run/result will be recorded in PR #18 and coordinator reports. Coordinator owns the fresh independent audit after green CI; no self-approval or merge is authorized.
 
 ## Non-blocking Followups & Hardening Notes
 

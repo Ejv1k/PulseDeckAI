@@ -3,9 +3,11 @@ import PulseDeckCore
 
 public struct StatusHeaderView: View {
     @ObservedObject var appState: AppState
+    let rescanLibrary: () -> Void
 
-    public init(appState: AppState) {
+    public init(appState: AppState, projectorViewModel: ProjectorViewModel) {
         self.appState = appState
+        self.rescanLibrary = { projectorViewModel.refreshLibrary(from: appState) }
     }
 
     public var body: some View {
@@ -54,9 +56,7 @@ public struct StatusHeaderView: View {
                         .frame(height: 14)
                         .background(DJTheme.border)
 
-                    Button(action: {
-                        appState.refreshLibrary()
-                    }) {
+                    Button(action: rescanLibrary) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
                             Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")

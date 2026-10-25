@@ -418,9 +418,15 @@ PulseDeck AI codifies three automated transition contracts and two performance m
 * **Restore:** Toggling `T` off ramps master volume and EQ back to unity over 800ms.
 
 ### 9.6 RAM-Preloaded Soundboard (`F1`–`F8` Keys)
-* Eight high-priority audio player nodes mapped to keys `F1` through `F8`.
-* Audio assets pre-allocated in unified RAM from `PulseDeck_Library/08_Soundboard_SFX` for instant zero-latency triggering.
-* **Procedural Synthesized Fallback:** If an SFX audio file is missing from disk, a real-time DSP synthesizer generates procedural fallback tones (e.g. $1\,\text{kHz}$ stinger pip, sub-bass 808 kick, or white noise sweep), preventing silent drops.
+* **Eight High-Priority Nodes:** Dedicated `AVAudioPlayerNode` per pad connected to an intermediate `soundboardMixerNode: AVAudioMixerNode` attached exclusively to `masterAudioEngine.rawEngine` and feeding `masterAudioEngine.subMixer`.
+* **Master-Only & Cue Isolation:** SFX routes strictly to Master FOH sound. The Cue (PFL / headphones) audio graph receives zero soundboard signal, preserving pre-fader audition isolation.
+* **Deck Gain, Crossfader & Talkover Preservation:** Soundboard connects downstream of the deck channel faders and talkover vocal-pocket EQ. SFX drops hit at full punchy volume over ducked master music, and triggering pads never mutates, resets, or overwrites Deck A / Deck B crossfader positions, channel gains, or talkover ramp states.
+* **Pre-Allocated Unified RAM:** Audio assets are discovered from `PulseDeck_Library/08_Soundboard_SFX` and mapped deterministically in alphabetical order to Pads F1–F8. Assets are fully decoded and converted into canonical 44.1 kHz, 32-bit Float, stereo buffers off the trigger and render paths during library preload.
+* **Zero-I/O Trigger Path:** Triggering a pad performs zero disk reads, zero decoding, zero network requests, and zero memory allocations—scheduling already pre-allocated RAM buffers directly. Physical device latency is governed solely by the active CoreAudio presentation buffer size.
+* **Bounded Resource Safety:** Asset durations are strictly bounded to $\le 15.0\,\text{s}$, with a $12\,\text{MB}$ per-asset ceiling and a $64\,\text{MB}$ total soundboard RAM budget. Missing, corrupt, unsupported, or oversized files safely fall back to procedural buffers while surfacing honest diagnostic status.
+* **Pre-Synthesized Procedural Fallbacks:** Eight distinct procedural fallback tones (1 kHz stinger pip, 808 sub-bass kick, white noise snare, high chime, metallic rimshot, alternating siren beep, laser zap, and brassy airhorn triad) are pre-synthesized ahead of trigger, guaranteeing no dead air or synthesis overhead in render callbacks.
+* **Deterministic Retrigger & Overlap Policy:** Independent pads overlap polyphonically without cutting off other pads or deck playback. Retriggering the same active pad cuts and restarts that pad monophonically (choke self), preventing runaway voice growth while enabling stutter performance drops.
+* **Keyboard Routing & Hardware Invariant:** Dispatched via SwiftUI and AppKit event routing with duplicate keyDown, held-key, and OS key-repeat suppression. On macOS, function keys F1–F8 may require holding the `Fn` (or Globe) key depending on the user's macOS System Settings (Keyboard > Keyboard Shortcuts > Function Keys). PulseDeck AI enforces no OS-level setting mutations.
 
 ---
 

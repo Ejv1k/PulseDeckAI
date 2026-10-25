@@ -27,16 +27,7 @@ public struct ContentView: View {
         .padding(12)
         .background(DJTheme.background.ignoresSafeArea())
         .onKeyPress(phases: [.down, .repeat]) { press in
-            handleTalkoverKeyPress(press)
+            SoundboardKeyboardRouter.handleKeyPress(press, appState: appState)
         }
-    }
-
-    private func handleTalkoverKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        guard press.characters.lowercased() == "t" else { return .ignored }
-        if press.phase == .repeat || (NSApplication.shared.currentEvent?.isARepeat == true) {
-            return .handled
-        }
-        appState.toggleTalkover()
-        return .handled
     }
 }

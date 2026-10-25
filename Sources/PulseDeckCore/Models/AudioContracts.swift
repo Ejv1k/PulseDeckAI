@@ -250,6 +250,9 @@ public protocol AudioEngineCoordinatorContract: AnyObject, Sendable {
     /// Talkover controller governing Master-only ducking and vocal pocket EQ.
     var talkoverController: TalkoverController { get }
 
+    /// Soundboard controller governing Master-only 8-pad RAM SFX triggers.
+    var soundboardController: SoundboardController { get }
+
     /// True if talkover is active or ramping to active.
     var isTalkoverActive: Bool { get }
 

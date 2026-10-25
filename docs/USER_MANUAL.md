@@ -206,8 +206,12 @@ PulseDeck AI features three transition algorithms accessible via dedicated keybo
   * PulseDeck AI smoothly reduces the master music output **to** approximately 15% of its original linear amplitude (a ~-16.5 dB duck down to 0.15 linear gain) over an 800ms logarithmic curve, while carving a -4.0 dB parametric dip across 300 Hz to 3 kHz. This leaves the backing track subtly audible while providing crystal-clear vocal intelligibility for the MC microphone. Press `T` again to restore full dancefloor volume over 800ms.
 * **RAM-Preloaded Soundboard (`F1` through `F8` Keys):**
   * Preloads up to 8 sound effects from `PulseDeck_Library/08_Soundboard_SFX` directly into unified RAM.
-  * Press any key from `F1` to `F8` for instant zero-latency drops (air horns, risers, chimes).
-  * If a sound file is missing from disk, PulseDeck AI automatically synthesizes a real-time procedural stinger tone so you never get dead air.
+  * Press any key from `F1` to `F8` or click the accessible pad buttons in the studio view for instant drops (air horns, stingers, risers, chimes).
+  * **Zero-I/O Triggering:** Audio assets are pre-decoded and pre-converted into canonical 44.1 kHz 32-bit Float buffers in RAM during library startup or root changes. Triggering a pad performs zero disk I/O, zero decoding, and zero buffer allocations.
+  * **Procedural Synthesized Fallback:** If an SFX audio file is missing, corrupt, unsupported, or exceeds bounds (>15s / 12MB), PulseDeck AI automatically substitutes a musical procedural fallback tone (1 kHz stinger pip, 808 sub kick, noise snare, chime, rimshot, siren, laser zap, airhorn triad) ahead of time, preventing dead air while honestly displaying fallback status in the UI.
+  * **Retrigger & Polyphony Semantics:** Independent pads overlap polyphonically without cutting each other or deck music off. Retriggering the same active pad executes a monophonic cut-and-restart (choke self) to enable stutter performance effects without runaway voice buildup.
+  * **Audio Routing & Isolation:** Soundboard SFX routes exclusively to Master FOH sound, downstream of deck crossfaders and vocal pocket EQ. Drops punch through at full volume even during talkover ducking, while Headphone Cue remains strictly isolated with zero SFX bleed.
+  * **macOS Function Key Behavior:** On Apple keyboards, macOS defaults function keys to system controls (brightness, Mission Control, media). Depending on your macOS configuration, trigger Soundboard pads by holding `Fn` (or Globe) while pressing `F1`–`F8`, or enable *"Use F1, F2, etc. keys as standard function keys"* in macOS System Settings > Keyboard > Keyboard Shortcuts > Function Keys. PulseDeck AI respects user system settings and never mutates OS configuration.
 
 ---
 
@@ -248,7 +252,7 @@ PulseDeck AI includes a dedicated secondary video presentation window designed f
 | **`C`** | Crossfader | Arm and trigger bar-aligned **Hard Cut Transition** | Phase 4 |
 | **`Shift + A`** | Automation | Toggle **Auto-Pilot** automated mix engine | Phase 4 |
 | **`T`** | Master Bus | Toggle **Master Talkover Ducking** (reduces master to ~15% linear amplitude over 800ms + mid-dip) | Phase 4 |
-| **`F1` – `F8`** | Soundboard | Trigger RAM-preloaded sound effects (1 through 8) | Phase 4 |
+| **`F1` – `F8`** | Soundboard | Trigger RAM-preloaded sound effects (1 through 8, hold `Fn` if required by macOS function key settings) | Phase 4 |
 | **`1`** | Projector | Switch Projector to **Mode 1: Audio Spectrum Visualizer** | Phase 5 |
 | **`2`** | Projector | Switch Projector to **Mode 2: Ken Burns Media Slideshow** | Phase 5 |
 | **`3`** | Projector | Switch Projector to **Mode 3: Now Playing / Event Title** | Phase 5 |

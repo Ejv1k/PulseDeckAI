@@ -37,20 +37,13 @@ public struct DeckStudioView: View {
             }
 
             transitionControls()
+
+            soundboardSection()
         }
         .focusable()
         .onKeyPress(phases: [.down, .repeat]) { press in
-            handleTalkoverKeyPress(press)
+            SoundboardKeyboardRouter.handleKeyPress(press, appState: appState)
         }
-    }
-
-    private func handleTalkoverKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        guard press.characters.lowercased() == "t" else { return .ignored }
-        if press.phase == .repeat || (NSApplication.shared.currentEvent?.isARepeat == true) {
-            return .handled
-        }
-        appState.toggleTalkover()
-        return .handled
     }
 
     private func deckPanel(
@@ -348,6 +341,87 @@ public struct DeckStudioView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(DJTheme.border, lineWidth: 1)
         )
+    }
+
+    private func soundboardSection() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.3x3.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(DJTheme.textSecondary)
+                    Text("RAM SOUNDBOARD SFX [F1–F8]")
+                        .font(.system(size: 9.5, weight: .black, design: .monospaced))
+                        .foregroundColor(DJTheme.textPrimary)
+                }
+                Spacer()
+                if appState.soundboardTotalRAMBytes > 0 {
+                    Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textMuted)
+                }
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                ForEach(appState.soundboardPads) { pad in
+                    soundboardPadButton(pad: pad)
+                }
+            }
+        }
+        .padding(8)
+        .background(DJTheme.cardBackground)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DJTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func soundboardPadButton(pad: SoundboardPadSnapshot) -> some View {
+        Button(action: {
+            appState.triggerSoundboardPad(index: pad.index)
+        }) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("[\(pad.keyLabel)]")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textSecondary)
+
+                    Spacer()
+
+                    Circle()
+                        .fill(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange : Color.green))
+                        .frame(width: 5, height: 5)
+                }
+
+                Text(pad.title)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textPrimary)
+                    .lineLimit(1)
+
+                HStack {
+                    Text(pad.isFallback ? "FALLBACK" : "RAM")
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+
+                    Spacer()
+
+                    Text(formatDuration(pad.durationSeconds))
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity)
+            .background(pad.isPlaying ? Color.yellow : DJTheme.cardHeader)
+            .cornerRadius(4)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange.opacity(0.5) : DJTheme.border), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Trigger Pad \(pad.index + 1) (\(pad.title)) - Hotkey: \(pad.keyLabel)")
     }
 
     private func formatDuration(_ duration: Double) -> String {

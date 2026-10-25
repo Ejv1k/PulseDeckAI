@@ -28,6 +28,17 @@ public struct PulseDeckApp: App {
                 }
                 .keyboardShortcut("t", modifiers: [])
             }
+            CommandMenu("Soundboard") {
+                ForEach(0..<8, id: \.self) { index in
+                    Button("Trigger Pad \(index + 1)") {
+                        appState.triggerSoundboardPad(index: index)
+                    }
+                }
+                Divider()
+                Button("Stop All Soundboard Pads") {
+                    appState.stopAllSoundboardPads()
+                }
+            }
         }
     }
 }

@@ -1,10 +1,24 @@
 # PulseDeck AI continuation
 
-Updated: 2026-10-25
+Updated: 2026-10-26
 
-## Verified implementation/documentation baseline at 6322edb (after PR21)
+## Root viewport reachability repair (candidate)
 
-Authoritative implementation and documentation baseline is `6322edb944d82c0888aae1e757a277dba8809468`. PR #21 merged at `2026-10-25T20:44:05Z` via normal AO squash (sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, merge tree `47e2927bc65064edf55bdab4058abcff448ccea9` exactly matching approved feature head `29bfd01afacdd3e1f7d8968d4f028914fc494195`). Automatic post-merge main push CI run [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Native Sol audit `8e85bb1a-c9bf-423a-acee-9e176eb19cba` completed APPROVED (internal); provider review `5645079322` commented internal approval. PR CI [40230402157](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40230402157) (329 Swift / 40 Python) remains distinct historical feature proof. Check remote `main` for subsequent documentation maintenance commits.
+The repair branch `ao/pr15-fixes/root-layout` starts from green main `7ca8763e33a89bdd384ca69bc6a28a6aadfc2a82` (documentation-only PR #22, merged 2026-10-26T10:51:33Z, parent `6322edb944d82c0888aae1e757a277dba8809468`, tree `47de667d434d72da29147590b35e6ceaa6cb4db3`). Its automatic main CI [40310664952](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40310664952) passed 329 Swift and 40 Python tests. This is historical base proof, separate from the repair's new results.
+
+The isolated native geometry check (PID93302) reproduced clipping in the real ContentView at legal 1024×680, 1200×760 and current visible-area 1512×884 proposals. Both output selectors had zero visible area at y=-171.5/-131.5/-69.5 respectively; the only scroll container belonged to the crate list. The ordinary WindowGroup was not launched, so no ordinary-app default/minimum-size behavior is claimed.
+
+Only ContentView changes in production: a root vertical ScrollView keeps all sections reachable, and a finite 300-point library viewport preserves independent nested scrolling. The declared app minimum/ideal sizes, child actions, meter ownership, Safety Lock, Projector, keyboard routing and Core audio implementations are unchanged.
+
+The new dedicated RootLayoutReachabilityTests failed 15 assertions across two tests before the fix, then passed. They check real native control visibility or actual root clip movement at legal viewports, return to the top controls, and independent movement of a 32-crate inner list without moving the root. Final local gates passed `swift build -q`, **331 Swift tests** and **40 Python tests**, zero failures.
+
+Matching-source native positive geometry (PID2291, exit0/reaped) verified the same three sizes with nil audio injection and the unchanged restrictive private host policy. Output selectors are fully visible at y=123; root scrolling by 667/587/463 points reveals the lower audition control and scrolling back restores the output controls. All six native controls were visible or reachable per size. ContentView SHA-256 is `2c974cba3cf4f65dee638115f0103c1699606af52b71ce94ba9afaec698df944`. The host stayed inactive, frontmost app and private fixtures were unchanged, and no ordinary app, audio, provider, AX or permission path was used.
+
+This source snapshot records local proof. The repair PR must receive its own automatic exact-head CI and fresh independent native audit; their actual IDs/results belong in the PR handoff. It is not merged or independently approved here. No audit or merge is self-triggered. Physical pointer/frontmost key/menu delivery, ordinary startup, real output devices/Bluetooth and external projector behavior remain unverified.
+
+## Historical implementation/documentation baseline at 6322edb (after PR21)
+
+The verified PR21 implementation/documentation baseline was `6322edb944d82c0888aae1e757a277dba8809468`. PR #21 merged at `2026-10-25T20:44:05Z` via normal AO squash (sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, merge tree `47e2927bc65064edf55bdab4058abcff448ccea9` exactly matching approved feature head `29bfd01afacdd3e1f7d8968d4f028914fc494195`). Automatic post-merge main push CI run [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Native Sol audit `8e85bb1a-c9bf-423a-acee-9e176eb19cba` completed APPROVED (internal); provider review `5645079322` commented internal approval. PR CI [40230402157](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40230402157) (329 Swift / 40 Python) remains distinct historical feature proof. Check remote `main` for subsequent documentation maintenance commits.
 
 Phase 5A and Phase 5B are now completely merged to `main`.
 
@@ -59,9 +73,9 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 ## Next Operational Steps: Native UI Readiness & Hardware Verification
 
 1. **Operational Native UI Readiness & Smoke Testing**:
-   - Worker 80 leads read-only native UI smoke testing on macOS host to verify SwiftUI views, window controllers, and interaction workflows against merged `main`.
-   - Preserve all existing branches, worktrees, and media assets.
-   - Do not perform feature additions or scope changes during verification.
+   - Isolated native host PID85908 passed real root controls, Projector lifecycle/modes/blackout and native text binding without audio or activation. This does not prove ordinary startup, physical input or App menus.
+   - Legal-viewport geometry exposed root overflow; the bounded repair and its current proof are recorded above. Exact-head CI and independent review remain release gates.
+   - Preserve all existing branches, worktrees, media assets and native evidence; no feature expansion is part of this repair.
 2. **Hardware & Physical IO Verification (Deferred/Unverified)**:
    - Physical output audio interfaces and dual stereo routing remain unverified on hardware.
    - External HDMI/DisplayPort display scaling and projector disconnect recovery remain unverified on physical hardware.

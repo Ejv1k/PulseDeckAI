@@ -24,7 +24,7 @@ public struct StatusHeaderView: View {
                         .font(.system(size: 20, weight: .black, design: .monospaced))
                         .foregroundColor(DJTheme.textPrimary)
 
-                    Text("PHASE 3B STUDIO")
+                    Text("STUDIO")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -72,10 +72,12 @@ public struct StatusHeaderView: View {
                                 .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(StudioPressableStyle())
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(appState.isScanning)
                     .opacity(appState.isScanning ? 0.7 : 1.0)
+                    .accessibilityLabel("Rescan Library")
+                    .accessibilityHint("Scans library directory for new audio tracks and crates")
                     .help("Rescan library directory (⌘R)")
                 }
             }

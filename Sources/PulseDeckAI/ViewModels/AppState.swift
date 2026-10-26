@@ -701,9 +701,11 @@ public final class AppState: ObservableObject {
                 guard !Task.isCancelled, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
                 self.analysisStatuses[relativePath] = .complete
                 if let current = self.loadedCache?.tracks[relativePath] {
-                    if self.deckATrack?.relativePath == relativePath,
+                    if self.audioCoordinator?.deckAGraph.loadedTrackURL?.standardizedFileURL == url.standardizedFileURL,
+                       self.deckATrack?.relativePath == relativePath,
                        self.deckATrack?.fileFingerprint == fingerprint { self.deckATrack = current }
-                    if self.deckBTrack?.relativePath == relativePath,
+                    if self.audioCoordinator?.deckBGraph.loadedTrackURL?.standardizedFileURL == url.standardizedFileURL,
+                       self.deckBTrack?.relativePath == relativePath,
                        self.deckBTrack?.fileFingerprint == fingerprint { self.deckBTrack = current }
                 }
                 if self.selectedTrackPath == relativePath,

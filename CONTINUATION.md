@@ -2,7 +2,23 @@
 
 Updated: 2026-10-26
 
-## Root viewport reachability repair (candidate)
+## Library loading, native deck transfer and local analysis repair (candidate)
+
+This branch starts from `84dbb199e551a2c6851bb2545f4873f093cb4921`, the merged root-layout PR #23. Its automatic main push CI [40378538421](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40378538421) passed 331 Swift and 40 Python tests. The delivered local app from that source is the user's reported reference; that historical proof does not prove this new repair.
+
+The production LOAD action silently returned whenever a selected file lacked an analysis-cache entry. The library already selected fresh files, but no decoder or graph load ran. Library drag/deck drop handlers and an app action for the existing local analyzer were also absent.
+
+`AppState.loadTrack(relativePath:deck:)` now validates a readable supported library file and obtains header metadata independently of analysis. Both production LOAD buttons and typed native library drops use that boundary. Empty/corrupt files, invalid or redirected paths, stale-library and multiple-track drops receive visible deck feedback. Safety Lock and pending/armed/running automation retain the existing atomic graph mutation guard; a successful drop focuses its target without changing library selection. Programmatic loads retain their prior keyboard-focus semantics. No Core/audio/keyboard/Projector implementation changes are included.
+
+Each library row exposes an explicit local ANALYZE action, an indeterminate running state, completion or actionable failure. Analysis is optional for playback. LocalTrackAnalyzer computes waveform, trim estimates and heuristic tempo; key remains Unknown and vocal timing is not voice recognition. There is no batch action, automatic analysis on LOAD, cloud requirement or new output route. Analysis and manual edits share the existing WaveformTrackPersisting actor and editor submission/publication chain. File fingerprint checks, root/task cancellation and selection/interaction guards prevent stale results from replacing current editor state; manual cue and bypass overrides survive persistence and reanalysis.
+
+The production row/LOAD Button regression failed four assertions before the behavior fix: loaded URL, metadata, duration and actual offline Master PCM. The same actions pass for fresh WAV and MP3 with default Safety Lock on. Public SwiftUI primitive button activation is used in own-view tests; this is not physical pointer or global event delivery. Typed transfer serialization/dispatch and production drop wiring are tested/inspected without claiming an OS drag gesture. Controlled persistence gates cover newer manual cue/bypass edits, stale selection, source changes and root cancellation. Invalid cache bytes remain untouched and do not block basic loading.
+
+The first candidate full Swift run executed 344 tests and failed only one old test with six assertions: OutputRoutingStudioTests.testDualDeckLoadSelectedTrackIntoDeck retained its WAV writer while opening a separate reader. A bounded private probe proved zero frames before writer finalization and 4,410 afterward. The authorized migration only scopes that test's writer in autoreleasepool, preserving all original assertions and production validation. The dedicated finalized-empty/valid WAV regression and repaired legacy test pass. The workflow group initially passed 14 tests and the migrated legacy test also passed; the repaired intermediate build/full 345 Swift tests passed. A further controlled equal-relative-path/equal-fingerprint case across two roots reproduced one metadata-adoption failure. Requiring the actual loaded graph URL before adopting analysis fixed it without changing transport. The final workflow group passes 15 tests; final `swift build -q` and the full **346 Swift tests** pass, zero failures. The unchanged independent Python suite passes **40/40**. No old baseline suite or workflow was rerun for a checklist.
+
+Private functional checkpoint `191b87893e4f683aa574ee2a6b6ed518b930e46d` is build/focused proof only. DeckStudioView and LibraryBrowserView presentation ownership was explicitly handed to worker82 at that frozen checkpoint; this branch does not consume its later private design work. AppState, editor persistence, transfer helper, functional tests and these handoff documents remain worker80's scope. New exact-head CI and a fresh independent native audit are required before merge; no approval or merge is claimed here. Ordinary app/audio/device testing remains independently coordinated, with no user-library, provider, input or permission operations in these offline checks.
+
+## Root viewport reachability repair (merged PR #23)
 
 The repair branch `ao/pr15-fixes/root-layout` starts from green main `7ca8763e33a89bdd384ca69bc6a28a6aadfc2a82` (documentation-only PR #22, merged 2026-10-26T10:51:33Z, parent `6322edb944d82c0888aae1e757a277dba8809468`, tree `47de667d434d72da29147590b35e6ceaa6cb4db3`). Its automatic main CI [40310664952](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40310664952) passed 329 Swift and 40 Python tests. This is historical base proof, separate from the repair's new results.
 
@@ -14,7 +30,7 @@ The new dedicated RootLayoutReachabilityTests failed 15 assertions across two te
 
 Matching-source native positive geometry (PID2291, exit0/reaped) verified the same three sizes with nil audio injection and the unchanged restrictive private host policy. Output selectors are fully visible at y=123; root scrolling by 667/587/463 points reveals the lower audition control and scrolling back restores the output controls. All six native controls were visible or reachable per size. ContentView SHA-256 is `2c974cba3cf4f65dee638115f0103c1699606af52b71ce94ba9afaec698df944`. The host stayed inactive, frontmost app and private fixtures were unchanged, and no ordinary app, audio, provider, AX or permission path was used.
 
-This source snapshot records local proof. The repair PR must receive its own automatic exact-head CI and fresh independent native audit; their actual IDs/results belong in the PR handoff. It is not merged or independently approved here. No audit or merge is self-triggered. Physical pointer/frontmost key/menu delivery, ordinary startup, real output devices/Bluetooth and external projector behavior remain unverified.
+PR #23 subsequently merged at `84dbb199e551a2c6851bb2545f4873f093cb4921` on 2026-10-26T18:31:46Z, parent `7ca8763e33a89bdd384ca69bc6a28a6aadfc2a82`. Approved source `391850557ba490f49d836da8b1dad75031cd9980` and merge share tree `3b708e560700eae978a9e85b52f33c0ce31d9e7f`. PR CI40348246514 and automatic main CI40378538421 each passed 331 Swift/40 Python. Native audit d9d99dbb-df19-446a-9ead-b712b3952873 approved internally; provider5654552382 was COMMENTED, not GitHub APPROVED. This is historical root-layout proof, distinct from the new workflow repair. Physical pointer/frontmost key/menu delivery, ordinary startup, real output devices/Bluetooth and external projector behavior remain unverified.
 
 ## Historical implementation/documentation baseline at 6322edb (after PR21)
 
@@ -74,7 +90,7 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 
 1. **Operational Native UI Readiness & Smoke Testing**:
    - Isolated native host PID85908 passed real root controls, Projector lifecycle/modes/blackout and native text binding without audio or activation. This does not prove ordinary startup, physical input or App menus.
-   - Legal-viewport geometry exposed root overflow; the bounded repair and its current proof are recorded above. Exact-head CI and independent review remain release gates.
+   - Legal-viewport geometry exposed root overflow, repaired and merged in PR #23 as recorded above. The current library-workflow candidate still requires its own exact-head CI and independent review.
    - Preserve all existing branches, worktrees, media assets and native evidence; no feature expansion is part of this repair.
 2. **Hardware & Physical IO Verification (Deferred/Unverified)**:
    - Physical output audio interfaces and dual stereo routing remain unverified on hardware.

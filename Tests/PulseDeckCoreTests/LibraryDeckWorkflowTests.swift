@@ -326,4 +326,43 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(f.app.focusedMasterDeck, .deckB)
     }
 
+    func testFinalizedEmptyWAVRejectedAndFinalizedAudioLoads() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let path = "00_Private/finalized.wav"
+        let url = f.root.appendingPathComponent(path)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try autoreleasepool {
+            _ = try AVAudioFile(forWriting: url, settings: format.settings)
+        }
+        XCTAssertEqual(try AVAudioFile(forReading: url).length, 0)
+        XCTAssertThrowsError(try LibraryTrackSource.metadata(at: url, relativePath: path))
+        try autoreleasepool {
+            let writer = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410))
+            buffer.frameLength = buffer.frameCapacity
+            try writer.write(from: buffer)
+        }
+        XCTAssertEqual(try AVAudioFile(forReading: url).length, 4410)
+        XCTAssertTrue(f.app.loadTrack(relativePath: path, deck: .deckA))
+        XCTAssertEqual(f.app.deckATrack?.duration ?? 0, 0.1, accuracy: 0.001)
+    }
+
+    func testAnalysisInNewRootCannotRelabelDeckStillLoadedFromOldRoot() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        let original = try XCTUnwrap(f.app.deckATrack)
+        let originalURL = try XCTUnwrap(f.audio.deckAGraph.loadedTrackURL)
+        let other = f.root.appendingPathComponent("another-library", isDirectory: true)
+        try FileManager.default.createDirectory(at: other.appendingPathComponent("00_Private"), withIntermediateDirectories: true)
+        let copiedURL = other.appendingPathComponent(f.path)
+        try FileManager.default.copyItem(at: originalURL, to: copiedURL)
+        // Equal bytes/mtime/size can exist in different libraries; root identity still matters.
+        XCTAssertEqual(try LibraryTrackSource.fingerprint(at: copiedURL), original.fileFingerprint)
+        f.app.libraryRootURL = other
+        await f.app.analyzeTrack(relativePath: f.path).value
+        XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
+        XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, originalURL)
+        XCTAssertEqual(f.app.deckATrack, original, "New-root analysis must not relabel an old-root loaded deck")
+    }
+
 }

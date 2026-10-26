@@ -242,6 +242,7 @@ public struct DeckStudioView: View {
                 ),
                 in: 0.0...1.0
             )
+            .accessibilityIdentifier("crossfaderSlider")
             .accentColor(DJTheme.textAccent)
             .disabled(appState.isTransitionBusy)
 

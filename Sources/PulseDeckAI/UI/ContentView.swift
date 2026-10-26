@@ -33,8 +33,23 @@ public struct ContentView: View {
 
                 // Architectural Contracts Specification (Collapsible for Performance Focus)
                 DisclosureGroup(isExpanded: $isContractsExpanded) {
-                    ArchitectureStatusView()
-                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Label(PulseDeckCoreConfig.hardwareBaseline, systemImage: "cpu")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+
+                            Divider().frame(height: 12)
+
+                            Label("macOS 14+ / Swift 6", systemImage: "apple.terminal")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+                        }
+                        .padding(.horizontal, 4)
+
+                        ArchitectureStatusView()
+                    }
+                    .padding(.top, 4)
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "shield.checkerboard")

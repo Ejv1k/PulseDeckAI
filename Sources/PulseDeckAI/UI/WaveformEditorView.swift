@@ -389,8 +389,12 @@ public struct WaveformEditorView: View {
         isHovered: Bool,
         isSelected: Bool
     ) -> some View {
-        VStack(spacing: 0) {
-            // Top Badge Handle
+        let badgeHalfWidth: CGFloat = 28
+        let clampedBadgeX = min(max(x, badgeHalfWidth + 2), max(badgeHalfWidth + 2, width - badgeHalfWidth - 2))
+        let badgeOffsetX = clampedBadgeX - x
+
+        return VStack(spacing: 0) {
+            // Top Badge Handle (anchored within canvas bounds to prevent edge clipping)
             HStack(spacing: 2) {
                 Text(cue.shortLabel)
                     .font(.system(size: 8, weight: .black, design: .monospaced))
@@ -408,8 +412,9 @@ public struct WaveformEditorView: View {
             .cornerRadius(3)
             .shadow(color: isDragging || isSelected ? cue.color.opacity(0.9) : .clear, radius: 4)
             .scaleEffect(isDragging ? 1.08 : (isHovered ? 1.04 : 1.0))
+            .offset(x: badgeOffsetX)
 
-            // Vertical Guide Line
+            // Vertical Guide Line (stays strictly at the true cue timestamp position)
             Rectangle()
                 .fill(cue.color)
                 .frame(width: isDragging || isSelected ? 2.5 : 1.5)

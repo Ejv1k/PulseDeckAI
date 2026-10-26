@@ -1,46 +1,59 @@
 import XCTest
 import AppKit
+import AVFoundation
 import SwiftUI
 @testable import PulseDeckCore
 @testable import PulseDeckAI
 
-/// Real-composition layout tests proving that actual production children fit and remain reachable
-/// at legal minimum (1024x680) and standard (1512x884) viewports.
 @MainActor
 final class StudioCompositionLayoutTests: XCTestCase {
     @MainActor
     private final class RealisticFixture {
         let root: URL
         let state: AppState
+        let audio: AudioEngineCoordinator
         let projector = ProjectorViewModel()
 
         init() throws {
-            root = FileManager.default.temporaryDirectory.appendingPathComponent("StudioLayout-" + UUID().uuidString)
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("RealisticStudio-" + UUID().uuidString)
+            let crateURL = root.appendingPathComponent("Techno")
+            try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
 
-            // Create sample crates with dummy audio files
-            let houseCrate = root.appendingPathComponent("01_House")
-            try FileManager.default.createDirectory(at: houseCrate, withIntermediateDirectories: false)
-            let dummyAudio = houseCrate.appendingPathComponent("Track_01.wav")
-            try Data(repeating: 0, count: 1024).write(to: dummyAudio)
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+            let sampleWAV = crateURL.appendingPathComponent("track1.wav")
+            do {
+                let file = try AVAudioFile(forWriting: sampleWAV, settings: format.settings)
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+                buffer.frameLength = buffer.frameCapacity
+                let data = try XCTUnwrap(buffer.floatChannelData)
+                for frame in 0..<Int(buffer.frameLength) {
+                    let sample = Float(sin(Double(frame) * 0.06) * 0.2)
+                    data[0][frame] = sample
+                    data[1][frame] = sample
+                }
+                try file.write(from: buffer)
+            }
 
-            // Setup cache entry with honest real-world limits (key Unknown, heuristic cues)
-            var cache = PulseDeckLibraryCache(libraryRoot: root.lastPathComponent)
+            audio = AudioEngineCoordinator(hal: MockAudioHardware())
+            try audio.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+            try audio.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+            try audio.start()
+
             let peaks = [Float](repeating: 0.5, count: 200)
             let entry = TrackCacheEntry(
-                relativePath: "01_House/Track_01.wav",
-                fileFingerprint: "fixture",
-                fileSizeBytes: 10_000,
+                relativePath: "Techno/track1.wav",
+                fileFingerprint: "fingerprint-1",
+                fileSizeBytes: 176400,
                 fileModificationTime: "2026-10-26T20:00:00Z",
                 duration: 240.0,
-                sampleRate: 44_100,
+                sampleRate: 44100,
                 channels: 2,
                 bitDepth: 16,
                 bpm: 125.0,
                 musicalKey: "Unknown",
-                confidence: 0.8,
+                confidence: 0.95,
                 waveformMetadata: WaveformMetadata(
-                    sampleCount: Int(240.0 * 44_100),
+                    sampleCount: 240 * 44100,
                     downsampleFactor: 512,
                     peakValues: peaks,
                     lowBandPeaks: peaks,
@@ -57,6 +70,8 @@ final class StudioCompositionLayoutTests: XCTestCase {
                 analyzerVersion: "local-dsp-1",
                 analysisTimestamp: "2026-10-26T20:00:00Z"
             )
+
+            var cache = PulseDeckLibraryCache(libraryRoot: root.lastPathComponent)
             cache.tracks[entry.relativePath] = entry
 
             let cacheURL = root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
@@ -66,8 +81,9 @@ final class StudioCompositionLayoutTests: XCTestCase {
             state = AppState(
                 libraryRootURL: root,
                 waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
+                loadedCache: loadedCache,
                 cacheLoader: { _ in loadedCache },
-                audioCoordinator: nil,
+                audioCoordinator: audio,
                 startCoordinator: false
             )
 
@@ -75,13 +91,44 @@ final class StudioCompositionLayoutTests: XCTestCase {
             state.scanSummary = summary
             state.selectedCrate = summary.crates.first
             state.selectTrack(relativePath: entry.relativePath)
-            state.setMasterSafetyLockEnabled(true)
+            state.setMasterSafetyLockEnabled(false)
         }
 
         func cleanup() {
             projector.teardown()
+            audio.stop()
             try? FileManager.default.removeItem(at: root)
         }
+    }
+
+    private struct ActionCapture: PrimitiveButtonStyle {
+        let onCapture: (@MainActor @escaping () -> Void) -> Void
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.onAppear { onCapture { configuration.trigger() } }
+        }
+    }
+
+    private func pressButton<V: View>(_ button: V) throws {
+        _ = NSApplication.shared
+        let ready = expectation(description: "Button action capture ready")
+        var action: (@MainActor () -> Void)?
+        let host = NSHostingView(rootView: button.buttonStyle(ActionCapture {
+            action = $0
+            ready.fulfill()
+        }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        window.contentView = host
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        host.layoutSubtreeIfNeeded()
+        wait(for: [ready], timeout: 2.0)
+        let execute = try XCTUnwrap(action, "Button action must mount")
+        execute()
     }
 
     private func mountProductionView(_ fixture: RealisticFixture, size: NSSize) -> (NSWindow, NSView) {
@@ -141,35 +188,70 @@ final class StudioCompositionLayoutTests: XCTestCase {
 
             let allViews = descendants(of: root)
 
-            // 1. Verify OutputRoutingView controls are present
+            // 1. Target: OutputRoutingView - Master & Cue output selectors must be mounted and visible
             let popups = allViews.compactMap { $0 as? NSPopUpButton }
-            XCTAssertGreaterThanOrEqual(popups.count, 2, "Master and Cue output selectors must be mounted")
+            let masterSelector = try XCTUnwrap(popups.first, "Master output device selector must be mounted")
+            let cueSelector = try XCTUnwrap(popups.dropFirst().first, "Cue output device selector must be mounted")
+            XCTAssertTrue(masterSelector.convert(masterSelector.bounds, to: root).intersects(root.bounds),
+                          "Master output device selector must be visible on screen in legal viewport")
+            XCTAssertTrue(cueSelector.convert(cueSelector.bounds, to: root).intersects(root.bounds),
+                          "Cue output device selector must be visible on screen in legal viewport")
 
-            // 2. Verify interactive NSControls are present
+            // 2. Target: DeckStudioView - Crossfader slider must be mounted and visible in initial viewport
             let controls = allViews.compactMap { $0 as? NSControl }.filter {
                 !($0 is NSScroller) && $0.bounds.width > 0 && $0.bounds.height > 0
             }
-            XCTAssertGreaterThan(controls.count, 5, "Real transport, slider, and buttons must be mounted")
+            let sliders = controls.compactMap { $0 as? NSSlider }
+            let crossfader = try XCTUnwrap(
+                sliders.first { $0.accessibilityIdentifier() == "crossfaderSlider" } ?? sliders.first { $0.bounds.width <= 200 },
+                "Center mixer crossfader slider must be mounted"
+            )
+            let crossfaderFrame = crossfader.convert(crossfader.bounds, to: root)
+            XCTAssertTrue(crossfaderFrame.intersects(root.bounds),
+                          "Center mixer crossfader must be visible on screen in legal viewport without scrolling")
 
-            // 3. Verify enclosing root scroll exists for guaranteed reachability
+            // 3. Target: Root fail-safe scroll enclosing the layout stack
             let scrollViews = allViews.compactMap { $0 as? NSScrollView }
-            XCTAssertFalse(scrollViews.isEmpty, "Root scroll view must enclose contents for fail-safe reachability")
+            let rootScroll = try XCTUnwrap(
+                scrollViews.first { $0.convert($0.bounds, to: root).width >= root.bounds.width - 24 },
+                "Root fail-safe scroll view must enclose the layout stack"
+            )
 
-            // 4. Verify primary operator controls are visible in viewport without scrolling
-            let viewportRect = NSRect(origin: .zero, size: size)
-            let visibleControls = controls.filter { ctrl in
-                let frameInRoot = ctrl.convert(ctrl.bounds, to: root)
-                return frameInRoot.intersects(viewportRect) && frameInRoot.width > 0 && frameInRoot.height > 0
+            // 4. Target: LibraryBrowserView - Inner scrollers (Crates and Track List) must be visible on screen
+            let libraryScrollers = scrollViews.filter { $0 !== rootScroll }
+            XCTAssertFalse(libraryScrollers.isEmpty, "Library browser crates/tracks scroller must be mounted")
+            for scroller in libraryScrollers {
+                let frameInRoot = scroller.convert(scroller.bounds, to: root)
+                let visibleRect = frameInRoot.intersection(root.bounds)
+                XCTAssertFalse(visibleRect.isNull, "Library browser scroller must be visible within viewport at size \(size)")
+                XCTAssertGreaterThanOrEqual(visibleRect.height, 60, "Library browser scroller must have at least 60pt visible area on screen")
             }
-            XCTAssertGreaterThanOrEqual(visibleControls.count, 6, "Deck transport, popups, and library controls must be visible on screen in legal viewport")
-
-            // 5. Verify library scroll view intersects the viewport
-            let visibleScrollViews = scrollViews.filter { sv in
-                let frameInRoot = sv.convert(sv.bounds, to: root)
-                return frameInRoot.intersects(viewportRect)
-            }
-            XCTAssertGreaterThanOrEqual(visibleScrollViews.count, 2, "Library list scroll must be visible in initial viewport")
         }
+
+        // 7. Verify the actual operator workflow actions execute through production components
+        let trackPath = "Techno/track1.wav"
+
+        // Step A: Select track in library via LibraryTrackSelectionButton
+        let selectButton = LibraryTrackSelectionButton(appState: fixture.state, relativePath: trackPath) {
+            Text("track1.wav")
+        }
+        try pressButton(selectButton.button)
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath, "LibraryTrackSelectionButton must select track")
+
+        // Step B: Load selected track into Deck A via LibraryDeckLoadButton
+        let loadDeckA = LibraryDeckLoadButton(appState: fixture.state, deck: .deckA, title: "DECK A", color: .blue)
+        try pressButton(loadDeckA.button)
+        XCTAssertEqual(fixture.state.deckATrack?.relativePath, trackPath, "LibraryDeckLoadButton must load track into Deck A")
+
+        // Step C: Load selected track into Deck B via LibraryDeckLoadButton
+        let loadDeckB = LibraryDeckLoadButton(appState: fixture.state, deck: .deckB, title: "DECK B", color: .red)
+        try pressButton(loadDeckB.button)
+        XCTAssertEqual(fixture.state.deckBTrack?.relativePath, trackPath, "LibraryDeckLoadButton must load track into Deck B")
+
+        // Step D: Trigger explicit local analysis via LibraryTrackAnalysisButton
+        let analyzeBtn = LibraryTrackAnalysisButton(appState: fixture.state, relativePath: trackPath)
+        try pressButton(analyzeBtn.button)
+        XCTAssertNotNil(fixture.state.analysisStatus(for: trackPath), "LibraryTrackAnalysisButton must start local analysis")
     }
 
     func testCaptureProductionContentViewBitmaps() throws {
@@ -179,7 +261,17 @@ final class StudioCompositionLayoutTests: XCTestCase {
             (size: NSSize(width: 1512, height: 884), name: "studio_composition_1512x884.png")
         ]
 
-        let outDir = URL(fileURLWithPath: "/Users/tomaselagin/.ao/data/artifacts/pulsedeckai-82")
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("studio_bitmaps_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let exportDir: URL? = {
+            if let envPath = ProcessInfo.processInfo.environment["PULSEDECK_ARTIFACT_DIR"],
+               FileManager.default.isWritableFile(atPath: envPath) {
+                return URL(fileURLWithPath: envPath)
+            }
+            return nil
+        }()
 
         for target in targets {
             let (window, root) = mountProductionView(fixture, size: target.size)
@@ -197,9 +289,16 @@ final class StudioCompositionLayoutTests: XCTestCase {
                 continue
             }
 
-            let file = outDir.appendingPathComponent(target.name)
-            try png.write(to: file)
-            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "Saved \(target.name)")
+            // Write and verify in safe temporary directory (works in any CI runner)
+            let tempFile = tempDir.appendingPathComponent(target.name)
+            try png.write(to: tempFile)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
+            XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
+
+            // Mirror to optional export directory if configured
+            if let exportDir {
+                try? png.write(to: exportDir.appendingPathComponent(target.name))
+            }
         }
     }
 }

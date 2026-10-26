@@ -265,14 +265,6 @@ final class StudioCompositionLayoutTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let exportDir: URL? = {
-            if let envPath = ProcessInfo.processInfo.environment["PULSEDECK_ARTIFACT_DIR"],
-               FileManager.default.isWritableFile(atPath: envPath) {
-                return URL(fileURLWithPath: envPath)
-            }
-            return nil
-        }()
-
         for target in targets {
             let (window, root) = mountProductionView(fixture, size: target.size)
             defer { window.contentViewController = nil; window.contentView = nil; window.close() }
@@ -294,11 +286,6 @@ final class StudioCompositionLayoutTests: XCTestCase {
             try png.write(to: tempFile)
             XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
             XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
-
-            // Mirror to optional export directory if configured
-            if let exportDir {
-                try? png.write(to: exportDir.appendingPathComponent(target.name))
-            }
         }
     }
 }

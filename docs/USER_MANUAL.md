@@ -149,10 +149,10 @@ PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) direct
   * **Green:** Mid frequencies ($250\text{--}3500\,\text{Hz}$) — Vocals, snare snaps, pianos, guitars.
   * **Teal / Blue:** High frequencies ($3500\text{--}20000\,\text{Hz}$) — Hi-hats, cymbals, acoustic presence.
 * **The Four Ordered Cue Markers (Metadata & Transition Planning):**
-  1. `startTrimCue` (Yellow Handle): Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero. Set to current playhead via `I` key.
-  2. `vocalEntryCue` (Green Handle): Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection. Set to current playhead via `V` key.
-  3. `mixOutCue` (Red Handle): Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot. Set to current playhead via `M` key.
-  4. `endTrimCue` (Purple Handle): Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`). Set to current playhead via `O` key.
+  1. `startTrimCue` (Emerald Green Handle / "IN"): Bounded marker timestamp estimating initial active audio onset. Used as a reference point for transition alignment. Does **not** truncate ordinary deck playback: loading a deck schedules the audio file from frame zero. Set to current playhead via `I` key.
+  2. `vocalEntryCue` (Electric Cyan Handle / "VOC"): Bounded marker timestamp estimating early vocal entry. Calculated via a temporal duration heuristic (`span * 0.12`); offline analyzers write empty `vocalSegments: []` and do **not** perform audio-based vocal detection. Set to current playhead via `V` key.
+  3. `mixOutCue` (Neon Orange Handle / "OUT"): Target outro transition marker evaluated by the transition engine and one-shot Auto-Pilot. Set to current playhead via `M` key.
+  4. `endTrimCue` (Coral Crimson Handle / "END"): Bounded marker timestamp estimating trailing silence cutoff for transition planning. Does **not** automatically stop ordinary deck playback: ordinary playback schedules through the entire file length (`file.length`). Set to current playhead via `O` key.
 * **Waveform Keyboard Controls (Active when waveform editor is focused):**
   * **`I`**: Snap `startTrimCue` to current playhead position.
   * **`O`**: Snap `endTrimCue` to current playhead position.
@@ -162,7 +162,7 @@ PulseDeck AI mounts **one shared waveform editor** (`WaveformEditorView`) direct
   * **`-` / `_`**: Zoom out timeline.
   * **`[` / `]`**: Scroll timeline left / right by 5 seconds.
   * **`Left / Right Arrow`**: Nudge selected cue handle forward / backward by $\pm 50\,\text{ms}$.
-* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles display and auditioning of track boundaries in the waveform editor without altering persisted cue values. It does **not** alter CoreAudio deck playback scheduling or stop playback on loaded decks. There is **no** keyboard shortcut for bypass; use the toolbar button.
+* **AI Trim Bypass Button:** Clickable toggle button in the waveform header toolbar (`AI TRIM: ACTIVE` / `AI TRIM: BYPASSED`) toggles visual preview of full unedited track bounds in the waveform timeline without altering persisted cue values. It does **not** alter CoreAudio deck playback scheduling or stop playback on loaded decks. There is **no** keyboard shortcut for bypass; use the toolbar button.
 * **Human Override Protection:** Dragging cue handles or setting hotkeys flags fields as user-customized in `.pulsedeck_ai_cache.json`. Rescanning will **never** overwrite your custom cue adjustments.
 
 > [!IMPORTANT]

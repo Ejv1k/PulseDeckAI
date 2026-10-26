@@ -2,18 +2,18 @@
 
 Updated: 2026-10-25
 
-## Project state
+## Verified implementation/documentation baseline at 6322edb (after PR21)
 
-Current authoritative `main` is `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`. PR #19 merged at `2026-10-25T19:45:49Z` via normal AO squash (sole parent `2b2a7b40524d91fd7e51fcb7e06a62ff96b92330`, merge tree `dcc1d39dabb77a2daa8a9a23e8dd0862214693dc` exactly matching approved feature head `b1f6a10140f0825b42f813b33915cf63866e3d71`). Automatic post-merge main push CI run [40227566733](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40227566733) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Native Sol audit `600cf197-b24e-43d1-bc88-d6a3f86cfbfa` completed APPROVED (internal); provider review `5644884694` commented internal approval (not GitHub APPROVED). Feature CI [40225891954](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40225891954) (329 Swift / 40 Python) remains distinct historical feature proof.
+Authoritative implementation and documentation baseline is `6322edb944d82c0888aae1e757a277dba8809468`. PR #21 merged at `2026-10-25T20:44:05Z` via normal AO squash (sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, merge tree `47e2927bc65064edf55bdab4058abcff448ccea9` exactly matching approved feature head `29bfd01afacdd3e1f7d8968d4f028914fc494195`). Automatic post-merge main push CI run [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Native Sol audit `8e85bb1a-c9bf-423a-acee-9e176eb19cba` completed APPROVED (internal); provider review `5645079322` commented internal approval. PR CI [40230402157](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40230402157) (329 Swift / 40 Python) remains distinct historical feature proof. Check remote `main` for subsequent documentation maintenance commits.
 
-Phase 5A is now completely merged to `main`.
+Phase 5A and Phase 5B are now completely merged to `main`.
 
 ### Historical Merge & Recovery Context
 1. **PR #18 (Projector Window & Visuals)**: Merged at `bfd1fc214d9b421321119253705768d3243ee3ce` (parent `a8095ca64e09c5ba78dc17fff26e76c320e2b430`, merge tree `0b0db9fb32e1d5abaf0bd36f295fbb99c173c774`). PR CI [40191168012](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40191168012) passed 313 Swift and 40 Python tests; native Sol audit `136e0ef8-a401-43d5-9ce6-836ab375473a` completed APPROVED; provider review `5643131826` commented internal approval; all 9 review threads were resolved.
 2. **Main Push CI 40192024850**: Automatic main push CI [40192024850](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40192024850) on `bfd1fc2` failed 1 of 313 Swift tests in `testSingleMeterPollingOwnerFansOutDestructiveSnapshotsAndCancels` at line 547 (`XCTAssertNotNil failed - Projector subscription keeps polling alive`). Python tests (40) and build passed.
 3. **PR #20 (Deterministic Meter Liveness Recovery)**: Worker84 controlled diagnosis proved that a legitimate 30 Hz empty polling tick could drain an empty real transfer ring and clear the cached snapshot while the other subscriber remained active, causing the non-nil assertion to fail intermittently. Production code was unchanged; the test was corrected to prove liveness via delivery of a fresh producer frame rather than cached persistence. Approved candidate `bc2bc87c984795f84cda0e173f3920f314a06d05` passed PR CI [40221545843](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40221545843) (313 Swift / 40 Python); native Sol audit `58341716-ee62-46f7-94e6-5e2667e595ae` completed APPROVED; provider review `5644677401` commented internal approval. Squash-merged to `main` at `2b2a7b40524d91fd7e51fcb7e06a62ff96b92330`, restoring main CI to green ([40225347504](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40225347504)).
 4. **PR #19 (Master Safety Lock)**: Concurrently developed by worker80 on branch `ao/pr15-fixes/master-safety-lock`. Combined head `b1f6a10140f0825b42f813b33915cf63866e3d71` integrated green `main` `2b2a7b40524d91fd7e51fcb7e06a62ff96b92330`. Feature CI [40225891954](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40225891954) passed 329 Swift / 40 Python tests; native Sol audit `600cf197-b24e-43d1-bc88-d6a3f86cfbfa` completed APPROVED; provider review `5644884694` commented approval. Merged to `main` at `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9` at 2026-10-25T19:45:49Z with main push CI [40227566733](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40227566733) SUCCESS (329 Swift, 40 Python).
-5. **Phase 5B (Final Documentation & Polish)**: Worker82 owns shared product documentation (`README.md`, `docs/USER_MANUAL.md`, `docs/TECHNICAL_ARCHITECTURE.md`, `docs/PHASE_STATUS.md`, `CONTINUATION.md`) in isolated branch `private/phase5b-docs-draft`.
+5. **Phase 5B (Final Documentation & Polish)**: Merged in [PR #21](https://github.com/Ejv1k/PulseDeckAI/pull/21) at `6322edb944d82c0888aae1e757a277dba8809468` at 2026-10-25T20:44:05Z (sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, approved head `29bfd01afacdd3e1f7d8968d4f028914fc494195`, merge tree `47e2927bc65064edf55bdab4058abcff448ccea9`). Addressed 6 review comments across docs (`USER_MANUAL.md`, `README.md`, `TECHNICAL_ARCHITECTURE.md`, `PHASE_STATUS.md`, `CONTINUATION.md`) on cue keys (`I`/`O`/`V`/`M`), unbound shortcuts, button workflows, DSP vs UI controls, one-shot Auto-Pilot, and key analysis limits. PR CI [40230402157](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40230402157) and main push CI [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) passed 329 Swift and 40 Python tests. Native Sol audit `8e85bb1a-c9bf-423a-acee-9e176eb19cba` approved; provider review `5645079322` commented approval; all 6 review threads resolved.
 
 Relevant merged work on `main`:
 - [PR #9](https://github.com/Ejv1k/PulseDeckAI/pull/9): Phase 3A waveform UI and cue persistence (`54dbb9712a3f24d97ea6f63b844d21490530a386`).
@@ -27,6 +27,7 @@ Relevant merged work on `main`:
 - [PR #18](https://github.com/Ejv1k/PulseDeckAI/pull/18): Phase 5A secondary Projector window and visuals (`bfd1fc214d9b421321119253705768d3243ee3ce`).
 - [PR #20](https://github.com/Ejv1k/PulseDeckAI/pull/20): Test-only recovery for shared meter polling liveness (`2b2a7b40524d91fd7e51fcb7e06a62ff96b92330`).
 - [PR #19](https://github.com/Ejv1k/PulseDeckAI/pull/19): Phase 5A Master Deck Safety Lock (`cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`).
+- [PR #21](https://github.com/Ejv1k/PulseDeckAI/pull/21): Phase 5B product documentation and alignment with shipped runtime (`6322edb944d82c0888aae1e757a277dba8809468`).
 
 ---
 
@@ -55,22 +56,17 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 
 ---
 
-## Next Concrete Steps: Complete Phase 5B Documentation
+## Next Operational Steps: Native UI Readiness & Hardware Verification
 
-1. **Worker 82 (Phase 5B)**:
-   - PR #21 opened at https://github.com/Ejv1k/PulseDeckAI/pull/21 (base `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`). CI runs 40228292349 and 40229634047 passed (329 Swift, 40 Python).
-   - Addressed review comments:
-     1. `docs/USER_MANUAL.md:139`: Corrected waveform cue hotkeys (`I`, `O`, `V`, `M`), removed non-existent `Y` key, clarified clickable AI Trim Bypass button. Thread `PRRT_kwDOVJOZu86wEieD`.
-     2. `docs/USER_MANUAL.md:222`: Removed unbound shortcuts (`A`/`B` deck select, `Q`/`W` PFL, `B`/`W`/`C` transitions, `Shift + A` AutoPilot); documented on-screen pickers and button workflows. Thread `PRRT_kwDOVJOZu86wEieF`.
-     3. `docs/USER_MANUAL.md:119`: Rewrote UI walkthrough and ASCII layout diagram around shipped `ContentView`; distinguished backend CoreAudio DSP (EQ, resonant filter, TimePitch) from available channel strip controls (LOAD, PLAY/PAUSE, STOP, CUE). Thread `PRRT_kwDOVJOZu86wEieI`.
-     4. `docs/USER_MANUAL.md:152`: Rewrote Auto-Pilot as implemented one-shot cue-armed transition runner (`ARM`/`DISARM`/`CANCEL`), removing claims of dynamic AI strategy selection or continuous mixing. Thread `PRRT_kwDOVJOZu86wEieK`.
-     5. `docs/USER_MANUAL.md:118`: Clarified musical key and vocal analysis limits; distinguished cached-key compatibility from audio key/vocal detection. Thread `PRRT_kwDOVJOZu86wEieL`.
-     6. `docs/USER_MANUAL.md:154`: Removed automatic trim-stop and start-trim guarantees for ordinary deck playback (`DeckAudioGraph` schedules from frame 0 to `file.length`). Thread `PRRT_kwDOVJOZu86wEieN`.
-   - Commit and push fix commit to `origin ao/phase5b-docs/final-docs`.
-   - Resolve review threads.
-   - Watch automatic exact-head PR CI once.
-   - Report checkpoint to AO orchestrator and message coordinator `pulsedeckai-77`.
-   - HOLD for coordinator independent native Sol/high docs audit and final merge instructions.
+1. **Operational Native UI Readiness & Smoke Testing**:
+   - Worker 80 leads read-only native UI smoke testing on macOS host to verify SwiftUI views, window controllers, and interaction workflows against merged `main`.
+   - Preserve all existing branches, worktrees, and media assets.
+   - Do not perform feature additions or scope changes during verification.
+2. **Hardware & Physical IO Verification (Deferred/Unverified)**:
+   - Physical output audio interfaces and dual stereo routing remain unverified on hardware.
+   - External HDMI/DisplayPort display scaling and projector disconnect recovery remain unverified on physical hardware.
+   - Bluetooth audio output latency and clock drift remain unverified.
+   - Live cloud LLM provider API credentials and rate limits remain external.
 
 ---
 
@@ -79,6 +75,6 @@ Developed by worker80 in PR #19 and merged to `main` at `cfd7d206da1bb455fbbcf5d
 - **Strictly Output-Only**: Zero `engine.inputNode` calls, zero microphone permissions, zero audio input latency overhead.
 - **Real-Time Safety**: Render callbacks execute without allocations, locks, or ARC retain/release.
 - **Non-Destructive Cue Editing**: Waveform cue editing playhead is strictly isolated; moving cue markers does not alter live Master audio playback.
-- **Accurate Review Reporting**: Native AO audit approvals (`APPROVED / up_to_date`) remain distinct from GitHub bot comments (`COMMENTED`). Grok review history accurately recorded (pre-model failure + 900s timeout; no approval exists).
-- **Tooling Invariants**: All AO and Grok launcher repairs, backups, and deployments remain cancelled.
+- **Accurate Review Reporting**: Native AO audit approvals (`APPROVED / up_to_date`) remain distinct from provider `COMMENTED` reviews. Grok review history accurately recorded (pre-model failure + 900s timeout; no approval exists).
+- **Tooling Invariants**: Normal AO workflow APIs operated as expected for sessions and automations. All launcher repairs, backups, snapshots, and manual deployments remain cancelled. Zero AO database, harness configuration, or installer modifications were performed.
 - **Hardware Verification Scope**: Offline CI verifies audio graphs, PCM math, vDSP analysis, transition curves, RAM soundboard preloading, and secondary window event routing. Physical output audio devices, HDMI display scaling, Bluetooth latency/clock drift, live cloud provider endpoints, and physical pointer automation remain unverified.

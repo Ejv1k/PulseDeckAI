@@ -149,6 +149,13 @@ public enum WaveformEditIntent: Sendable {
 /// Asynchronous persistence boundary shared by the editor and its production background actor.
 public protocol WaveformTrackPersisting: Sendable {
     func persistTrack(_ track: TrackCacheEntry, libraryRootURL: URL, intent: WaveformEditIntent) async throws -> PulseDeckLibraryCache
+    func persistAnalysis(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache
+}
+
+extension WaveformTrackPersisting {
+    public func persistAnalysis(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache {
+        throw LibraryTrackSource.Failure("This editor persistence provider does not support local analysis.")
+    }
 }
 
 /// Serial background executor actor for atomic cache persistence, ensuring all decoding,
@@ -183,6 +190,30 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         cache.tracks[track.relativePath] = entryToSave
         cache.generatedAt = ISO8601DateFormatter().string(from: Date())
 
+        try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
+        return cache
+    }
+
+    /// Shares this actor with manual edits, so analysis cannot race a cue cache transaction.
+    public func persistAnalysis(_ track: TrackCacheEntry, libraryRootURL: URL) async throws -> PulseDeckLibraryCache {
+        try Task.checkCancellation()
+        let file = try LibraryTrackSource.url(relativePath: track.relativePath, root: libraryRootURL)
+        guard try LibraryTrackSource.fingerprint(at: file) == track.fileFingerprint else {
+            throw LibraryTrackSource.Failure("The file changed before analysis could be saved.")
+        }
+        let cacheURL = libraryRootURL.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        var cache: PulseDeckLibraryCache
+        if FileManager.default.fileExists(atPath: cacheURL.path) {
+            guard let loaded = CachePersistence.load(from: cacheURL) else {
+                throw WaveformEditorError.invalidExistingCache(cacheURL.lastPathComponent)
+            }
+            cache = loaded
+        } else {
+            cache = PulseDeckLibraryCache(libraryRoot: libraryRootURL.lastPathComponent)
+        }
+        CachePersistence.upsertTrack(track, in: &cache)
+        cache.generatedAt = ISO8601DateFormatter().string(from: Date())
+        try Task.checkCancellation()
         try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
         return cache
     }
@@ -465,6 +496,36 @@ public final class WaveformEditorModel: ObservableObject {
     /// Waits for saves enqueued before this call; the UI remains responsive while persistence suspends.
     func waitForPendingSaves() async {
         await inFlightSaveTask?.value
+    }
+
+    /// Analysis joins the same submission/publication chain as manual saves. Later edits
+    /// cannot publish first and then be overwritten by an older analysis cache snapshot.
+    func persistAnalyzedTrack(_ track: TrackCacheEntry, libraryRootURL root: URL) async throws {
+        let previousSave = inFlightSaveTask
+        let persistence = persistenceActor
+        let operation = Task { [weak self] () -> Result<Void, any Error> in
+            await previousSave?.value
+            do {
+                try Task.checkCancellation()
+                guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else {
+                    throw CancellationError()
+                }
+                let cache = try await persistence.persistAnalysis(track, libraryRootURL: root)
+                try Task.checkCancellation()
+                guard self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else {
+                    throw CancellationError()
+                }
+                self.cachePublicationGenerations[root.standardizedFileURL, default: 0] &+= 1
+                self.onTrackPersisted?(cache.tracks[track.relativePath] ?? track, cache, root)
+                return .success(())
+            } catch { return .failure(error) }
+        }
+        inFlightSaveTask = Task { _ = await operation.value }
+        try await withTaskCancellationHandler {
+            try await operation.value.get()
+        } onCancel: {
+            operation.cancel()
+        }
     }
 
     /// Updates an already-loaded track with fresh cached metadata/analysis from disk while

@@ -1,9 +1,10 @@
 # PulseDeck AI Phase Status
 
-Updated: 2026-10-25
+Updated: 2026-10-26
 
 | Phase | Status | Evidence / boundary |
 | --- | --- | --- |
+| Operational root viewport reachability | Candidate repair; CI/review required | ContentView root scrolling and finite 300-point library viewport restore real control reachability at legal sizes. New regressions fail 15 assertions before repair and pass after; local build/331 Swift/40 Python pass. Native PID2291 confirms actual scrolling and return to top at 1024×680, 1200×760 and 1512×884. Not merged or independently approved in this snapshot. |
 | Phase 0: operational foundation | Complete | Foundation and library/cache behavior remain on `main`; no Phase 0 work is part of this continuation. |
 | Phase 1A: output device handling | Merged | Dual-output device binding and recovery are part of the current `main` ancestry. |
 | Phase 1B: dual engines and deck graphs | Merged | PR #4 merged at `5005a9d6f58af72cdf8116c35bf1ded0e972eb96`. |
@@ -18,9 +19,19 @@ Updated: 2026-10-25
 | Phase 5A: Master Safety Lock | Merged (PR #19) | Merged in [PR #19](https://github.com/Ejv1k/PulseDeckAI/pull/19) at `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9` at 2026-10-25T19:45:49Z (parent `2b2a7b40524d91fd7e51fcb7e06a62ff96b92330`, approved head `b1f6a10140f0825b42f813b33915cf63866e3d71`, merge tree `dcc1d39dabb77a2daa8a9a23e8dd0862214693dc`). Post-merge main push CI [40227566733](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40227566733) passed **329 Swift tests** and **40 Python tests** with zero failures. Native Sol audit `600cf197-b24e-43d1-bc88-d6a3f86cfbfa` completed APPROVED (internal); provider review `5644884694` commented approval. Feature CI `40225891954` (329 Swift / 40 Python) remains separate historical feature proof. Phase 5A is completely merged to `main`. |
 | Phase 5B: Final Documentation & Polish | Merged | PR #21 merged at `2026-10-25T20:44:05Z` via normal AO squash (commit `6322edb944d82c0888aae1e757a277dba8809468`, sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, tree `47e2927bc65064edf55bdab4058abcff448ccea9`). Approved feature head was `29bfd01afacdd3e1f7d8968d4f028914fc494195`. Exact PR CI [40230402157](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40230402157) and post-merge main push CI [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) passed 329 Swift and 40 Python tests. Native Sol audit `8e85bb1a-c9bf-423a-acee-9e176eb19cba` approved; provider review `5645079322` commented approval; all 6 review threads resolved. Aligns documentation with shipped runtime controls and capabilities. |
 
-## Verified implementation/documentation baseline at 6322edb (after PR21)
+## Current root viewport repair checkpoint
 
-Authoritative implementation and documentation baseline is `6322edb944d82c0888aae1e757a277dba8809468` (PR #21 squash merge, sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, tree `47e2927bc65064edf55bdab4058abcff448ccea9`). Approved feature head was `29bfd01afacdd3e1f7d8968d4f028914fc494195`. Automatic post-merge main push CI run [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Check git repository or remote `main` for subsequent documentation maintenance commits.
+Base main is `7ca8763e33a89bdd384ca69bc6a28a6aadfc2a82` (documentation-only PR #22; main CI [40310664952](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40310664952) SUCCESS, 329 Swift / 40 Python). Historical base CI does not prove the repair.
+
+The real-root geometry negative (PID93302) placed output selectors above legal bounds at y=-171.5/-131.5/-69.5 for minimum/ideal/current-visible proposals. ContentView now supplies a root vertical scroll container and a bounded library viewport; the app's 1024×680 minimum and 1200×760 ideal values are unchanged. No Core, AppState, keyboard, Safety Lock or Projector component changed.
+
+Two dedicated regressions check actual control rectangles/scroll movement and independent nested crate scrolling: 15 failures before repair, both tests passing after. Final local build, **331 Swift tests** and **40 Python tests** pass. Matching-source native positive PID2291 exited0 after proving all six controls visible/reachable, lower-control scrolling and return to the top at all three legal sizes. The private host stayed inactive and audio-free; its policy and fixtures were unchanged.
+
+Automatic exact-head repair CI and a fresh independent native audit remain required and will be recorded in the PR handoff. Local proof is not independent approval. Ordinary WindowGroup default/minimum behavior, physical input/menus, real output/Bluetooth and external projector behavior remain unverified. The repair is not recorded as merged here.
+
+## Historical implementation/documentation baseline at 6322edb (after PR21)
+
+The verified PR21 implementation/documentation baseline was `6322edb944d82c0888aae1e757a277dba8809468` (PR #21 squash merge, sole parent `cfd7d206da1bb455fbbcf5de6ce13be42fd081d9`, tree `47e2927bc65064edf55bdab4058abcff448ccea9`). Approved feature head was `29bfd01afacdd3e1f7d8968d4f028914fc494195`. Automatic post-merge main push CI run [40232158237](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40232158237) completed **SUCCESS** with **329 Swift tests** and **40 Python tests**, zero failures. Check git repository or remote `main` for subsequent documentation maintenance commits.
 
 ### Review & Operational Invariants
 * **Native Review vs GitHub Approval:** Native AO audits completed with `APPROVED / up_to_date` verdicts. External GitHub provider accounts recorded `COMMENTED` reviews with approval text rather than native `state: APPROVED` pull request reviews. All required review threads across merged PRs are resolved.

@@ -9,23 +9,27 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 8) {
-            StatusHeaderView(appState: appState, projectorViewModel: projectorViewModel)
+        ScrollView(.vertical) {
+            VStack(spacing: 8) {
+                StatusHeaderView(appState: appState, projectorViewModel: projectorViewModel)
 
-            OutputRoutingView(appState: appState)
+                OutputRoutingView(appState: appState)
 
-            AudioMeterStatusView(appState: appState)
+                AudioMeterStatusView(appState: appState)
 
-            DeckStudioView(appState: appState)
+                DeckStudioView(appState: appState)
 
-            WaveformEditorView(model: appState.waveformEditorModel)
+                WaveformEditorView(model: appState.waveformEditorModel)
 
-            LibraryBrowserView(appState: appState)
-                .frame(maxHeight: .infinity)
+                // Keep the nested crate/track scrollers finite inside the root's vertical content.
+                LibraryBrowserView(appState: appState)
+                    .frame(height: 300)
 
-            ArchitectureStatusView()
+                ArchitectureStatusView()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
         }
-        .padding(12)
         .background(DJTheme.background.ignoresSafeArea())
         .onKeyPress(phases: [.down, .repeat]) { press in
             SoundboardKeyboardRouter.handleKeyPress(press, appState: appState)

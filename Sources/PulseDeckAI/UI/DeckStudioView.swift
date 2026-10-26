@@ -8,6 +8,7 @@ public struct DeckStudioView: View {
     @ObservedObject var appState: AppState
     @StateObject private var safetyKeyboard: MasterSafetyLockKeyboardRouter
     @FocusState private var isStudioFocused: Bool
+    @State private var isSoundboardExpanded: Bool = false
 
     public init(appState: AppState) {
         self.appState = appState
@@ -379,31 +380,41 @@ public struct DeckStudioView: View {
     }
 
     private func soundboardSection() -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
+            DisclosureGroup(isExpanded: $isSoundboardExpanded) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                    ForEach(appState.soundboardPads) { pad in
+                        soundboardPadButton(pad: pad)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
                     Image(systemName: "square.grid.3x3.fill")
                         .font(.system(size: 9))
                         .foregroundColor(DJTheme.textSecondary)
                     Text("RAM SOUNDBOARD SFX [F1–F8]")
                         .font(.system(size: 9.5, weight: .black, design: .monospaced))
                         .foregroundColor(DJTheme.textPrimary)
-                }
-                Spacer()
-                if appState.soundboardTotalRAMBytes > 0 {
-                    Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(DJTheme.textMuted)
-                }
-            }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(appState.soundboardPads) { pad in
-                    soundboardPadButton(pad: pad)
+                    if !isSoundboardExpanded {
+                        Text("· 8 PADS ACTIVE (HOTKEYS ON)")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                    }
+
+                    Spacer()
+
+                    if appState.soundboardTotalRAMBytes > 0 {
+                        Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                    }
                 }
             }
         }
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(DJTheme.cardBackground)
         .cornerRadius(6)
         .overlay(

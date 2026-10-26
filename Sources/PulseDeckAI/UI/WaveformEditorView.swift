@@ -10,6 +10,7 @@ public struct WaveformEditorView: View {
     @FocusState private var isWaveformFocused: Bool
     @State private var hoveredCue: CueType? = nil
     @State private var dragInitialHandle: (cue: CueType, x: CGFloat)? = nil
+    @State private var isDetailedEditorExpanded: Bool = false
     private static let waveformCoordinateSpaceName = "WaveformContainerCoordinateSpace"
 
     public init(model: WaveformEditorModel) {
@@ -17,27 +18,32 @@ public struct WaveformEditorView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             // Header Bar
             headerToolbar
 
             // Main Waveform Canvas & Cue Handles
             waveformContainer
-                .frame(height: 190)
+                .frame(height: isDetailedEditorExpanded ? 160 : 64)
 
-            // Minimap Overview Scroller (visible when zoomed in)
-            if model.zoomLevel > 1.05 {
-                waveformMinimap
-                    .frame(height: 20)
+            if isDetailedEditorExpanded {
+                // Minimap Overview Scroller (visible when zoomed in)
+                if model.zoomLevel > 1.05 {
+                    waveformMinimap
+                        .frame(height: 20)
+                }
+
+                // Cue Summary & Nudge Controls
+                cueSummaryBar
+
+                // Keyboard hints & status bar
+                footerStatusBar
+            } else {
+                // Compact Cue Strip with expand button
+                compactCueBar
             }
-
-            // Cue Summary & Nudge Controls
-            cueSummaryBar
-
-            // Keyboard hints & status bar
-            footerStatusBar
         }
-        .padding(10)
+        .padding(8)
         .background(DJTheme.cardBackground)
         .cornerRadius(6)
         .overlay(
@@ -305,12 +311,11 @@ public struct WaveformEditorView: View {
                     .overlay(
                         HStack {
                             Spacer()
-                            if model.aiTrimBypass {
-                                Text("TRIM BYPASSED")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.orange.opacity(0.8))
-                                    .rotationEffect(.degrees(-90))
-                                    .padding(.trailing, 2)
+                            if model.aiTrimBypass && startX > 50 {
+                                Text("BYPASS")
+                                    .font(.system(size: 7.5, weight: .black, design: .monospaced))
+                                    .foregroundColor(.orange.opacity(0.85))
+                                    .padding(.trailing, 4)
                             }
                         }
                     )
@@ -388,15 +393,17 @@ public struct WaveformEditorView: View {
             // Top Badge Handle
             HStack(spacing: 2) {
                 Text(cue.shortLabel)
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                    .font(.system(size: 8, weight: .black, design: .monospaced))
                     .foregroundColor(.black)
 
                 Text(formatTime(cueTime))
-                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                     .foregroundColor(.black)
             }
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 4)
-            .padding(.vertical, 2)
+            .padding(.vertical, 1.5)
             .background(cue.color)
             .cornerRadius(3)
             .shadow(color: isDragging || isSelected ? cue.color.opacity(0.9) : .clear, radius: 4)
@@ -411,11 +418,11 @@ public struct WaveformEditorView: View {
             // Bottom Grip Pill
             Circle()
                 .fill(cue.color)
-                .frame(width: 8, height: 8)
+                .frame(width: 7, height: 7)
                 .shadow(color: cue.color.opacity(0.8), radius: 3)
         }
-        .frame(width: 32, height: height)
-        .contentShape(Rectangle())
+        .frame(height: height)
+        .contentShape(Rectangle().size(width: 32, height: height))
         .onHover { inside in
             hoveredCue = inside ? cue : (hoveredCue == cue ? nil : hoveredCue)
         }
@@ -596,6 +603,79 @@ public struct WaveformEditorView: View {
                     .buttonStyle(.plain)
                 }
             }
+
+            Button(action: { isDetailedEditorExpanded = false }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 8))
+                    Text("COMPACT")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(DJTheme.textSecondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(DJTheme.cardHeader)
+                .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var compactCueBar: some View {
+        HStack(spacing: 6) {
+            ForEach(CueType.allCases) { cue in
+                let cueTime = model.cueTime(for: cue)
+                let isSelected = model.selectedCue == cue
+
+                Button(action: {
+                    model.selectedCue = cue
+                    model.seekPlayhead(to: cueTime)
+                }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(cue.color)
+                            .frame(width: 6, height: 6)
+
+                        Text(cue.shortLabel)
+                            .font(.system(size: 8.5, weight: .black, design: .monospaced))
+                            .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
+
+                        Text(formatTime(cueTime))
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textPrimary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(isSelected ? cue.color.opacity(0.18) : DJTheme.cardHeader)
+                    .cornerRadius(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(isSelected ? cue.color : Color.clear, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            Button(action: {
+                isDetailedEditorExpanded = true
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 8))
+                    Text("NUDGE & MINIMAP")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(DJTheme.textSecondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(DJTheme.cardHeader)
+                .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help("Expand detailed cue nudge controls and minimap")
         }
         .padding(.horizontal, 4)
     }

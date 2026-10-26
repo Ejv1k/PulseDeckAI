@@ -154,6 +154,21 @@ final class StudioCompositionLayoutTests: XCTestCase {
             // 3. Verify enclosing root scroll exists for guaranteed reachability
             let scrollViews = allViews.compactMap { $0 as? NSScrollView }
             XCTAssertFalse(scrollViews.isEmpty, "Root scroll view must enclose contents for fail-safe reachability")
+
+            // 4. Verify primary operator controls are visible in viewport without scrolling
+            let viewportRect = NSRect(origin: .zero, size: size)
+            let visibleControls = controls.filter { ctrl in
+                let frameInRoot = ctrl.convert(ctrl.bounds, to: root)
+                return frameInRoot.intersects(viewportRect) && frameInRoot.width > 0 && frameInRoot.height > 0
+            }
+            XCTAssertGreaterThanOrEqual(visibleControls.count, 6, "Deck transport, popups, and library controls must be visible on screen in legal viewport")
+
+            // 5. Verify library scroll view intersects the viewport
+            let visibleScrollViews = scrollViews.filter { sv in
+                let frameInRoot = sv.convert(sv.bounds, to: root)
+                return frameInRoot.intersects(viewportRect)
+            }
+            XCTAssertGreaterThanOrEqual(visibleScrollViews.count, 2, "Library list scroll must be visible in initial viewport")
         }
     }
 

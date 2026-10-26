@@ -594,8 +594,20 @@ struct LibraryTrackAnalysisButton: View {
 
     var button: some View {
         Button { appState.analyzeTrack(relativePath: relativePath) } label: {
-            Label("ANALYZE", systemImage: "waveform.path")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+            HStack(spacing: 4) {
+                Image(systemName: "waveform.path")
+                Text("ANALYZE")
+            }
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(DJTheme.deckA.opacity(0.15))
+            .cornerRadius(3)
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
+            )
         }
         .disabled(appState.isAnalyzingLibraryTrack)
         .help(appState.isAnalyzingLibraryTrack

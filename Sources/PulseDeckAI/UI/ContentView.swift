@@ -5,13 +5,13 @@ import PulseDeckCore
 public struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var projectorViewModel: ProjectorViewModel
-    @State private var isContractsExpanded: Bool = true
+    @State private var isContractsExpanded: Bool = false
 
     public init() {}
 
     public var body: some View {
         ScrollView(.vertical) {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 // Top Branding & Library Status Ribbon
                 StatusHeaderView(appState: appState, projectorViewModel: projectorViewModel)
 
@@ -29,7 +29,7 @@ public struct ContentView: View {
 
                 // DJ Crates Sidebar & Track Browser
                 LibraryBrowserView(appState: appState)
-                    .frame(minHeight: 280, idealHeight: 300)
+                    .frame(minHeight: 240, idealHeight: 280)
 
                 // Architectural Contracts Specification (Collapsible for Performance Focus)
                 DisclosureGroup(isExpanded: $isContractsExpanded) {

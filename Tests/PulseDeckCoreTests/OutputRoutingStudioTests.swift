@@ -674,11 +674,14 @@ final class OutputRoutingStudioTests: XCTestCase {
         // Create test WAV file
         let trackURL = tempDir.appendingPathComponent("test_track.wav")
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100.0, channels: 2)!
-        let file = try AVAudioFile(forWriting: trackURL, settings: format.settings)
-        let frameCount = AVAudioFrameCount(44100.0 * 2.0)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        try file.write(from: buffer)
+        // Finalize the WAV header before a separate production reader opens it.
+        try autoreleasepool {
+            let file = try AVAudioFile(forWriting: trackURL, settings: format.settings)
+            let frameCount = AVAudioFrameCount(44100.0 * 2.0)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+            buffer.frameLength = frameCount
+            try file.write(from: buffer)
+        }
 
         let peaks = [Float](repeating: 0.5, count: 200)
         let entry = TrackCacheEntry(

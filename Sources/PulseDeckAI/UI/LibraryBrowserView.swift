@@ -582,6 +582,7 @@ struct LibraryTrackSelectionButton<Label: View>: View {
 
     var button: some View {
         Button { appState.selectTrack(relativePath: relativePath) } label: { label() }
+            .accessibilityIdentifier("trackSelectButton-\(relativePath)")
     }
 
     var body: some View { button }
@@ -614,6 +615,7 @@ struct LibraryTrackAnalysisButton: View {
               ? "One local analysis is running. Playback and library selection remain available."
               : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown.")
         .accessibilityLabel("Analyze \(relativePath) locally")
+        .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
     }
 
     var body: some View {

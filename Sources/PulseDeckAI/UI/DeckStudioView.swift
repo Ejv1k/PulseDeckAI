@@ -167,6 +167,8 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
+                .accessibilityIdentifier("deckPlayPauseButton-\(deck.rawValue)")
+                .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
 
                 Button {
                     appState.focusMasterDeck(deck)
@@ -178,6 +180,7 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
+                .accessibilityIdentifier("deckStopButton-\(deck.rawValue)")
                 .accessibilityLabel("Stop \(title)")
                 .help("Stop and rewind this deck. On-air decks require Safety Lock off.")
 
@@ -200,6 +203,8 @@ public struct DeckStudioView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("deckCueButton-\(deck.rawValue)")
+                .accessibilityLabel("Cue \(title)")
                 .help("Toggle Pre-Fader Listen (PFL) in headphones")
             }
         }
@@ -210,6 +215,9 @@ public struct DeckStudioView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(color.opacity(appState.focusedMasterDeck == deck ? 0.9 : 0.35), lineWidth: 1)
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("deckPanel-\(deck.rawValue)")
+        .accessibilityLabel(title)
         .dropDestination(for: LibraryTrackTransfer.self) { items, _ in
             appState.loadDroppedTracks(items, deck: deck)
         }
@@ -543,6 +551,7 @@ struct LibraryDeckLoadButton: View {
               ? "Select a library track first. Analysis is optional."
               : "Load the selected library file into \(title). Analysis is optional; Safety Lock and automation still apply.")
         .accessibilityLabel("Load selected track into \(title)")
+        .accessibilityIdentifier("deckLoadButton-\(deck.rawValue)")
     }
 
     var body: some View { button.buttonStyle(.plain) }

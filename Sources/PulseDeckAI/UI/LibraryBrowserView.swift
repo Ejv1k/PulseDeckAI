@@ -1,5 +1,6 @@
 import SwiftUI
 import PulseDeckCore
+import UniformTypeIdentifiers
 
 public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
@@ -222,6 +223,7 @@ public struct LibraryBrowserView: View {
                                 let isPreviewing = appState.previewTrackPath == relPath
                                 let trackEntry = appState.loadedCache?.tracks[relPath]
                                 let comp = trackEntry.flatMap { appState.compatibility(for: $0) }
+                                let transfer = LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath)
 
                                 HStack(spacing: 10) {
                                     // Row index & track selection button
@@ -243,6 +245,8 @@ public struct LibraryBrowserView: View {
                                         }
                                     }
                                     .buttonStyle(.plain)
+                                    .draggable(transfer)
+                                    .onDrag { transfer.itemProvider }
 
                                     Spacer()
 
@@ -342,8 +346,10 @@ public struct LibraryBrowserView: View {
                                 .padding(.horizontal, 6)
                                 .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                 .cornerRadius(4)
+                                .contentShape(Rectangle())
                                 .listRowBackground(DJTheme.cardBackground)
-                                .draggable(LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath))
+                                .draggable(transfer)
+                                .onDrag { transfer.itemProvider }
                             }
                         }
                         .listStyle(.plain)
@@ -628,3 +634,20 @@ struct LibraryTrackAnalysisButton: View {
         }
     }
 }
+
+extension LibraryTrackTransfer {
+    var itemProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        if let data = try? JSONEncoder().encode(self) {
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.pulseDeckLibraryTrack.identifier,
+                visibility: .all
+            ) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
+    }
+}
+

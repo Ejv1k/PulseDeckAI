@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 import SwiftUI
 import AVFoundation
+import CryptoKit
 @testable import PulseDeckCore
 @testable import PulseDeckAI
 
@@ -14,17 +15,17 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let app: AppState
         let path = "00_Private/fresh.wav"
 
-        init(persistence: (any WaveformTrackPersisting)? = nil) throws {
+        init(persistence: (any WaveformTrackPersisting)? = nil, duration: Double = 1, clicks: Bool = false) throws {
             root = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryWorkflow-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root.appendingPathComponent("00_Private"), withIntermediateDirectories: true)
             let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
             do {
                 let file = try AVAudioFile(forWriting: root.appendingPathComponent(path), settings: format.settings)
-                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(44100 * duration)))
                 buffer.frameLength = buffer.frameCapacity
                 let data = try XCTUnwrap(buffer.floatChannelData)
                 for frame in 0..<Int(buffer.frameLength) {
-                    let sample = Float(sin(Double(frame) * 0.06) * 0.2)
+                    let sample: Float = clicks ? (frame % 22050 < 353 ? 0.9 : 0) : Float(sin(Double(frame) * 0.06) * 0.2)
                     data[0][frame] = sample; data[1][frame] = sample
                 }
                 try file.write(from: buffer)
@@ -363,6 +364,253 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, originalURL)
         XCTAssertEqual(f.app.deckATrack, original, "New-root analysis must not relabel an old-root loaded deck")
+    }
+
+    private func cachedEntry(root: URL, path: String, fingerprint: String? = nil) throws -> TrackCacheEntry {
+        let analyzed = try LocalTrackAnalyzer().analyze(url: root.appendingPathComponent(path), libraryRoot: root)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(analyzed)) as? [String: Any])
+        object["bpm"] = 120.0
+        object["beatGrid"] = ["firstBeatOffsetSeconds": 0.0, "beatIntervalSeconds": 0.5, "beatTimestamps": [0.0, 0.5]]
+        object["cueMarkers"] = ["startTrimCue": 0.0, "vocalEntryCue": 0.2, "mixOutCue": 0.5, "endTrimCue": 1.0]
+        if let fingerprint { object["fileFingerprint"] = fingerprint }
+        return try JSONDecoder().decode(TrackCacheEntry.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    private func sha256(_ url: URL) throws -> String {
+        SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func replaceAudio(at url: URL) throws {
+        let oldDate = try XCTUnwrap(url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        try autoreleasepool {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+            buffer.frameLength = buffer.frameCapacity
+            let channels = try XCTUnwrap(buffer.floatChannelData)
+            for frame in 0..<Int(buffer.frameLength) {
+                let sample = Float(sin(Double(frame) * 0.13) * 0.05)
+                channels[0][frame] = sample; channels[1][frame] = sample
+            }
+            try file.write(from: buffer)
+        }
+        try FileManager.default.setAttributes([.modificationDate: oldDate.addingTimeInterval(10)], ofItemAtPath: url.path)
+    }
+
+    func testSamePathEqualDurationReplacementDoesNotReuseOldStatOrSHAAnalysis() async throws {
+        for useSHA in [false, true] {
+            let f = try Fixture(); defer { f.cleanup() }
+            let url = f.root.appendingPathComponent(f.path)
+            let old = try cachedEntry(root: f.root, path: f.path, fingerprint: useSHA ? sha256(url) : nil)
+            let otherPath = "00_Private/other.wav"
+            try FileManager.default.copyItem(at: url, to: f.root.appendingPathComponent(otherPath))
+            let other = try cachedEntry(root: f.root, path: otherPath)
+            try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [f.path: old, otherPath: other]),
+                                            to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            try replaceAudio(at: url)
+            XCTAssertNotEqual(try LibraryTrackSource.fingerprint(at: url), old.fileFingerprint)
+            await f.app.selectTrack(relativePath: f.path).value
+            try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)
+            await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA)
+            XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, url)
+            XCTAssertEqual(f.app.deckATrack?.duration ?? 0, old.duration, accuracy: 0.001)
+            XCTAssertEqual(f.app.deckATrack?.bpm, 0, "Changed audio must not inherit the previous track's tempo")
+            XCTAssertEqual(f.app.deckATrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: url))
+            XCTAssertTrue(f.app.deckATrack?.beatGrid.beatTimestamps.isEmpty == true)
+            XCTAssertTrue(f.app.loadTrack(relativePath: otherPath, deck: .deckB))
+            f.app.updateCrossfader(position: 0)
+            f.app.toggleDeckPlay(deck: .deckA)
+            f.app.transitionMacroStyle = .hardCutOnDrop
+            f.app.transitionPhraseBars = 1
+            XCTAssertFalse(f.app.transitionIsReady, "Automation must not consume the previous file's analysis")
+            XCTAssertTrue(f.app.transitionReadinessMessage?.contains("Analyze") == true)
+            let peak = try f.peak()
+            XCTAssertGreaterThan(peak, 0.02)
+            XCTAssertLessThan(peak, 0.08, "The loaded PCM must come from the new quieter file")
+        }
+    }
+
+    func testMatchingStatAndSHAAnalysisRetainedWithoutChangingGraphSchedule() async throws {
+        for useSHA in [false, true] {
+            let f = try Fixture(); defer { f.cleanup() }
+            let url = f.root.appendingPathComponent(f.path)
+            let entry = try cachedEntry(root: f.root, path: f.path, fingerprint: useSHA ? sha256(url) : nil)
+            try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [f.path: entry]),
+                                            to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            await f.app.selectTrack(relativePath: f.path).value
+            XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+            let generation = f.audio.deckAGraph.scheduleGeneration
+            if useSHA {
+                XCTAssertEqual(f.app.deckATrack?.bpm, 0, "Full-file SHA checking must not block loading")
+                XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Validating") == true)
+            }
+            await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA)
+            XCTAssertEqual(f.app.deckATrack?.fileFingerprint, entry.fileFingerprint)
+            XCTAssertEqual(f.app.deckATrack?.bpm, 120)
+            XCTAssertEqual(f.app.deckATrack?.beatGrid, entry.beatGrid)
+            XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
+            if useSHA {
+                // Reanalysis uses the other supported fingerprint representation; adoption
+                // must still recognize the actual loaded source rather than its cache encoding.
+                await f.app.analyzeTrack(relativePath: f.path).value
+                XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
+                XCTAssertEqual(f.app.deckATrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: url))
+                XCTAssertEqual(f.app.deckATrack?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
+                XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
+            }
+        }
+    }
+
+    func testSHARejectsChangedContentEvenWhenSizeAndModificationTimeArePreserved() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let url = f.root.appendingPathComponent(f.path)
+        let oldDate = try XCTUnwrap(url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        let oldStat = try LibraryTrackSource.fingerprint(at: url)
+        let oldSHA = try sha256(url)
+        let cached = try cachedEntry(root: f.root, path: f.path, fingerprint: oldSHA)
+        try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [f.path: cached]),
+                                        to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+        try replaceAudio(at: url)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: url.path)
+        XCTAssertEqual(try LibraryTrackSource.fingerprint(at: url), oldStat)
+        XCTAssertNotEqual(try sha256(url), oldSHA)
+        await f.app.selectTrack(relativePath: f.path).value
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA)
+        XCTAssertEqual(f.app.deckATrack?.bpm, 0)
+        XCTAssertEqual(f.app.deckATrack?.fileFingerprint, oldStat)
+        XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("stale") == true)
+    }
+
+    private actor FingerprintGate {
+        let entered: XCTestExpectation
+        private var continuation: CheckedContinuation<Void, Never>?
+        init(_ entered: XCTestExpectation) { self.entered = entered }
+        func hold() async {
+            await withCheckedContinuation {
+                continuation = $0
+                entered.fulfill()
+            }
+        }
+        func open() { continuation?.resume(); continuation = nil }
+    }
+
+    func testCancelledSHAVerificationCannotPublishAfterReplacementOrRootChange() async throws {
+        for changeRoot in [false, true] {
+            let f = try Fixture(); defer { f.cleanup() }
+            let url = f.root.appendingPathComponent(f.path)
+            let entry = try cachedEntry(root: f.root, path: f.path, fingerprint: sha256(url))
+            let otherPath = "00_Private/other.wav"
+            try FileManager.default.copyItem(at: url, to: f.root.appendingPathComponent(otherPath))
+            let other = try cachedEntry(root: f.root, path: otherPath)
+            try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [f.path: entry, otherPath: other]),
+                                            to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            await f.app.selectTrack(relativePath: f.path).value
+            let entered = expectation(description: "SHA verification held off MainActor")
+            let gate = FingerprintGate(entered)
+            f.app.beforeCachedFingerprintValidationForTesting = { await gate.hold() }
+            XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+            let completion = Task { await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA) }
+            await fulfillment(of: [entered], timeout: 5)
+            if changeRoot {
+                f.app.libraryRootURL = f.root.appendingPathComponent("another-root")
+            } else {
+                XCTAssertTrue(f.app.loadTrack(relativePath: otherPath, deck: .deckA))
+            }
+            let before = f.app.deckATrack
+            let generation = f.audio.deckAGraph.scheduleGeneration
+            await gate.open()
+            await completion.value
+            XCTAssertEqual(f.app.deckATrack, before)
+            XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
+            if !changeRoot { XCTAssertEqual(f.app.deckATrack?.relativePath, otherPath) }
+        }
+    }
+
+    func testUnchangedPythonSHAReanalysisRefreshesBothDecksAndReadinessWithoutReload() async throws {
+        let f = try Fixture(duration: 30, clicks: true); defer { f.cleanup() }
+        let otherPath = "00_Private/other.wav"
+        try FileManager.default.copyItem(at: f.root.appendingPathComponent(f.path), to: f.root.appendingPathComponent(otherPath))
+        var tracks: [String: TrackCacheEntry] = [:]
+        for path in [f.path, otherPath] {
+            var entry = try LocalTrackAnalyzer().analyze(url: f.root.appendingPathComponent(path), libraryRoot: f.root)
+            XCTAssertEqual(entry.bpm, 120, accuracy: 0.1)
+            entry.cueMarkers = CueMarkers(startTrimCue: 0, vocalEntryCue: 0.2, mixOutCue: 20, endTrimCue: 30)
+            entry.manualOverrides = ManualOverrides(isManual: true, overriddenFields: ["cueMarkers"])
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+            object["fileFingerprint"] = try sha256(f.root.appendingPathComponent(path))
+            tracks[path] = try JSONDecoder().decode(TrackCacheEntry.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: tracks),
+                                        to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+        await f.app.selectTrack(relativePath: f.path).value
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        XCTAssertTrue(f.app.loadTrack(relativePath: otherPath, deck: .deckB))
+        await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA)
+        await f.app.waitForPendingDeckAnalysisValidation(deck: .deckB)
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        f.app.transitionMacroStyle = .filterEchoWash
+        f.app.transitionPhraseBars = 1
+        XCTAssertNil(f.app.transitionReadinessMessage)
+        let a = f.audio.deckAGraph.scheduleGeneration
+        let b = f.audio.deckBGraph.scheduleGeneration
+        for path in [f.path, otherPath] { await f.app.analyzeTrack(relativePath: path).value }
+        XCTAssertEqual(f.app.deckATrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: f.root.appendingPathComponent(f.path)))
+        XCTAssertEqual(f.app.deckBTrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: f.root.appendingPathComponent(otherPath)))
+        XCTAssertNil(f.app.transitionReadinessMessage, "An encoding change must not revoke unchanged audio's measured readiness")
+        XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
+        XCTAssertFalse(f.audio.deckBGraph.isMasterPlaying)
+        XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, a)
+        XCTAssertEqual(f.audio.deckBGraph.scheduleGeneration, b)
+        XCTAssertEqual(f.app.deckATrack?.cueMarkers.mixOutCue, 20)
+        XCTAssertEqual(f.app.deckBTrack?.cueMarkers.mixOutCue, 20)
+    }
+
+    func testHeldSHAAdoptionUsesCurrentManualEditsAndCannotOverwriteNewLocalAnalysis() async throws {
+        for reanalyze in [false, true] {
+            let f = try Fixture(); defer { f.cleanup() }
+            let url = f.root.appendingPathComponent(f.path)
+            let cached = try cachedEntry(root: f.root, path: f.path, fingerprint: sha256(url))
+            try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [f.path: cached]),
+                                            to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            await f.app.selectTrack(relativePath: f.path).value
+            let entered = expectation(description: "SHA held before current cache publication")
+            let gate = FingerprintGate(entered)
+            f.app.beforeCachedFingerprintValidationForTesting = { await gate.hold() }
+            XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+            let completion = Task { await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA) }
+            await fulfillment(of: [entered], timeout: 5)
+            f.app.waveformEditorModel.setCue(.mixOut, toTime: 0.7)
+            f.app.waveformEditorModel.toggleAITrimBypass()
+            await f.app.waveformEditorModel.waitForPendingSaves()
+            if reanalyze { await f.app.analyzeTrack(relativePath: f.path).value }
+            let latest = try XCTUnwrap(f.app.loadedCache?.tracks[f.path])
+            let generation = f.audio.deckAGraph.scheduleGeneration
+            await gate.open()
+            await completion.value
+            XCTAssertEqual(f.app.deckATrack?.cueMarkers, latest.cueMarkers)
+            XCTAssertEqual(f.app.deckATrack?.aiTrimBypass, latest.aiTrimBypass)
+            XCTAssertEqual(f.app.deckATrack?.fileFingerprint, latest.fileFingerprint)
+            XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
+        }
+    }
+
+    func testPythonRawAudioSHA256GoldenVectorStreamsBeyondOneChunk() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let url = f.root.appendingPathComponent("raw-fingerprint-vector.bin")
+        let block = Data((0...255).map(UInt8.init))
+        var data = Data()
+        for _ in 0..<4097 { data.append(block) }
+        data.append(contentsOf: [0, 255, 17])
+        try data.write(to: url)
+        // Generated by the actual scripts/analyze_library.py::_fingerprint function over these raw bytes.
+        let expected = "cfa405188b1bedf92e5e70587a4699860fca4b536f78c367161e4cac91f59d15"
+        let identity = try LibraryTrackSource.identity(at: url)
+        let matched = try await Task.detached {
+            try LibraryTrackSource.matchesSHA256(expected, at: url, identity: identity)
+        }.value
+        XCTAssertTrue(matched)
     }
 
 }

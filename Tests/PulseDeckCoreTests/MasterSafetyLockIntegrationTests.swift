@@ -24,18 +24,21 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
                 try audio.start()
                 var tracks: [String: TrackCacheEntry] = [:]
                 for (index, name) in ["a.wav", "b.wav"].enumerated() {
-                    let file = try AVAudioFile(forWriting: root.appendingPathComponent(name), settings: format.settings)
-                    let frames = AVAudioFrameCount(44100 * 30)
-                    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
-                    buffer.frameLength = frames
-                    let data = try XCTUnwrap(buffer.floatChannelData)
-                    for frame in 0..<Int(frames) {
-                        let sample = Float(sin(Double(frame) * (index == 0 ? 0.05 : 0.075)) * 0.2)
-                        data[0][frame] = sample; data[1][frame] = sample
+                    let fileURL = root.appendingPathComponent(name)
+                    try autoreleasepool {
+                        let file = try AVAudioFile(forWriting: fileURL, settings: format.settings)
+                        let frames = AVAudioFrameCount(44100 * 30)
+                        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+                        buffer.frameLength = frames
+                        let data = try XCTUnwrap(buffer.floatChannelData)
+                        for frame in 0..<Int(frames) {
+                            let sample = Float(sin(Double(frame) * (index == 0 ? 0.05 : 0.075)) * 0.2)
+                            data[0][frame] = sample; data[1][frame] = sample
+                        }
+                        try file.write(from: buffer)
                     }
-                    try file.write(from: buffer)
                     tracks[name] = TrackCacheEntry(
-                        relativePath: name, fileFingerprint: "safety-\(name)", fileSizeBytes: 1000,
+                        relativePath: name, fileFingerprint: try LibraryTrackSource.fingerprint(at: fileURL), fileSizeBytes: 1000,
                         fileModificationTime: "2026-10-25T00:00:00Z", duration: 30, sampleRate: 44100,
                         channels: 2, bitDepth: 32, bpm: 120, musicalKey: "8A", confidence: 0.95,
                         waveformMetadata: WaveformMetadata(sampleCount: 64, downsampleFactor: 512,

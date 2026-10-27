@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import CoreTransferable
 import Foundation
 import PulseDeckCore
@@ -37,7 +38,7 @@ enum LibraryTrackAnalysisStatus: Equatable {
     }
 }
 
-/// Filesystem validation and header metadata only. No DSP, cache writes or playback.
+/// Source identity, bounded fingerprint verification and header metadata. No DSP, cache writes or playback.
 enum LibraryTrackSource {
     static func url(relativePath: String, root: URL) throws -> URL {
         let parts = relativePath.split(separator: "/", omittingEmptySubsequences: false)
@@ -60,12 +61,51 @@ enum LibraryTrackSource {
         return file
     }
 
-    static func fingerprint(at url: URL) throws -> String {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard let size = values.fileSize, let date = values.contentModificationDate else {
+    struct Identity: Equatable, Sendable {
+        let fingerprint: String
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    static func identity(at url: URL) throws -> Identity {
+        // Unlike cached URL resource values, this obtains a fresh filesystem stat.
+        let values = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let size = values[.size] as? NSNumber, size.int64Value >= 0,
+              let date = values[.modificationDate] as? Date,
+              let device = values[.systemNumber] as? NSNumber,
+              let inode = values[.systemFileNumber] as? NSNumber else {
             throw Failure("Cannot read the audio file's identity.")
         }
-        return "\(size)-\(Int64(date.timeIntervalSince1970 * 1_000))"
+        let milliseconds = date.timeIntervalSince1970 * 1_000
+        guard milliseconds.isFinite, milliseconds >= Double(Int64.min), milliseconds < Double(Int64.max) else {
+            throw Failure("The audio modification time is invalid.")
+        }
+        return Identity(fingerprint: "\(size.int64Value)-\(Int64(milliseconds))",
+                        device: device.uint64Value, inode: inode.uint64Value)
+    }
+
+    static func fingerprint(at url: URL) throws -> String { try identity(at: url).fingerprint }
+
+    static func isSHA256(_ fingerprint: String) -> Bool {
+        fingerprint.utf8.count == 64 && fingerprint.utf8.allSatisfy {
+            (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+        }
+    }
+
+    /// Call off MainActor: Python caches use a full-file SHA-256, not size/mtime.
+    static func matchesSHA256(_ fingerprint: String, at url: URL, identity expected: Identity) throws -> Bool {
+        try Task.checkCancellation()
+        guard isSHA256(fingerprint), try identity(at: url) == expected else { return false }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        var hash = SHA256()
+        while true {
+            try Task.checkCancellation()
+            guard let data = try file.read(upToCount: 1_048_576), !data.isEmpty else { break }
+            hash.update(data: data)
+        }
+        let actual = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        return try identity(at: url) == expected && actual == fingerprint.lowercased()
     }
 
     static func metadata(at url: URL, relativePath: String) throws -> TrackCacheEntry {

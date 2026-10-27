@@ -1,5 +1,6 @@
 import SwiftUI
 import PulseDeckCore
+import UniformTypeIdentifiers
 
 public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
@@ -49,20 +50,15 @@ public struct LibraryBrowserView: View {
 
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(crate.displayName)
-                                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                                 .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.textPrimary : DJTheme.textSecondary)
-                                                .lineLimit(1)
+                                                .lineLimit(2)
+                                                .multilineTextAlignment(.leading)
 
-                                            HStack(spacing: 6) {
-                                                if !crate.isReadable {
-                                                    Text("Unreadable")
-                                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                        .foregroundColor(.orange)
-                                                } else {
-                                                    Text(crate.hasGitKeep ? ".gitkeep ✓" : "no .gitkeep")
-                                                        .font(.system(size: 9, design: .monospaced))
-                                                        .foregroundColor(DJTheme.textMuted)
-                                                }
+                                            if !crate.isReadable {
+                                                Text("Unreadable")
+                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(.orange)
                                             }
                                         }
 
@@ -227,6 +223,7 @@ public struct LibraryBrowserView: View {
                                 let isPreviewing = appState.previewTrackPath == relPath
                                 let trackEntry = appState.loadedCache?.tracks[relPath]
                                 let comp = trackEntry.flatMap { appState.compatibility(for: $0) }
+                                let transfer = LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath)
 
                                 HStack(spacing: 10) {
                                     // Row index & track selection button
@@ -248,6 +245,8 @@ public struct LibraryBrowserView: View {
                                         }
                                     }
                                     .buttonStyle(.plain)
+                                    .draggable(transfer)
+                                    .onDrag { transfer.itemProvider }
 
                                     Spacer()
 
@@ -347,8 +346,10 @@ public struct LibraryBrowserView: View {
                                 .padding(.horizontal, 6)
                                 .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                 .cornerRadius(4)
+                                .contentShape(Rectangle())
                                 .listRowBackground(DJTheme.cardBackground)
-                                .draggable(LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath))
+                                .draggable(transfer)
+                                .onDrag { transfer.itemProvider }
                             }
                         }
                         .listStyle(.plain)
@@ -582,6 +583,7 @@ struct LibraryTrackSelectionButton<Label: View>: View {
 
     var button: some View {
         Button { appState.selectTrack(relativePath: relativePath) } label: { label() }
+            .accessibilityIdentifier("trackSelectButton-\(relativePath)")
     }
 
     var body: some View { button }
@@ -594,14 +596,27 @@ struct LibraryTrackAnalysisButton: View {
 
     var button: some View {
         Button { appState.analyzeTrack(relativePath: relativePath) } label: {
-            Label("ANALYZE", systemImage: "waveform.path")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+            HStack(spacing: 4) {
+                Image(systemName: "waveform.path")
+                Text("ANALYZE")
+            }
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(DJTheme.deckA.opacity(0.15))
+            .cornerRadius(3)
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
+            )
         }
         .disabled(appState.isAnalyzingLibraryTrack)
         .help(appState.isAnalyzingLibraryTrack
               ? "One local analysis is running. Playback and library selection remain available."
               : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown.")
         .accessibilityLabel("Analyze \(relativePath) locally")
+        .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
     }
 
     var body: some View {
@@ -619,3 +634,20 @@ struct LibraryTrackAnalysisButton: View {
         }
     }
 }
+
+extension LibraryTrackTransfer {
+    var itemProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        if let data = try? JSONEncoder().encode(self) {
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.pulseDeckLibraryTrack.identifier,
+                visibility: .all
+            ) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
+    }
+}
+

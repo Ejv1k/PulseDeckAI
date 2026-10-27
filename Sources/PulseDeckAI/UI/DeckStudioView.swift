@@ -8,6 +8,7 @@ public struct DeckStudioView: View {
     @ObservedObject var appState: AppState
     @StateObject private var safetyKeyboard: MasterSafetyLockKeyboardRouter
     @FocusState private var isStudioFocused: Bool
+    @State private var isSoundboardExpanded: Bool = false
 
     public init(appState: AppState) {
         self.appState = appState
@@ -166,6 +167,8 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
+                .accessibilityIdentifier("deckPlayPauseButton-\(deck.rawValue)")
+                .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
 
                 Button {
                     appState.focusMasterDeck(deck)
@@ -177,6 +180,7 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
+                .accessibilityIdentifier("deckStopButton-\(deck.rawValue)")
                 .accessibilityLabel("Stop \(title)")
                 .help("Stop and rewind this deck. On-air decks require Safety Lock off.")
 
@@ -199,6 +203,8 @@ public struct DeckStudioView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("deckCueButton-\(deck.rawValue)")
+                .accessibilityLabel("Cue \(title)")
                 .help("Toggle Pre-Fader Listen (PFL) in headphones")
             }
         }
@@ -209,6 +215,9 @@ public struct DeckStudioView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(color.opacity(appState.focusedMasterDeck == deck ? 0.9 : 0.35), lineWidth: 1)
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("deckPanel-\(deck.rawValue)")
+        .accessibilityLabel(title)
         .dropDestination(for: LibraryTrackTransfer.self) { items, _ in
             appState.loadDroppedTracks(items, deck: deck)
         }
@@ -233,6 +242,7 @@ public struct DeckStudioView: View {
                 ),
                 in: 0.0...1.0
             )
+            .accessibilityIdentifier("crossfaderSlider")
             .accentColor(DJTheme.textAccent)
             .disabled(appState.isTransitionBusy)
 
@@ -261,7 +271,7 @@ public struct DeckStudioView: View {
                 appState.toggleTalkover()
             }) {
                 HStack(spacing: 4) {
-                    Image(systemName: appState.isTalkoverActive ? "mic.fill" : "mic")
+                    Image(systemName: appState.isTalkoverActive ? "speaker.wave.2.bubble.fill" : "speaker.wave.2.bubble")
                     Text("TALKOVER")
                 }
                 .font(.system(size: 9.5, weight: .black, design: .monospaced))
@@ -276,7 +286,7 @@ public struct DeckStudioView: View {
                 )
             }
             .buttonStyle(.plain)
-            .help("Toggle Master Talkover ducking (-16.5 dB attenuation + vocal pocket EQ, Hotkey: T)")
+            .help("Ducks Master music (-16.5 dB attenuation + vocal pocket EQ); microphone is external (Hotkey: T)")
         }
         .padding(8)
         .background(DJTheme.cardBackground)
@@ -379,31 +389,41 @@ public struct DeckStudioView: View {
     }
 
     private func soundboardSection() -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
+            DisclosureGroup(isExpanded: $isSoundboardExpanded) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                    ForEach(appState.soundboardPads) { pad in
+                        soundboardPadButton(pad: pad)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
                     Image(systemName: "square.grid.3x3.fill")
                         .font(.system(size: 9))
                         .foregroundColor(DJTheme.textSecondary)
                     Text("RAM SOUNDBOARD SFX [F1–F8]")
                         .font(.system(size: 9.5, weight: .black, design: .monospaced))
                         .foregroundColor(DJTheme.textPrimary)
-                }
-                Spacer()
-                if appState.soundboardTotalRAMBytes > 0 {
-                    Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(DJTheme.textMuted)
-                }
-            }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(appState.soundboardPads) { pad in
-                    soundboardPadButton(pad: pad)
+                    if !isSoundboardExpanded {
+                        Text("· 8 PADS ACTIVE (HOTKEYS ON)")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                    }
+
+                    Spacer()
+
+                    if appState.soundboardTotalRAMBytes > 0 {
+                        Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                    }
                 }
             }
         }
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(DJTheme.cardBackground)
         .cornerRadius(6)
         .overlay(
@@ -461,6 +481,9 @@ public struct DeckStudioView: View {
 
     private func formatDuration(_ duration: Double) -> String {
         guard duration.isFinite, duration >= 0.0 else { return "0:00" }
+        if duration < 1.0 {
+            return String(format: "%.1fs", duration)
+        }
         let totalSeconds = Int(duration)
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
@@ -532,6 +555,7 @@ struct LibraryDeckLoadButton: View {
               ? "Select a library track first. Analysis is optional."
               : "Load the selected library file into \(title). Analysis is optional; Safety Lock and automation still apply.")
         .accessibilityLabel("Load selected track into \(title)")
+        .accessibilityIdentifier("deckLoadButton-\(deck.rawValue)")
     }
 
     var body: some View { button.buttonStyle(.plain) }

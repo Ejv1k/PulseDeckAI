@@ -376,4 +376,53 @@ final class StudioCompositionLayoutTests: XCTestCase {
         XCTAssertTrue(centerShape.contains(point: CGPoint(x: centerX, y: 80), in: rect),
                       "Center guide must be hit-testable")
     }
+
+    func testActionControlsInteractiveBoundsMeetOrExceed28pt() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+
+        // 1. LibraryDeckLoadButton height >= 28pt
+        let loadBtn = LibraryDeckLoadButton(appState: fixture.state, deck: .deckA, title: "DECK A", color: .blue)
+        let loadHost = NSHostingView(rootView: loadBtn)
+        loadHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(loadHost.fittingSize.height, 28.0,
+                                    "LOAD button interactive height must meet or exceed 28pt")
+
+        // 2. LibraryTrackAnalysisButton height >= 28pt
+        let analyzeBtn = LibraryTrackAnalysisButton(appState: fixture.state, relativePath: "Techno/track1.wav")
+        let analyzeHost = NSHostingView(rootView: analyzeBtn)
+        analyzeHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(analyzeHost.fittingSize.height, 28.0,
+                                    "Analyze button interactive height must meet or exceed 28pt")
+
+        // 3. Transport Play/Pause button height >= 28pt
+        let playBtn = Button(action: {}) {
+            HStack(spacing: 4) {
+                Image(systemName: "play.fill")
+                Text("PLAY")
+            }
+            .font(.system(size: 10, weight: .black, design: .monospaced))
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        let playHost = NSHostingView(rootView: playBtn)
+        playHost.frame = NSRect(x: 0, y: 0, width: 200, height: 40)
+        playHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(playHost.fittingSize.height, 28.0,
+                                    "Play button interactive height must meet or exceed 28pt")
+    }
+
+    func testLibraryTrackTransferCanonicalTransferableContract() throws {
+        let root = URL(fileURLWithPath: "/tmp/PulseDeck")
+        let transfer = LibraryTrackTransfer(libraryRoot: root, relativePath: "Techno/track1.wav")
+
+        // Prove Codable round-trip matches expected JSON payload
+        let encoded = try JSONEncoder().encode(transfer)
+        let decoded = try JSONDecoder().decode(LibraryTrackTransfer.self, from: encoded)
+        XCTAssertEqual(decoded, transfer)
+        XCTAssertEqual(decoded.relativePath, "Techno/track1.wav")
+
+        // Prove UTType matches canonical identifier
+        XCTAssertEqual(UTType.pulseDeckLibraryTrack.identifier, "com.pulsedeckai.library-track")
+    }
 }

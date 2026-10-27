@@ -243,10 +243,10 @@ public struct LibraryBrowserView: View {
                                                 .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
                                                 .lineLimit(1)
                                         }
+                                        .frame(minHeight: 28)
+                                        .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
-                                    .draggable(transfer)
-                                    .onDrag { transfer.itemProvider }
 
                                     Spacer()
 
@@ -330,7 +330,7 @@ public struct LibraryBrowserView: View {
                                         }
                                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                                         .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
+                                        .frame(minHeight: 28)
                                         .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
                                         .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
                                         .cornerRadius(3)
@@ -338,18 +338,18 @@ public struct LibraryBrowserView: View {
                                             RoundedRectangle(cornerRadius: 3)
                                                 .stroke(DJTheme.cue, lineWidth: 1)
                                         )
+                                        .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Audition in headphones via Cue output")
                                 }
-                                .padding(.vertical, 3)
+                                .padding(.vertical, 2)
                                 .padding(.horizontal, 6)
                                 .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                 .cornerRadius(4)
                                 .contentShape(Rectangle())
                                 .listRowBackground(DJTheme.cardBackground)
                                 .draggable(transfer)
-                                .onDrag { transfer.itemProvider }
                             }
                         }
                         .listStyle(.plain)
@@ -603,13 +603,14 @@ struct LibraryTrackAnalysisButton: View {
             .font(.system(size: 9, weight: .bold, design: .monospaced))
             .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
             .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .frame(minHeight: 28)
             .background(DJTheme.deckA.opacity(0.15))
             .cornerRadius(3)
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
                     .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
         .disabled(appState.isAnalyzingLibraryTrack)
         .help(appState.isAnalyzingLibraryTrack

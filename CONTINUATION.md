@@ -1,8 +1,22 @@
 # PulseDeck AI continuation
 
-Updated: 2026-10-26
+Updated: 2026-10-27
 
-## Library loading, native deck transfer and local analysis repair (candidate)
+## PR #24 review follow-up: loaded source identity (candidate)
+
+Published head `f156fa4622a134b715bddca1a8a07801c38dc319` passed automatic PR CI40397072073 with 346 Swift and 40 Python tests. Native audit `491d8da5-f9a6-4a4b-9bba-62290093cc32` subsequently requested two AppState fixes (provider5658706269, not approval): duration-only cache reuse accepted replaced audio, and comparing analyzer-specific fingerprint strings prevented unchanged Python-cache tracks from adopting local analysis. This historical CI does not prove the follow-up candidate.
+
+The repair validates real source identity before adopting analysis. Local size/millisecond-mtime fingerprints are checked immediately. Existing Python fingerprints are raw-file SHA-256 values; validation streams bounded 1 MiB chunks off MainActor and the audio control/render queues. Header-only loading and playback remain available while hashing, with automation blocked until measured metadata is verified. Adoption requires the current request, root, loaded URL and stable filesystem identity, and resolves the current cache/editor publication rather than adopting a captured old entry. No DSP analysis runs automatically on LOAD.
+
+Loaded source identity is retained independently of the analyzer's fingerprint encoding. An unchanged file can therefore move from Python SHA-256 cache metadata to local size/mtime metadata on both decks without reloading transport, changing schedule generations or losing transition readiness. New-root, changed-source and cancelled/replaced validation results remain rejected. Manual cue/bypass edits and newer local analysis retain priority over a held hash task.
+
+Controlled failure proofs: same-path/equal-duration replacement produced eight failures across stat/SHA cache cases before validation; reinstating the original encoding guard in isolation produced three A/B metadata/readiness failures, then restoring the repair passed. The raw SHA implementation matches a 1,048,835-byte golden vector produced by the actual `scripts/analyze_library.py::_fingerprint` function. Focused proof passes **63 tests** (22 workflow, 16 Safety Lock, 6 transition and 19 Cue), including held current-publication/manual/local-analysis and cancellation cases. The current build and **40 Python tests** also pass.
+
+Only three legacy fixture files migrate invented fingerprints to genuine values after WAV finalization: MasterSafetyLockIntegrationTests.swift, TransitionStudioIntegrationTests.swift and the reference-deck fixture in LibraryCuePreviewTests.swift. All behavioral assertions/scenarios are retained. DeckStudioView, LibraryBrowserView, Core, schema and persistence code remain unchanged in this follow-up; worker82 retains presentation ownership.
+
+The user's offline-only override applies to local testing. The full local suite has not been executed for this follow-up: OutputRoutingStudioTests.testDefaultAppStateStartsCoordinatorAndMonitorsTopology invokes the real SystemAudioHardware startup path through AppState(). Coordinator routing for that existing test boundary is required before claiming a full final gate or publishing. Only private MockHAL/manual-offline PCM has been exercised here. The follow-up is not independently approved, merged, or a native fixed-candidate UI verification.
+
+## Initial PR #24 library workflow proof (historical candidate at f156fa4)
 
 This branch starts from `84dbb199e551a2c6851bb2545f4873f093cb4921`, the merged root-layout PR #23. Its automatic main push CI [40378538421](https://github.com/Ejv1k/PulseDeckAI/actions/runs/40378538421) passed 331 Swift and 40 Python tests. The delivered local app from that source is the user's reported reference; that historical proof does not prove this new repair.
 

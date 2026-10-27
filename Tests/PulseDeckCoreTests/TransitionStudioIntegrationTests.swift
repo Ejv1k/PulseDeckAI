@@ -57,8 +57,8 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         }
         try coordinator.start()
 
-        let entryA = makeEntry(path: "deck-a.wav", startTrimCue: startTrimCueA)
-        let entryB = makeEntry(path: "deck-b.wav")
+        let entryA = try makeEntry(path: "deck-a.wav", startTrimCue: startTrimCueA)
+        let entryB = try makeEntry(path: "deck-b.wav")
         let cache = PulseDeckLibraryCache(tracks: [entryA.relativePath: entryA, entryB.relativePath: entryB])
         appState = AppState(
             libraryRootURL: fixtureRoot,
@@ -401,14 +401,14 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         try file.write(from: buffer)
     }
 
-    private func makeEntry(path: String, startTrimCue: Double = 0) -> TrackCacheEntry {
+    private func makeEntry(path: String, startTrimCue: Double = 0) throws -> TrackCacheEntry {
         let duration = 30.0
         let interval = 0.5
         let timestamps = stride(from: 0.0, to: duration, by: interval).map { $0 }
         let peaks = [Float](repeating: 0.2, count: 64)
         return TrackCacheEntry(
             relativePath: path,
-            fileFingerprint: "test-\(path)",
+            fileFingerprint: try LibraryTrackSource.fingerprint(at: fixtureRoot.appendingPathComponent(path)),
             fileSizeBytes: 1_000,
             fileModificationTime: "2026-10-23T00:00:00Z",
             duration: duration,

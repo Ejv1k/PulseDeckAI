@@ -18,6 +18,9 @@ public final class AppState: ObservableObject {
         didSet {
             if oldValue.standardizedFileURL != libraryRootURL.standardizedFileURL {
                 analysisTask?.cancel()
+                for task in deckAnalysisValidationTasks.values { task.cancel() }
+                deckAnalysisValidationTasks.removeAll()
+                deckAnalysisValidationIDs.removeAll()
                 analysisStatuses = [:]
                 deckLoadMessages = [:]
                 loadedCache = nil
@@ -49,6 +52,10 @@ public final class AppState: ObservableObject {
     @Published private var analysisStatuses: [String: LibraryTrackAnalysisStatus] = [:]
     @Published private(set) var isAnalyzingLibraryTrack = false
     private var analysisTask: Task<Void, Never>?
+    private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
+    private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
+    private var deckLoadedSourceIdentities: [DeckIdentifier: LibraryTrackSource.Identity] = [:]
+    var beforeCachedFingerprintValidationForTesting: (@Sendable () async -> Void)?
 
     // Audio Output Routing State
     @Published public private(set) var availableOutputDevices: [AudioDeviceDescriptor] = []
@@ -145,6 +152,7 @@ public final class AppState: ObservableObject {
     private func readinessMessage(autoPilot: Bool) -> String? {
         guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
         guard coordinator.masterAudioEngine.isRunning else { return "Master output is stopped" }
+        guard deckAnalysisValidationTasks.isEmpty else { return "Validating cached analysis; playback remains available." }
         guard let trackA = trackEntry(for: .deckA), let trackB = trackEntry(for: .deckB) else {
             return deckATrack != nil && deckBTrack != nil
                 ? "Analyze both loaded tracks locally for waveform and beat tools."
@@ -627,11 +635,16 @@ public final class AppState: ObservableObject {
         }
         do {
             let file = try LibraryTrackSource.url(relativePath: relativePath, root: libraryRootURL)
+            let sourceIdentity = try LibraryTrackSource.identity(at: file)
             // Opening a header is enough to load fresh files. Do not synthesize measured analysis.
             let basic = try LibraryTrackSource.metadata(at: file, relativePath: relativePath)
             let cache = loadedCacheRootURL == libraryRootURL.standardizedFileURL ? loadedCache : nil
             let cached = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: cache, libraryRootURL: libraryRootURL)
-            let entry = cached.flatMap { abs($0.duration - basic.duration) < 0.01 ? $0 : nil } ?? basic
+            guard sourceIdentity == (try LibraryTrackSource.identity(at: file)), basic.fileFingerprint == sourceIdentity.fingerprint else {
+                throw LibraryTrackSource.Failure("The file changed while loading. Wait for the copy to finish and load again.")
+            }
+            let durationMatches = cached.map { abs($0.duration - basic.duration) < 0.01 } ?? false
+            let entry = durationMatches && cached?.fileFingerprint == sourceIdentity.fingerprint ? (cached ?? basic) : basic
             guard audioCoordinator != nil else {
                 reportDeckLoadFailure("Audio engine is unavailable; check output routing before loading.", deck: deck)
                 return false
@@ -645,14 +658,78 @@ public final class AppState: ObservableObject {
                 reportDeckLoadFailure(masterSafetyLockMessage ?? statusMessage, deck: deck)
                 return false
             }
+            deckAnalysisValidationTasks[deck]?.cancel()
+            deckAnalysisValidationTasks[deck] = nil
+            deckAnalysisValidationIDs[deck] = nil
+            deckLoadedSourceIdentities[deck] = sourceIdentity
             if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
             deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
             statusMessage = deckLoadMessages[deck] ?? "Loaded"
+            if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
+                validateSHAAnalysis(cached, file: file, identity: sourceIdentity, deck: deck)
+            }
             return true
         } catch {
             reportDeckLoadFailure("Unable to load \(relativePath): \(error.localizedDescription)", deck: deck)
             return false
         }
+    }
+
+    /// Full-file hashing stays off the UI/control queues. Until it succeeds, header-only
+    /// metadata prevents automation from seeing a previous file's grid or cues.
+    private func validateSHAAnalysis(_ cached: TrackCacheEntry, file: URL, identity: LibraryTrackSource.Identity, deck: DeckIdentifier) {
+        let request = UUID()
+        let root = libraryRootURL.standardizedFileURL
+        deckAnalysisValidationIDs[deck] = request
+        deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Validating cached analysis… Playback is available."
+        let beforeValidation = beforeCachedFingerprintValidationForTesting
+        deckAnalysisValidationTasks[deck] = Task { [weak self] in
+            defer {
+                if self?.deckAnalysisValidationIDs[deck] == request {
+                    self?.deckAnalysisValidationTasks[deck] = nil
+                    self?.deckAnalysisValidationIDs[deck] = nil
+                }
+            }
+            do {
+                try Task.checkCancellation()
+                let verification = Task.detached(priority: .utility) {
+                    await beforeValidation?()
+                    return try LibraryTrackSource.matchesSHA256(cached.fileFingerprint, at: file, identity: identity)
+                }
+                let valid = try await withTaskCancellationHandler {
+                    try await verification.value
+                } onCancel: { verification.cancel() }
+                try Task.checkCancellation()
+                guard let self, self.deckAnalysisValidationIDs[deck] == request,
+                      self.libraryRootURL.standardizedFileURL == root,
+                      self.loadedCacheRootURL == root,
+                      try LibraryTrackSource.identity(at: file) == identity else { return }
+                let graph = deck == .deckA ? self.audioCoordinator?.deckAGraph : self.audioCoordinator?.deckBGraph
+                let displayed = deck == .deckA ? self.deckATrack : self.deckBTrack
+                guard graph?.loadedTrackURL?.standardizedFileURL == file.standardizedFileURL,
+                      displayed?.relativePath == cached.relativePath,
+                      displayed?.fileFingerprint == identity.fingerprint,
+                      displayed?.analyzerVersion == "unanalysed-playback" else { return }
+                guard valid,
+                      let latest = self.waveformEditorModel.entryForSelection(relativePath: cached.relativePath,
+                          cache: self.loadedCache, libraryRootURL: root),
+                      latest.fileFingerprint == cached.fileFingerprint,
+                      abs(latest.duration - (displayed?.duration ?? 0)) < 0.01 else {
+                    self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis is stale. Analyze locally for waveform and beat tools."
+                    return
+                }
+                if deck == .deckA { self.deckATrack = latest } else { self.deckBTrack = latest }
+                self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis verified."
+            } catch {
+                guard let self, self.deckAnalysisValidationIDs[deck] == request,
+                      self.libraryRootURL.standardizedFileURL == root else { return }
+                self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis unavailable: \(error.localizedDescription). Analyze locally to retry."
+            }
+        }
+    }
+
+    func waitForPendingDeckAnalysisValidation(deck: DeckIdentifier) async {
+        await deckAnalysisValidationTasks[deck]?.value
     }
 
     @discardableResult
@@ -701,12 +778,17 @@ public final class AppState: ObservableObject {
                 guard !Task.isCancelled, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
                 self.analysisStatuses[relativePath] = .complete
                 if let current = self.loadedCache?.tracks[relativePath] {
-                    if self.audioCoordinator?.deckAGraph.loadedTrackURL?.standardizedFileURL == url.standardizedFileURL,
-                       self.deckATrack?.relativePath == relativePath,
-                       self.deckATrack?.fileFingerprint == fingerprint { self.deckATrack = current }
-                    if self.audioCoordinator?.deckBGraph.loadedTrackURL?.standardizedFileURL == url.standardizedFileURL,
-                       self.deckBTrack?.relativePath == relativePath,
-                       self.deckBTrack?.fileFingerprint == fingerprint { self.deckBTrack = current }
+                    let currentIdentity = try LibraryTrackSource.identity(at: url)
+                    for deck in [DeckIdentifier.deckA, .deckB] {
+                        let graph = deck == .deckA ? self.audioCoordinator?.deckAGraph : self.audioCoordinator?.deckBGraph
+                        guard graph?.loadedTrackURL?.standardizedFileURL == url.standardizedFileURL,
+                              self.deckLoadedSourceIdentities[deck] == currentIdentity else { continue }
+                        self.deckAnalysisValidationTasks[deck]?.cancel()
+                        self.deckAnalysisValidationTasks[deck] = nil
+                        self.deckAnalysisValidationIDs[deck] = nil
+                        if deck == .deckA { self.deckATrack = current } else { self.deckBTrack = current }
+                        self.deckLoadMessages[deck] = "Loaded \(relativePath) · Local analysis ready."
+                    }
                 }
                 if self.selectedTrackPath == relativePath,
                    !self.waveformEditorModel.hasActiveInteraction(since: selectedRevision, relativePath: relativePath, libraryRootURL: root),

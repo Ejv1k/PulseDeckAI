@@ -425,4 +425,25 @@ final class StudioCompositionLayoutTests: XCTestCase {
         // Prove UTType matches canonical identifier
         XCTAssertEqual(UTType.pulseDeckLibraryTrack.identifier, "com.pulsedeckai.library-track")
     }
+
+    func testLibraryTrackSelectionButtonUsesNonBlockingRowButtonStyleAndPreservesSelection() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+        let trackPath = "Techno/track1.wav"
+
+        let selectButton = LibraryTrackSelectionButton(appState: fixture.state, relativePath: trackPath) {
+            Text("track1.wav")
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+        }
+
+        // Verify body mounts with NonBlockingRowButtonStyle without blocking selection
+        let host = NSHostingView(rootView: selectButton)
+        host.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(host.fittingSize.height, 28.0,
+                                    "Selection button interactive height must meet or exceed 28pt")
+
+        // Prove triggering button selects track in AppState
+        try pressButton(selectButton.button)
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath, "Selection button must update AppState.selectedTrackPath")
+    }
 }

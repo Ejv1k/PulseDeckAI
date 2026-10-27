@@ -49,20 +49,15 @@ public struct LibraryBrowserView: View {
 
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(crate.displayName)
-                                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                                 .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.textPrimary : DJTheme.textSecondary)
-                                                .lineLimit(1)
+                                                .lineLimit(2)
+                                                .multilineTextAlignment(.leading)
 
-                                            HStack(spacing: 6) {
-                                                if !crate.isReadable {
-                                                    Text("Unreadable")
-                                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                        .foregroundColor(.orange)
-                                                } else {
-                                                    Text(crate.hasGitKeep ? ".gitkeep ✓" : "no .gitkeep")
-                                                        .font(.system(size: 9, design: .monospaced))
-                                                        .foregroundColor(DJTheme.textMuted)
-                                                }
+                                            if !crate.isReadable {
+                                                Text("Unreadable")
+                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(.orange)
                                             }
                                         }
 

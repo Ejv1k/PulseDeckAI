@@ -29,6 +29,29 @@ public struct OutputRoutingView: View {
                 )
             }
 
+            if let masterUID = appState.masterOutputUID,
+               let cueUID = appState.cueOutputUID,
+               !masterUID.isEmpty,
+               masterUID == cueUID {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("SHARED OUTPUT: Master and Cue route to same physical device (\(appState.masterDeviceDescriptor?.name ?? masterUID)). Headphone audition is audible on Master.")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.orange)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                )
+            }
+
             HStack(spacing: 8) {
                 routingStrip(
                     role: .master,

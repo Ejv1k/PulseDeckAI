@@ -107,77 +107,83 @@ public struct WaveformEditorView: View {
 
             Spacer()
 
-            // Bypass AI Trim Toggle
-            Button(action: {
-                model.toggleAITrimBypass()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: model.aiTrimBypass ? "slash.circle.fill" : "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
+            if model.currentTrack != nil {
+                // Bypass AI Trim Toggle
+                Button(action: {
+                    model.toggleAITrimBypass()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: model.aiTrimBypass ? "slash.circle.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
 
-                    Text(model.aiTrimBypass ? "AI TRIM: BYPASSED" : "AI TRIM: ACTIVE")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(model.aiTrimBypass ? Color.orange.opacity(0.15) : DJTheme.master.opacity(0.15))
-                .cornerRadius(4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(model.aiTrimBypass ? Color.orange : DJTheme.master.opacity(0.6), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .help("Toggle AI Auto-Trim bypass (non-destructive playback trim)")
-
-            Divider()
-                .frame(height: 16)
-                .background(DJTheme.border)
-
-            // Zoom Controls
-            HStack(spacing: 4) {
-                Button(action: { model.zoomOut() }) {
-                    Image(systemName: "minus.magnifyingglass")
-                        .font(.system(size: 11))
-                        .padding(4)
-                        .background(DJTheme.cardHeader)
-                        .cornerRadius(3)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.zoomLevel <= 1.0)
-                .help("Zoom out (-)")
-
-                Text(String(format: "%.1fx", model.zoomLevel))
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(DJTheme.textSecondary)
-                    .frame(width: 36)
-
-                Button(action: { model.zoomIn() }) {
-                    Image(systemName: "plus.magnifyingglass")
-                        .font(.system(size: 11))
-                        .padding(4)
-                        .background(DJTheme.cardHeader)
-                        .cornerRadius(3)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.zoomLevel >= 32.0)
-                .help("Zoom in (+)")
-
-                if model.zoomLevel > 1.05 {
-                    Button("FIT") {
-                        model.resetZoom()
+                        Text(model.aiTrimBypass ? "AI TRIM: BYPASSED" : "AI TRIM: ACTIVE")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
                     }
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(DJTheme.deckA)
-                    .cornerRadius(3)
-                    .buttonStyle(.plain)
-                    .help("Reset to full track view")
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(model.aiTrimBypass ? Color.orange.opacity(0.15) : DJTheme.master.opacity(0.15))
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(model.aiTrimBypass ? Color.orange : DJTheme.master.opacity(0.6), lineWidth: 1)
+                    )
                 }
+                .buttonStyle(.plain)
+                .help("Toggle AI trim cue boundaries for waveform display and cue audition")
+
+                Divider()
+                    .frame(height: 16)
+                    .background(DJTheme.border)
+
+                // Zoom Controls
+                HStack(spacing: 4) {
+                    Button(action: { model.zoomOut() }) {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 11))
+                            .padding(4)
+                            .background(DJTheme.cardHeader)
+                            .cornerRadius(3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.zoomLevel <= 1.0)
+                    .help("Zoom out (-)")
+
+                    Text(String(format: "%.1fx", model.zoomLevel))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.textSecondary)
+                        .frame(width: 36)
+
+                    Button(action: { model.zoomIn() }) {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 11))
+                            .padding(4)
+                            .background(DJTheme.cardHeader)
+                            .cornerRadius(3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.zoomLevel >= 32.0)
+                    .help("Zoom in (+)")
+
+                    if model.zoomLevel > 1.05 {
+                        Button("FIT") {
+                            model.resetZoom()
+                        }
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(DJTheme.cardHeader)
+                        .foregroundColor(DJTheme.deckA)
+                        .cornerRadius(3)
+                        .buttonStyle(.plain)
+                        .help("Reset to full track view")
+                    }
+                }
+            } else {
+                Text("SELECT A TRACK IN CRATE TO INSPECT CUES")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(DJTheme.textMuted)
             }
         }
         .padding(.horizontal, 6)
@@ -212,13 +218,16 @@ public struct WaveformEditorView: View {
                     // Playhead Scrub Marker
                     playheadMarker(width: width, height: height)
                 } else {
-                    // Empty state
-                    VStack(spacing: 6) {
+                    // Compact helpful select/analyze empty state
+                    VStack(spacing: 4) {
                         Image(systemName: "waveform")
-                            .font(.system(size: 28))
+                            .font(.system(size: 20))
                             .foregroundColor(DJTheme.textMuted)
-                        Text("No track loaded in waveform editor")
-                            .font(.system(size: 11, design: .monospaced))
+                        Text("No track active in waveform editor")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(DJTheme.textSecondary)
+                        Text("Select an analyzed track from library to inspect waveform, beat grid, and cues.")
+                            .font(.system(size: 9.5, design: .monospaced))
                             .foregroundColor(DJTheme.textMuted)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -543,70 +552,83 @@ public struct WaveformEditorView: View {
 
     private var cueSummaryBar: some View {
         HStack(spacing: 8) {
-            ForEach(CueType.allCases) { cue in
-                let cueTime = model.cueTime(for: cue)
-                let isSelected = model.selectedCue == cue
+            if model.currentTrack != nil {
+                ForEach(CueType.allCases, id: \.self) { (cue: CueType) in
+                    let cueTime = model.cueTime(for: cue)
+                    let isSelected = model.selectedCue == cue
 
-                Button(action: {
-                    model.selectedCue = cue
-                    model.seekPlayhead(to: cueTime)
-                }) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(cue.color)
-                            .frame(width: 8, height: 8)
+                    Button(action: {
+                        model.selectedCue = cue
+                        model.seekPlayhead(to: cueTime)
+                    }) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(cue.color)
+                                .frame(width: 8, height: 8)
 
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(cue.displayName)
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(cue.displayName)
+                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                    .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
 
-                            Text(formatTime(cueTime))
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(DJTheme.textPrimary)
+                                Text(formatTime(cueTime))
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(DJTheme.textPrimary)
+                            }
                         }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(isSelected ? cue.color.opacity(0.15) : DJTheme.cardHeader)
+                        .cornerRadius(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(isSelected ? cue.color : DJTheme.border, lineWidth: 1)
+                        )
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(isSelected ? cue.color.opacity(0.15) : DJTheme.cardHeader)
-                    .cornerRadius(4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(isSelected ? cue.color : DJTheme.border, lineWidth: 1)
-                    )
+                    .buttonStyle(.plain)
+                    .help("Audition cue position for \(cue.displayName)")
                 }
-                .buttonStyle(.plain)
-            }
 
-            Spacer()
+                Spacer()
 
-            // Nudge Controls for Selected Cue
-            if let selected = model.selectedCue {
-                HStack(spacing: 4) {
-                    Text("NUDGE \(selected.shortLabel):")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                // Nudge Controls for Selected Cue
+                if let selected = model.selectedCue {
+                    HStack(spacing: 4) {
+                        Text("NUDGE \(selected.shortLabel):")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+
+                        Button("-50ms") {
+                            model.nudgeCue(selected, deltaSeconds: -0.050)
+                        }
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(DJTheme.cardHeader)
+                        .cornerRadius(3)
+                        .buttonStyle(.plain)
+
+                        Button("+50ms") {
+                            model.nudgeCue(selected, deltaSeconds: 0.050)
+                        }
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(DJTheme.cardHeader)
+                        .cornerRadius(3)
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
                         .foregroundColor(DJTheme.textMuted)
-
-                    Button("-50ms") {
-                        model.nudgeCue(selected, deltaSeconds: -0.050)
-                    }
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(DJTheme.cardHeader)
-                    .cornerRadius(3)
-                    .buttonStyle(.plain)
-
-                    Button("+50ms") {
-                        model.nudgeCue(selected, deltaSeconds: 0.050)
-                    }
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(DJTheme.cardHeader)
-                    .cornerRadius(3)
-                    .buttonStyle(.plain)
+                    Text("Select a track in the library to inspect and edit cue markers")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(DJTheme.textMuted)
                 }
+                Spacer()
             }
 
             Button(action: { isDetailedEditorExpanded = false }) {
@@ -629,58 +651,71 @@ public struct WaveformEditorView: View {
 
     private var compactCueBar: some View {
         HStack(spacing: 6) {
-            ForEach(CueType.allCases) { cue in
-                let cueTime = model.cueTime(for: cue)
-                let isSelected = model.selectedCue == cue
+            if model.currentTrack != nil {
+                ForEach(CueType.allCases, id: \.self) { (cue: CueType) in
+                    let cueTime = model.cueTime(for: cue)
+                    let isSelected = model.selectedCue == cue
+
+                    Button(action: {
+                        model.selectedCue = cue
+                        model.seekPlayhead(to: cueTime)
+                    }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(cue.color)
+                                .frame(width: 6, height: 6)
+
+                            Text(cue.shortLabel)
+                                .font(.system(size: 8.5, weight: .black, design: .monospaced))
+                                .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
+
+                            Text(formatTime(cueTime))
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textPrimary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(isSelected ? cue.color.opacity(0.18) : DJTheme.cardHeader)
+                        .cornerRadius(3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(isSelected ? cue.color : Color.clear, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Audition cue position for \(cue.displayName)")
+                }
+
+                Spacer()
 
                 Button(action: {
-                    model.selectedCue = cue
-                    model.seekPlayhead(to: cueTime)
+                    isDetailedEditorExpanded = true
                 }) {
                     HStack(spacing: 4) {
-                        Circle()
-                            .fill(cue.color)
-                            .frame(width: 6, height: 6)
-
-                        Text(cue.shortLabel)
-                            .font(.system(size: 8.5, weight: .black, design: .monospaced))
-                            .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
-
-                        Text(formatTime(cueTime))
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(DJTheme.textPrimary)
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 8))
+                        Text("NUDGE & MINIMAP")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     }
+                    .foregroundColor(DJTheme.textSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(isSelected ? cue.color.opacity(0.18) : DJTheme.cardHeader)
+                    .background(DJTheme.cardHeader)
                     .cornerRadius(3)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(isSelected ? cue.color : Color.clear, lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
-            }
-
-            Spacer()
-
-            Button(action: {
-                isDetailedEditorExpanded = true
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 8))
-                    Text("NUDGE & MINIMAP")
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .help("Expand detailed cue nudge controls and minimap")
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 9))
+                        .foregroundColor(DJTheme.textMuted)
+                    Text("Select a track in the library to inspect cue points")
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundColor(DJTheme.textMuted)
                 }
-                .foregroundColor(DJTheme.textSecondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(DJTheme.cardHeader)
-                .cornerRadius(3)
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .help("Expand detailed cue nudge controls and minimap")
         }
         .padding(.horizontal, 4)
     }

@@ -271,7 +271,7 @@ public struct DeckStudioView: View {
                 appState.toggleTalkover()
             }) {
                 HStack(spacing: 4) {
-                    Image(systemName: appState.isTalkoverActive ? "mic.fill" : "mic")
+                    Image(systemName: appState.isTalkoverActive ? "speaker.wave.2.bubble.fill" : "speaker.wave.2.bubble")
                     Text("TALKOVER")
                 }
                 .font(.system(size: 9.5, weight: .black, design: .monospaced))
@@ -286,7 +286,7 @@ public struct DeckStudioView: View {
                 )
             }
             .buttonStyle(.plain)
-            .help("Toggle Master Talkover ducking (-16.5 dB attenuation + vocal pocket EQ, Hotkey: T)")
+            .help("Ducks Master music (-16.5 dB attenuation + vocal pocket EQ); microphone is external (Hotkey: T)")
         }
         .padding(8)
         .background(DJTheme.cardBackground)
@@ -481,6 +481,9 @@ public struct DeckStudioView: View {
 
     private func formatDuration(_ duration: Double) -> String {
         guard duration.isFinite, duration >= 0.0 else { return "0:00" }
+        if duration < 1.0 {
+            return String(format: "%.1fs", duration)
+        }
         let totalSeconds = Int(duration)
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60

@@ -225,6 +225,7 @@ final class StudioCompositionLayoutTests: XCTestCase {
                 let visibleRect = frameInRoot.intersection(root.bounds)
                 XCTAssertFalse(visibleRect.isNull, "Library browser scroller must be visible within viewport at size \(size)")
                 XCTAssertGreaterThanOrEqual(visibleRect.height, 60, "Library browser scroller must have at least 60pt visible area on screen")
+                XCTAssertNotNil(scroller.documentView, "Library scroller document view must be mounted")
             }
         }
 
@@ -287,5 +288,92 @@ final class StudioCompositionLayoutTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
             XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
         }
+    }
+
+    func testWaveformEditorCompactModeDisplaysFailedSaveError() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let track = try XCTUnwrap(fixture.state.loadedCache?.tracks["Techno/track1.wav"])
+        editor.loadTrack(track)
+
+        let expectedError = "Failed to save: Disk write error"
+        editor.errorMessage = expectedError
+
+        let view = WaveformEditorView(model: editor)
+        XCTAssertFalse(view.isDetailedEditorExpandedForTesting, "Waveform editor must default to compact mode")
+        XCTAssertEqual(view.displayedCompactError, expectedError, "Failed save error must be exposed and rendered in compact bar")
+
+        // Mount in NSHostingView and verify layout/rendering does not crash
+        let host = NSHostingView(rootView: view)
+        let rect = NSRect(x: 0, y: 0, width: 800, height: 160)
+        host.frame = rect
+        host.layoutSubtreeIfNeeded()
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: rect))
+        host.cacheDisplay(in: rect, to: rep)
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        XCTAssertGreaterThan(png.count, 5_000, "Compact bar with save failure must render non-empty bitmap")
+    }
+
+    func testWaveformCueEdgeClampedBadgeAndGuideHitTesting() {
+        let rect = CGRect(x: 0, y: 0, width: 60, height: 160)
+        let centerX = rect.midX // 30
+
+        // Case A: Left edge clamping (x = 0, badge is offset to the right by +30)
+        let leftClampedShape = CueHandleHitShape(
+            badgeOffsetX: 30,
+            badgeHalfWidth: 30,
+            guideHalfWidth: 16,
+            badgeHeight: 26
+        )
+        // 1. Center vertical guide line must be contained
+        XCTAssertTrue(leftClampedShape.contains(point: CGPoint(x: centerX, y: 80), in: rect),
+                      "Vertical guide line at left edge must be hit-testable")
+        XCTAssertTrue(leftClampedShape.contains(point: CGPoint(x: centerX, y: 155), in: rect),
+                      "Bottom grip pill at left edge must be hit-testable")
+        // 2. Translated top badge (offset by +30) must be contained in hit region
+        XCTAssertTrue(leftClampedShape.contains(point: CGPoint(x: centerX + 30, y: 12), in: rect),
+                      "Translated top badge center at left edge must be hit-testable")
+        XCTAssertTrue(leftClampedShape.contains(point: CGPoint(x: centerX + 30 - 25, y: 12), in: rect),
+                      "Translated top badge left edge at left edge must be hit-testable")
+        XCTAssertTrue(leftClampedShape.contains(point: CGPoint(x: centerX + 30 + 25, y: 12), in: rect),
+                      "Translated top badge right edge at left edge must be hit-testable")
+        // 3. Point outside badge and guide must be rejected
+        XCTAssertFalse(leftClampedShape.contains(point: CGPoint(x: centerX + 120, y: 12), in: rect),
+                       "Points far outside badge must not hit-test")
+        XCTAssertFalse(leftClampedShape.contains(point: CGPoint(x: centerX + 40, y: 80), in: rect),
+                       "Points outside guide line must not hit-test")
+
+        // Case B: Right edge clamping (x = width, badge is offset to the left by -30)
+        let rightClampedShape = CueHandleHitShape(
+            badgeOffsetX: -30,
+            badgeHalfWidth: 30,
+            guideHalfWidth: 16,
+            badgeHeight: 26
+        )
+        // 1. Vertical guide line must be contained
+        XCTAssertTrue(rightClampedShape.contains(point: CGPoint(x: centerX, y: 80), in: rect),
+                      "Vertical guide line at right edge must be hit-testable")
+        // 2. Translated top badge (offset by -30) must be contained in hit region
+        XCTAssertTrue(rightClampedShape.contains(point: CGPoint(x: centerX - 30, y: 12), in: rect),
+                      "Translated top badge center at right edge must be hit-testable")
+        XCTAssertTrue(rightClampedShape.contains(point: CGPoint(x: centerX - 30 - 25, y: 12), in: rect),
+                      "Translated top badge left edge at right edge must be hit-testable")
+        XCTAssertTrue(rightClampedShape.contains(point: CGPoint(x: centerX - 30 + 25, y: 12), in: rect),
+                      "Translated top badge right edge at right edge must be hit-testable")
+        // 3. Point outside must be rejected
+        XCTAssertFalse(rightClampedShape.contains(point: CGPoint(x: centerX - 120, y: 12), in: rect),
+                       "Points far outside badge at right edge must not hit-test")
+
+        // Case C: Center un-clamped (x = width/2, badgeOffsetX = 0)
+        let centerShape = CueHandleHitShape(
+            badgeOffsetX: 0,
+            badgeHalfWidth: 30,
+            guideHalfWidth: 16,
+            badgeHeight: 26
+        )
+        XCTAssertTrue(centerShape.contains(point: CGPoint(x: centerX, y: 12), in: rect),
+                      "Center badge must be hit-testable")
+        XCTAssertTrue(centerShape.contains(point: CGPoint(x: centerX, y: 80), in: rect),
+                      "Center guide must be hit-testable")
     }
 }

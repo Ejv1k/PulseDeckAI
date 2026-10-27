@@ -436,7 +436,14 @@ public struct WaveformEditorView: View {
                 .shadow(color: cue.color.opacity(0.8), radius: 3)
         }
         .frame(height: height)
-        .contentShape(Rectangle().size(width: 32, height: height))
+        .contentShape(
+            CueHandleHitShape(
+                badgeOffsetX: badgeOffsetX,
+                badgeHalfWidth: badgeHalfWidth + 2,
+                guideHalfWidth: 16,
+                badgeHeight: 26
+            )
+        )
         .onHover { inside in
             hoveredCue = inside ? cue : (hoveredCue == cue ? nil : hoveredCue)
         }
@@ -688,6 +695,9 @@ public struct WaveformEditorView: View {
 
                 Spacer()
 
+                // Save state & feedback in compact mode
+                compactPersistenceStatus
+
                 Button(action: {
                     isDetailedEditorExpanded = true
                 }) {
@@ -715,9 +725,43 @@ public struct WaveformEditorView: View {
                         .foregroundColor(DJTheme.textMuted)
                 }
                 Spacer()
+
+                if let error = model.errorMessage {
+                    compactErrorView(error: error)
+                }
             }
         }
         .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private var compactPersistenceStatus: some View {
+        if model.isSaving {
+            HStack(spacing: 4) {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 10, height: 10)
+                Text("Persisting to cache...")
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(DJTheme.deckA)
+            }
+            .accessibilityIdentifier("waveformCompactSavingStatus")
+        } else if let error = model.errorMessage {
+            compactErrorView(error: error)
+        }
+    }
+
+    private func compactErrorView(error: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 8.5))
+                .foregroundColor(.red)
+            Text(error)
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundColor(.red)
+                .lineLimit(1)
+        }
+        .accessibilityIdentifier("waveformCompactErrorMessage")
     }
 
     // MARK: - Footer Status Bar
@@ -808,6 +852,16 @@ public struct WaveformEditorView: View {
         }
     }
 
+    /// Current error text displayed in the compact status bar.
+    public var displayedCompactError: String? {
+        model.errorMessage
+    }
+
+    /// Whether the detailed editor (nudge and minimap) is expanded.
+    public var isDetailedEditorExpandedForTesting: Bool {
+        isDetailedEditorExpanded
+    }
+
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite && seconds >= 0 else { return "0:00.00" }
         let totalSeconds = Int(seconds)
@@ -817,3 +871,54 @@ public struct WaveformEditorView: View {
         return String(format: "%d:%02d.%02d", minutes, secs, millis)
     }
 }
+
+/// Hit-testing shape for a cue handle that encompasses both the centered vertical guide line
+/// and the translated top badge pill (anchored within canvas bounds via badgeOffsetX).
+public struct CueHandleHitShape: Shape, Equatable, Sendable {
+    public let badgeOffsetX: CGFloat
+    public let badgeHalfWidth: CGFloat
+    public let guideHalfWidth: CGFloat
+    public let badgeHeight: CGFloat
+
+    public init(
+        badgeOffsetX: CGFloat = 0,
+        badgeHalfWidth: CGFloat = 30,
+        guideHalfWidth: CGFloat = 16,
+        badgeHeight: CGFloat = 26
+    ) {
+        self.badgeOffsetX = badgeOffsetX
+        self.badgeHalfWidth = badgeHalfWidth
+        self.guideHalfWidth = guideHalfWidth
+        self.badgeHeight = badgeHeight
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let centerX = rect.midX
+
+        // 1. Vertical guide line hit box (centered at cue timestamp position centerX)
+        let guideRect = CGRect(
+            x: centerX - guideHalfWidth,
+            y: rect.minY,
+            width: guideHalfWidth * 2,
+            height: rect.height
+        )
+        path.addRect(guideRect)
+
+        // 2. Translated top badge hit box (centered at centerX + badgeOffsetX)
+        let badgeRect = CGRect(
+            x: centerX + badgeOffsetX - badgeHalfWidth,
+            y: rect.minY,
+            width: badgeHalfWidth * 2,
+            height: min(rect.height, badgeHeight)
+        )
+        path.addRoundedRect(in: badgeRect, cornerSize: CGSize(width: 3, height: 3))
+
+        return path
+    }
+
+    public func contains(point: CGPoint, in rect: CGRect) -> Bool {
+        path(in: rect).contains(point)
+    }
+}
+

@@ -436,14 +436,53 @@ final class StudioCompositionLayoutTests: XCTestCase {
                 .contentShape(Rectangle())
         }
 
-        // Verify body mounts with NonBlockingRowButtonStyle without blocking selection
+        // 1. Verify production styled body mounts with NonBlockingRowButtonStyle meeting >= 28pt target
         let host = NSHostingView(rootView: selectButton)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
         host.layoutSubtreeIfNeeded()
         XCTAssertGreaterThanOrEqual(host.fittingSize.height, 28.0,
                                     "Selection button interactive height must meet or exceed 28pt")
 
-        // Prove triggering button selects track in AppState
-        try pressButton(selectButton.button)
-        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath, "Selection button must update AppState.selectedTrackPath")
+        // 2. Test keyboard activation (Space key) on the production styled button without ActionCapture override
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let spaceEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown,
+                                                        location: .zero,
+                                                        modifierFlags: [],
+                                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                                        windowNumber: window.windowNumber,
+                                                        context: nil,
+                                                        characters: " ",
+                                                        charactersIgnoringModifiers: " ",
+                                                        isARepeat: false,
+                                                        keyCode: 49))
+        window.sendEvent(spaceEvent)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath,
+                       "Space key activation on production styled button must select track in AppState")
+
+        // 3. Test Return key activation on production styled button
+        fixture.state.selectedTrackPath = nil
+        let returnEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown,
+                                                         location: .zero,
+                                                         modifierFlags: [],
+                                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: window.windowNumber,
+                                                         context: nil,
+                                                         characters: "\r",
+                                                         charactersIgnoringModifiers: "\r",
+                                                         isARepeat: false,
+                                                         keyCode: 36))
+        window.sendEvent(returnEvent)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath,
+                       "Return key activation on production styled button must select track in AppState")
     }
 }

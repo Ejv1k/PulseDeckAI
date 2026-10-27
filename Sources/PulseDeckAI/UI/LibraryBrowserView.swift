@@ -591,14 +591,40 @@ struct LibraryTrackSelectionButton<Label: View>: View {
     }
 }
 
-/// Primitive button style allowing pointer drag gestures to propagate to parent draggable containers without NSButton interception.
+/// Primitive button style allowing pointer drag gestures to propagate to parent draggable containers
+/// while preserving keyboard navigation (focus, Space/Return activation) and accessible default action.
 struct NonBlockingRowButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .contentShape(Rectangle())
-            .onTapGesture {
-                configuration.trigger()
-            }
+        RowButtonContent(configuration: configuration)
+    }
+
+    private struct RowButtonContent: View {
+        let configuration: Configuration
+        @FocusState private var isFocused: Bool
+
+        var body: some View {
+            configuration.label
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    configuration.trigger()
+                }
+                .focusable()
+                .focused($isFocused)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(isFocused ? DJTheme.deckA : Color.clear, lineWidth: 1.5)
+                )
+                .onKeyPress(phases: .down) { press in
+                    if press.key == .space || press.key == .return {
+                        configuration.trigger()
+                        return .handled
+                    }
+                    return .ignored
+                }
+                .accessibilityAction(.default) {
+                    configuration.trigger()
+                }
+        }
     }
 }
 

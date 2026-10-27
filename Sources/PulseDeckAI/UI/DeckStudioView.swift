@@ -84,28 +84,7 @@ public struct DeckStudioView: View {
 
                 Spacer()
 
-                Button(action: {
-                    appState.focusMasterDeck(deck)
-                    appState.loadSelectedTrackIntoDeck(deck: deck)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.down.doc.fill")
-                        Text("LOAD")
-                    }
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(DJTheme.textPrimary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(color.opacity(0.2))
-                    .cornerRadius(3)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(color, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(appState.selectedTrackPath == nil || appState.isTransitionBusy)
-                .help("Load selected library track into \(title)")
+                LibraryDeckLoadButton(appState: appState, deck: deck, title: title, color: color)
             }
 
             if appState.isMasterDeckOnAir(deck) {
@@ -113,6 +92,14 @@ public struct DeckStudioView: View {
                       systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(color)
+            }
+
+            if let message = appState.deckLoadMessage(for: deck) {
+                Text(message)
+                    .font(.system(size: 10))
+                    .foregroundStyle(DJTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("deckLoadFeedback-\(deck.rawValue)")
             }
 
             // Track metadata
@@ -146,7 +133,7 @@ public struct DeckStudioView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(DJTheme.textMuted)
 
-                    Text("Select a track and click LOAD")
+                    Text("Select a track and click LOAD, or drag it here")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(DJTheme.textMuted)
                 }
@@ -222,6 +209,9 @@ public struct DeckStudioView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(color.opacity(appState.focusedMasterDeck == deck ? 0.9 : 0.35), lineWidth: 1)
         )
+        .dropDestination(for: LibraryTrackTransfer.self) { items, _ in
+            appState.loadDroppedTracks(items, deck: deck)
+        }
         .simultaneousGesture(TapGesture().onEnded {
             appState.focusMasterDeck(deck)
             isStudioFocused = true
@@ -514,4 +504,35 @@ struct MasterSafetyLockButton: View {
                 .padding(.vertical, 5)
         }
     }
+}
+
+/// The deck header's production load control; its public SwiftUI action is also used in own-view tests.
+@MainActor
+struct LibraryDeckLoadButton: View {
+    @ObservedObject var appState: AppState
+    let deck: DeckIdentifier
+    let title: String
+    let color: Color
+
+    var button: some View {
+        Button {
+            appState.focusMasterDeck(deck)
+            appState.loadSelectedTrackIntoDeck(deck: deck)
+        } label: {
+            Label("LOAD", systemImage: "arrow.down.doc.fill")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(DJTheme.textPrimary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(color.opacity(0.2))
+                .cornerRadius(3)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
+        }
+        .help(appState.selectedTrackPath == nil
+              ? "Select a library track first. Analysis is optional."
+              : "Load the selected library file into \(title). Analysis is optional; Safety Lock and automation still apply.")
+        .accessibilityLabel("Load selected track into \(title)")
+    }
+
+    var body: some View { button.buttonStyle(.plain) }
 }

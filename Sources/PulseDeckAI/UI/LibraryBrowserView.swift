@@ -221,7 +221,7 @@ public struct LibraryBrowserView: View {
                         .frame(maxWidth: .infinity)
                     } else {
                         List {
-                            ForEach(Array(selected.audioFiles.enumerated()), id: \.offset) { index, file in
+                            ForEach(Array(selected.audioFiles.enumerated()), id: \.element) { index, file in
                                 let relPath = "\(selected.folderName)/\(file)"
                                 let isSelected = appState.selectedTrackPath == relPath
                                 let isPreviewing = appState.previewTrackPath == relPath
@@ -230,9 +230,7 @@ public struct LibraryBrowserView: View {
 
                                 HStack(spacing: 10) {
                                     // Row index & track selection button
-                                    Button(action: {
-                                        appState.selectTrack(relativePath: relPath)
-                                    }) {
+                                    LibraryTrackSelectionButton(appState: appState, relativePath: relPath) {
                                         HStack(spacing: 8) {
                                             Text(String(format: "%02d", index + 1))
                                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -317,6 +315,8 @@ public struct LibraryBrowserView: View {
                                             .cornerRadius(3)
                                     }
 
+                                    LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
+
                                     // Headphone Audition Cue Button
                                     Button(action: {
                                         if isPreviewing {
@@ -348,11 +348,17 @@ public struct LibraryBrowserView: View {
                                 .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                 .cornerRadius(4)
                                 .listRowBackground(DJTheme.cardBackground)
+                                .draggable(LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath))
                             }
                         }
                         .listStyle(.plain)
                         .background(DJTheme.cardBackground)
                     }
+
+                    Text("Select a track, then LOAD A/B or drag onto a deck. Analyze locally for waveforms and beat tools; no account required.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(DJTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     // Dedicated Audition Transport & Scrub Strip
                     auditionControlBar
@@ -564,5 +570,52 @@ public struct LibraryBrowserView: View {
         let secs = totalSeconds % 60
         let millis = Int((seconds.truncatingRemainder(dividingBy: 1)) * 100)
         return String(format: "%d:%02d.%02d", minutes, secs, millis)
+    }
+}
+
+/// Shared production row selection control. Selecting a file does not require cached analysis.
+@MainActor
+struct LibraryTrackSelectionButton<Label: View>: View {
+    @ObservedObject var appState: AppState
+    let relativePath: String
+    @ViewBuilder let label: () -> Label
+
+    var button: some View {
+        Button { appState.selectTrack(relativePath: relativePath) } label: { label() }
+    }
+
+    var body: some View { button }
+}
+
+@MainActor
+struct LibraryTrackAnalysisButton: View {
+    @ObservedObject var appState: AppState
+    let relativePath: String
+
+    var button: some View {
+        Button { appState.analyzeTrack(relativePath: relativePath) } label: {
+            Label("ANALYZE", systemImage: "waveform.path")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+        }
+        .disabled(appState.isAnalyzingLibraryTrack)
+        .help(appState.isAnalyzingLibraryTrack
+              ? "One local analysis is running. Playback and library selection remain available."
+              : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown.")
+        .accessibilityLabel("Analyze \(relativePath) locally")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            button.buttonStyle(.plain)
+            if let state = appState.analysisStatus(for: relativePath) {
+                HStack(spacing: 3) {
+                    if state == .running { ProgressView().controlSize(.mini) }
+                    Text(state.label)
+                        .font(.system(size: 9))
+                        .foregroundStyle(DJTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 }

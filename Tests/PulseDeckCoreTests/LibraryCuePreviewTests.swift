@@ -95,7 +95,8 @@ final class LibraryCuePreviewTests: XCTestCase {
         bpm: Double = 120.0,
         musicalKey: String = "8A",
         confidence: Double = 0.9,
-        hasValidGrid: Bool = true
+        hasValidGrid: Bool = true,
+        fileFingerprint: String? = nil
     ) -> TrackCacheEntry {
         let beatInterval = bpm > 0 ? (60.0 / bpm) : 1.0
         let timestamps: [Double]
@@ -113,7 +114,7 @@ final class LibraryCuePreviewTests: XCTestCase {
 
         return TrackCacheEntry(
             relativePath: relativePath,
-            fileFingerprint: "fp-\(relativePath)",
+            fileFingerprint: fileFingerprint ?? "fp-\(relativePath)",
             fileSizeBytes: 1024,
             fileModificationTime: "2026-10-22T00:00:00Z",
             duration: duration,
@@ -281,8 +282,8 @@ final class LibraryCuePreviewTests: XCTestCase {
         try makeSyntheticAudioFile(url: fileB, durationSeconds: 5.0)
         try makeSyntheticAudioFile(url: fileCand, durationSeconds: 5.0)
 
-        let trackA = makeTrackEntry(relativePath: "deckA.wav", duration: 5.0, bpm: 120.0, musicalKey: "8A")
-        let trackB = makeTrackEntry(relativePath: "deckB.wav", duration: 5.0, bpm: 140.0, musicalKey: "2A")
+        let trackA = makeTrackEntry(relativePath: "deckA.wav", duration: 5.0, bpm: 120.0, musicalKey: "8A", fileFingerprint: try LibraryTrackSource.fingerprint(at: fileA))
+        let trackB = makeTrackEntry(relativePath: "deckB.wav", duration: 5.0, bpm: 140.0, musicalKey: "2A", fileFingerprint: try LibraryTrackSource.fingerprint(at: fileB))
         let candidate = makeTrackEntry(relativePath: "cand.wav", duration: 5.0, bpm: 122.0, musicalKey: "8A")
 
         let cache = PulseDeckLibraryCache(libraryRoot: "root", tracks: [

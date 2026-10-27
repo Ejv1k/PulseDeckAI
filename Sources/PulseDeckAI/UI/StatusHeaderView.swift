@@ -11,113 +11,97 @@ public struct StatusHeaderView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .center, spacing: 14) {
-                // Brand and Phase Badge
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(DJTheme.master)
-                        .frame(width: 10, height: 10)
-                        .shadow(color: DJTheme.master.opacity(0.8), radius: 4)
+        HStack(alignment: .center, spacing: 10) {
+            // Brand and Phase Badge
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(DJTheme.master)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: DJTheme.master.opacity(0.8), radius: 3)
 
-                    Text("PulseDeck AI")
-                        .font(.system(size: 20, weight: .black, design: .monospaced))
-                        .foregroundColor(DJTheme.textPrimary)
+                Text("PulseDeck AI")
+                    .font(.system(size: 15, weight: .black, design: .monospaced))
+                    .foregroundColor(DJTheme.textPrimary)
 
-                    Text("PHASE 3B STUDIO")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DJTheme.deckA.opacity(0.2))
-                        .foregroundColor(DJTheme.deckA)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(DJTheme.deckA, lineWidth: 1)
-                        )
-                }
-
-                Spacer()
-
-                // Hardware & Runtime Specs
-                HStack(spacing: 12) {
-                    Label(PulseDeckCoreConfig.hardwareBaseline, systemImage: "cpu")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(DJTheme.textSecondary)
-
-                    Divider()
-                        .frame(height: 14)
-                        .background(DJTheme.border)
-
-                    Label("macOS 14+ / Swift 6", systemImage: "apple.terminal")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(DJTheme.textSecondary)
-
-                    Divider()
-                        .frame(height: 14)
-                        .background(DJTheme.border)
-
-                    Button(action: rescanLibrary) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                            Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")
-                        }
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(appState.isScanning ? DJTheme.deckA : DJTheme.textPrimary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(DJTheme.cardHeader)
-                        .cornerRadius(4)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(appState.isScanning)
-                    .opacity(appState.isScanning ? 0.7 : 1.0)
-                    .help("Rescan library directory (⌘R)")
-                }
+                Text("STUDIO")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(DJTheme.deckA.opacity(0.2))
+                    .foregroundColor(DJTheme.deckA)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(DJTheme.deckA, lineWidth: 1)
+                    )
             }
 
+            Spacer(minLength: 6)
+
             // Path & Status Ribbon
-            HStack(spacing: 16) {
-                HStack(spacing: 6) {
-                    Text("LIBRARY:")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("LIB:")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(DJTheme.textMuted)
 
-                    Text(appState.libraryRootURL.path)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    Text(appState.libraryRootURL.lastPathComponent)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundColor(DJTheme.textSecondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
                 }
 
-                Spacer()
+                Circle()
+                    .fill(DJTheme.border)
+                    .frame(width: 3, height: 3)
 
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Text("STATUS:")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(DJTheme.textMuted)
 
                     Text(appState.statusMessage)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(DJTheme.deckA)
+                        .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
             .background(DJTheme.cardBackground)
             .cornerRadius(4)
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(DJTheme.border, lineWidth: 1)
             )
+
+            Spacer(minLength: 6)
+
+            Button(action: rescanLibrary) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                    Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")
+                }
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(appState.isScanning ? DJTheme.deckA : DJTheme.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(DJTheme.cardHeader)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
+                )
+            }
+            .buttonStyle(StudioPressableStyle())
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(appState.isScanning)
+            .opacity(appState.isScanning ? 0.7 : 1.0)
+            .accessibilityLabel("Rescan Library")
+            .accessibilityHint("Scans library directory for new audio tracks and crates")
+            .help("Rescan library directory (⌘R)")
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background(DJTheme.background)
     }
 }

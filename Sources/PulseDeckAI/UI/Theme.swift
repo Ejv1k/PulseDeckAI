@@ -18,4 +18,22 @@ public enum DJTheme {
     public static let textSecondary = Color(red: 0.65, green: 0.68, blue: 0.76)
     public static let textMuted = Color(red: 0.42, green: 0.45, blue: 0.54)
     public static let textAccent = Color(red: 0.38, green: 0.65, blue: 1.00)
+
+    // Elevated Studio Surfaces
+    public static let surfaceRaised = Color(red: 0.10, green: 0.11, blue: 0.15)
+    public static let surfaceActive = Color(red: 0.14, green: 0.15, blue: 0.20)
+    public static let borderActive = Color(red: 0.24, green: 0.27, blue: 0.36)
+}
+
+/// Tactile button style providing responsive scale feedback on press (Emil Kowalski / Apple Design).
+public struct StudioPressableStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
 }

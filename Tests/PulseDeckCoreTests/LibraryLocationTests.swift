@@ -116,6 +116,52 @@ final class LibraryLocationTests: XCTestCase {
         XCTAssertEqual(f.store.chosenRoot, root)
     }
 
+    func testMissingAtLaunchReconnectAndRescanRecoversRememberedAndExplicitRoots() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let missing = f.parent.appendingPathComponent("Reconnected library", isDirectory: true)
+        for explicit in [false, true] {
+            if FileManager.default.fileExists(atPath: missing.path) {
+                try FileManager.default.removeItem(at: missing)
+            }
+            f.store.remember(missing)
+            let arguments = explicit ? ["app", "--library-root", missing.path] : ["app"]
+            let launch = LibraryLocation.resolve(arguments: arguments, workingDirectory: f.parent, store: f.store)
+            let app = AppState(libraryRootURL: launch.root,
+                waveformEditorModel: WaveformEditorModel(libraryRootURL: launch.root),
+                audioCoordinator: nil, startCoordinator: false, libraryLocationStore: f.store,
+                libraryLaunchIssue: launch.issue, chooseLibraryDirectory: { XCTFail("Rescan must not require the picker"); return nil })
+            XCTAssertNotNil(app.libraryLocationError)
+            XCTAssertNil(app.refreshLibrary(), "A still-disconnected folder cannot scan")
+            XCTAssertEqual(app.libraryRootURL.path, missing.path)
+            try FileManager.default.createDirectory(at: missing.appendingPathComponent("01 Returned crate"), withIntermediateDirectories: true)
+            let cache = PulseDeckLibraryCache(libraryRoot: "reconnected-cache", tracks: [:])
+            try JSONEncoder().encode(cache).write(to: missing.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+            let scan = try XCTUnwrap(app.refreshLibrary())
+            await scan.value
+            XCTAssertNil(app.libraryLocationError)
+            XCTAssertEqual(app.scanSummary?.libraryURL.path, missing.path)
+            XCTAssertEqual(app.scanSummary?.crates.first?.folderName, "01 Returned crate")
+            XCTAssertEqual(app.loadedCache?.libraryRoot, "reconnected-cache")
+            XCTAssertEqual(f.store.chosenRoot?.path, missing.path)
+        }
+    }
+
+    func testRescanOfMalformedOverrideRemainsBlockedEvenWhenCWDFallbackExists() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        _ = try f.root("PulseDeck_Library")
+        let launch = LibraryLocation.resolve(arguments: ["app", "--library-root", "relative"], workingDirectory: f.parent, store: f.store)
+        let app = AppState(libraryRootURL: launch.root,
+            waveformEditorModel: WaveformEditorModel(libraryRootURL: launch.root),
+            audioCoordinator: nil, startCoordinator: false, libraryLocationStore: f.store,
+            libraryLaunchIssue: launch.issue, chooseLibraryDirectory: { nil })
+        let error = app.libraryLocationError
+        XCTAssertNil(app.refreshLibrary())
+        XCTAssertEqual(app.libraryLocationError, error)
+        XCTAssertNil(app.scanSummary)
+        XCTAssertNil(app.loadedCache)
+        XCTAssertNil(f.store.chosenRoot)
+    }
+
     func testExplicitAbsolutePathAndFileURLWinWithoutOverwritingRememberedChoice() throws {
         let f = try Fixture(); defer { f.cleanup() }
         let remembered = try f.root("remembered"), override = try f.root("Explicit česká folder")

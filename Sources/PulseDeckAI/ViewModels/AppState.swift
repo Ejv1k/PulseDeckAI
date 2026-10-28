@@ -43,7 +43,7 @@ public final class AppState: ObservableObject {
     }
     @Published public private(set) var libraryLocationError: String?
     private var libraryLocationStore: LibraryLocationStore?
-    private var requiresLibrarySelection = false
+    private var libraryLaunchIssue: LibraryLaunchLocation.Issue?
     private var chooseLibraryDirectory: @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
 
     public var libraryLocationUnavailableReason: String? {
@@ -242,7 +242,7 @@ public final class AppState: ObservableObject {
             store: locationStore)
         self.libraryLocationStore = locationStore
         self.libraryLocationError = location.error
-        self.requiresLibrarySelection = location.error != nil
+        self.libraryLaunchIssue = location.issue
         self.libraryRootURL = location.root
         let editor = WaveformEditorModel(libraryRootURL: location.root)
         self.waveformEditorModel = editor
@@ -268,10 +268,13 @@ public final class AppState: ObservableObject {
         startCoordinator: Bool = true,
         beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil,
         libraryLocationStore: LibraryLocationStore? = nil,
+        libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
         chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
     ) {
         // Explicitly injected roots win; this initializer never restores normal app preferences.
         self.libraryLocationStore = libraryLocationStore
+        self.libraryLaunchIssue = libraryLaunchIssue
+        self.libraryLocationError = libraryLaunchIssue?.message
         self.chooseLibraryDirectory = chooseLibraryDirectory
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
@@ -348,9 +351,19 @@ public final class AppState: ObservableObject {
     /// from out-of-order background task completion.
     @discardableResult
     public func refreshLibrary() -> Task<Void, Never>? {
-        guard !requiresLibrarySelection else { return nil }
+        if case .malformedOverride = libraryLaunchIssue { return nil }
         guard !self.isScanning else {
             // Drop concurrent rescan requests while a scan is actively running
+            return nil
+        }
+
+        do {
+            _ = try LibraryLocation.validate(libraryRootURL)
+            libraryLaunchIssue = nil
+            libraryLocationError = nil
+        } catch {
+            libraryLaunchIssue = .unavailableRoot(error.localizedDescription)
+            libraryLocationError = error.localizedDescription
             return nil
         }
 
@@ -1463,7 +1476,7 @@ public final class AppState: ObservableObject {
 
     /// Updates the library root URL and resets any audition preview state.
     public func updateLibraryRootURL(_ newURL: URL) {
-        requiresLibrarySelection = false
+        libraryLaunchIssue = nil
         libraryLocationError = nil
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)

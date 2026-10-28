@@ -115,11 +115,13 @@ public struct DeckStudioView: View {
                     HStack(spacing: 8) {
                         Text(formatDuration(track.duration))
                             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .monospacedDigit()
                             .foregroundColor(DJTheme.textSecondary)
 
                         if track.bpm > 0 {
                             Text(String(format: "%.1f BPM", track.bpm))
                                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
                                 .foregroundColor(color)
                         }
 
@@ -156,16 +158,16 @@ public struct DeckStudioView: View {
                     }
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(isPlaying ? DJTheme.background : DJTheme.textPrimary)
-                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .frame(maxWidth: .infinity, minHeight: DJTheme.minTouchTarget)
                     .background(isPlaying ? color : DJTheme.cardHeader)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                             .stroke(color, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isTransitionBusy)
                 .accessibilityIdentifier("deckPlayPauseButton-\(deck.rawValue)")
                 .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
@@ -177,13 +179,13 @@ public struct DeckStudioView: View {
                     Image(systemName: "stop.fill")
                         .foregroundStyle(DJTheme.textPrimary)
                         .padding(.horizontal, 8)
-                        .frame(minHeight: 28)
+                        .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardHeader)
-                        .cornerRadius(4)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DJTheme.border, lineWidth: 1))
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(RoundedRectangle(cornerRadius: DJTheme.controlRadius).stroke(DJTheme.border, lineWidth: 1))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isTransitionBusy)
                 .accessibilityIdentifier("deckStopButton-\(deck.rawValue)")
                 .accessibilityLabel("Stop \(title)")
@@ -199,16 +201,16 @@ public struct DeckStudioView: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(isCueActive ? DJTheme.background : DJTheme.cue)
                     .padding(.horizontal, 10)
-                    .frame(minHeight: 28)
+                    .frame(minHeight: DJTheme.minTouchTarget)
                     .background(isCueActive ? DJTheme.cue : DJTheme.cardHeader)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                             .stroke(isCueActive ? DJTheme.cue : DJTheme.border, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .accessibilityIdentifier("deckCueButton-\(deck.rawValue)")
                 .accessibilityLabel("Cue \(title)")
                 .help("Toggle Pre-Fader Listen (PFL) in headphones")
@@ -282,16 +284,16 @@ public struct DeckStudioView: View {
                 }
                 .font(.system(size: 9.5, weight: .black, design: .monospaced))
                 .foregroundColor(appState.isTalkoverActive ? DJTheme.background : DJTheme.textPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: DJTheme.minTouchTarget)
                 .background(appState.isTalkoverActive ? Color.yellow : DJTheme.cardHeader)
-                .cornerRadius(4)
+                .cornerRadius(DJTheme.controlRadius)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                         .stroke(appState.isTalkoverActive ? Color.yellow : DJTheme.border, lineWidth: 1)
                 )
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(StudioPressableStyle())
             .help("Ducks Master music (-16.5 dB attenuation + vocal pocket EQ); microphone is external (Hotkey: T)")
         }
         .padding(8)
@@ -473,15 +475,16 @@ public struct DeckStudioView: View {
                 }
             }
             .padding(6)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 36)
             .background(pad.isPlaying ? Color.yellow : DJTheme.cardHeader)
-            .cornerRadius(4)
+            .cornerRadius(DJTheme.controlRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                     .stroke(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange.opacity(0.5) : DJTheme.border), lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StudioPressableStyle())
         .help("Trigger Pad \(pad.index + 1) (\(pad.title)) - Hotkey: \(pad.keyLabel)")
     }
 
@@ -511,7 +514,7 @@ struct MasterSafetyLockButton: View {
 
     var body: some View {
         button
-            .buttonStyle(.plain)
+            .buttonStyle(StudioPressableStyle())
             .accessibilityLabel("Master Safety Lock")
             .accessibilityValue(appState.isMasterSafetyLockEnabled ? "On" : "Off")
             .help("Protect on-air deck transport. Shift+Space confirms one pause on the focused deck without unlocking.")
@@ -530,7 +533,9 @@ struct MasterSafetyLockButton: View {
             Label("SAFETY LOCK", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
                 .font(.system(size: 9, weight: .black, design: .monospaced))
                 .foregroundStyle(appState.isMasterSafetyLockEnabled ? DJTheme.cue : DJTheme.textSecondary)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 6)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
         }
     }
 }
@@ -552,10 +557,10 @@ struct LibraryDeckLoadButton: View {
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(DJTheme.textPrimary)
                 .padding(.horizontal, 7)
-                .frame(minHeight: 28)
+                .frame(minHeight: DJTheme.minTouchTarget)
                 .background(color.opacity(0.2))
-                .cornerRadius(3)
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
+                .cornerRadius(DJTheme.chipRadius)
+                .overlay(RoundedRectangle(cornerRadius: DJTheme.chipRadius).stroke(color, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .help(appState.selectedTrackPath == nil
@@ -565,5 +570,5 @@ struct LibraryDeckLoadButton: View {
         .accessibilityIdentifier("deckLoadButton-\(deck.rawValue)")
     }
 
-    var body: some View { button.buttonStyle(.plain) }
+    var body: some View { button.buttonStyle(StudioPressableStyle()) }
 }

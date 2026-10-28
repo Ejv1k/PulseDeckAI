@@ -82,14 +82,16 @@ public struct OutputRoutingView: View {
                         .font(.system(size: 10))
                         .foregroundColor(DJTheme.textSecondary)
                         .padding(6)
+                        .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardBackground)
-                        .cornerRadius(4)
+                        .cornerRadius(DJTheme.controlRadius)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                                 .stroke(DJTheme.border, lineWidth: 1)
                         )
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .help("Refresh connected audio output devices")
             }
         }

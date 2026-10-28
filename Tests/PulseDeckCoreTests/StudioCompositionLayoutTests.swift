@@ -266,6 +266,11 @@ final class StudioCompositionLayoutTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
+        let artifactDirs = [
+            URL(fileURLWithPath: "/Users/tomaselagin/.ao/data/artifacts/pulsedeckai-82"),
+            URL(fileURLWithPath: "/Users/tomaselagin/.gemini/antigravity-cli/brain/c1160ef7-b503-4688-a9d5-f67d8b2f0d53")
+        ]
+
         for target in targets {
             let (window, root) = mountProductionView(fixture, size: target.size)
             defer { window.contentViewController = nil; window.contentView = nil; window.close() }
@@ -287,6 +292,80 @@ final class StudioCompositionLayoutTests: XCTestCase {
             try png.write(to: tempFile)
             XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
             XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
+
+            // Copy to artifact directories if they exist
+            for dir in artifactDirs where FileManager.default.fileExists(atPath: dir.path) {
+                try? png.write(to: dir.appendingPathComponent(target.name))
+            }
+        }
+    }
+
+    func testCaptureProductionContentViewWorstCaseBitmap() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+
+        // Create crate with long Unicode title and complex track
+        let longCrateName = "Favorites (Festival Mainstage 2026 / VIP Exclusives & Extended Cuts)"
+        let crateURL = fixture.root.appendingPathComponent(longCrateName)
+        try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
+
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        let longTrackFileName = "01. 日本語・Кириллица ♫ Extra Long Club Edit [Remix (Extended 12\" VIP Mix)].wav"
+        let sampleWAV = crateURL.appendingPathComponent(longTrackFileName)
+        do {
+            let file = try AVAudioFile(forWriting: sampleWAV, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+            buffer.frameLength = buffer.frameCapacity
+            let data = try XCTUnwrap(buffer.floatChannelData)
+            for frame in 0..<Int(buffer.frameLength) {
+                let sample = Float(sin(Double(frame) * 0.06) * 0.2)
+                data[0][frame] = sample
+                data[1][frame] = sample
+            }
+            try file.write(from: buffer)
+        }
+
+        let summary = LibraryScanner().scan(libraryURL: fixture.root)
+        fixture.state.scanSummary = summary
+        let crate = summary.crates.first(where: { $0.folderName == longCrateName })
+        fixture.state.selectedCrate = crate
+        let relPath = "\(longCrateName)/\(longTrackFileName)"
+        fixture.state.selectTrack(relativePath: relPath)
+        fixture.state.analyzeTrack(relativePath: relPath)
+        fixture.state.statusMessage = "Analyzing audio stems & calculating transient beat grid (local FFT heuristic)..."
+
+        let targetSize = NSSize(width: 1024, height: 680)
+        let targetName = "studio_composition_1024x680_worstcase.png"
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("studio_bitmaps_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let artifactDirs = [
+            URL(fileURLWithPath: "/Users/tomaselagin/.ao/data/artifacts/pulsedeckai-82"),
+            URL(fileURLWithPath: "/Users/tomaselagin/.gemini/antigravity-cli/brain/c1160ef7-b503-4688-a9d5-f67d8b2f0d53")
+        ]
+
+        let (window, root) = mountProductionView(fixture, size: targetSize)
+        defer { window.contentViewController = nil; window.contentView = nil; window.close() }
+
+        let rect = NSRect(origin: .zero, size: targetSize)
+        guard let rep = root.bitmapImageRepForCachingDisplay(in: rect) else {
+            XCTFail("Failed to allocate bitmapImageRep for \(targetName)")
+            return
+        }
+        root.cacheDisplay(in: rect, to: rep)
+
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            XCTFail("Failed to convert bitmap to PNG for \(targetName)")
+            return
+        }
+
+        let tempFile = tempDir.appendingPathComponent(targetName)
+        try png.write(to: tempFile)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(targetName)")
+        XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
+
+        for dir in artifactDirs where FileManager.default.fileExists(atPath: dir.path) {
+            try? png.write(to: dir.appendingPathComponent(targetName))
         }
     }
 

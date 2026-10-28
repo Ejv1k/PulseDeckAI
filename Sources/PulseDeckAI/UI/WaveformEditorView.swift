@@ -59,6 +59,55 @@ public struct WaveformEditorView: View {
         return "Selected track has pending waveform data. Click ANALYZE in the crate row to generate waveform, beat grid, and cues."
     }
 
+    @ViewBuilder
+    private func headerToolbarAnalysisAction(for path: String) -> some View {
+        if let status = analysisStatus {
+            switch status {
+            case .running:
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.mini)
+                    Text("ANALYZING…")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(DJTheme.deckA)
+                }
+            case .complete:
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9))
+                    Text("LOADING…")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(DJTheme.master)
+            case .failed:
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                    Text("RETRY ANALYZE IN CRATE")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(.orange)
+            }
+        } else {
+            Text("CLICK ANALYZE IN CRATE TO GENERATE CUES")
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundColor(DJTheme.deckA)
+        }
+    }
+
+    private func cueSummaryPrompt(for path: String) -> String {
+        if let status = analysisStatus {
+            switch status {
+            case .running:
+                return "Selected '\(path)' · Analysis in progress… waveform and cues will appear automatically"
+            case .complete:
+                return "Selected '\(path)' · Analysis complete · Loading waveform and cue points…"
+            case .failed(let reason):
+                return "Selected '\(path)' · Analysis error: \(reason) · Click ANALYZE in crate to retry"
+            }
+        }
+        return "Selected '\(path)' · Click ANALYZE in crate row to inspect cue points"
+    }
+
     public var body: some View {
         VStack(spacing: 6) {
             // Header Bar
@@ -181,15 +230,16 @@ public struct WaveformEditorView: View {
                             .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
                     }
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .frame(minHeight: DJTheme.minTouchTarget)
                     .background(model.aiTrimBypass ? Color.orange.opacity(0.15) : DJTheme.master.opacity(0.15))
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                             .stroke(model.aiTrimBypass ? Color.orange : DJTheme.master.opacity(0.6), lineWidth: 1)
                     )
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .help("Toggle AI trim cue boundaries for waveform display and cue audition")
 
                 Divider()
@@ -202,15 +252,18 @@ public struct WaveformEditorView: View {
                         Image(systemName: "minus.magnifyingglass")
                             .font(.system(size: 11))
                             .padding(4)
+                            .frame(minWidth: DJTheme.minTouchTarget, minHeight: DJTheme.minTouchTarget)
                             .background(DJTheme.cardHeader)
-                            .cornerRadius(3)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(StudioPressableStyle())
                     .disabled(model.zoomLevel <= 1.0)
                     .help("Zoom out (-)")
 
                     Text(String(format: "%.1fx", model.zoomLevel))
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
                         .foregroundColor(DJTheme.textSecondary)
                         .frame(width: 36)
 
@@ -218,10 +271,12 @@ public struct WaveformEditorView: View {
                         Image(systemName: "plus.magnifyingglass")
                             .font(.system(size: 11))
                             .padding(4)
+                            .frame(minWidth: DJTheme.minTouchTarget, minHeight: DJTheme.minTouchTarget)
                             .background(DJTheme.cardHeader)
-                            .cornerRadius(3)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(StudioPressableStyle())
                     .disabled(model.zoomLevel >= 32.0)
                     .help("Zoom in (+)")
 
@@ -231,18 +286,17 @@ public struct WaveformEditorView: View {
                         }
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
+                        .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardHeader)
                         .foregroundColor(DJTheme.deckA)
-                        .cornerRadius(3)
-                        .buttonStyle(.plain)
+                        .cornerRadius(DJTheme.chipRadius)
+                        .buttonStyle(StudioPressableStyle())
+                        .contentShape(Rectangle())
                         .help("Reset to full track view")
                     }
                 }
-            } else if selectedTrackPath != nil {
-                Text("CLICK ANALYZE IN CRATE TO GENERATE CUES")
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(DJTheme.deckA)
+            } else if let selected = selectedTrackPath {
+                headerToolbarAnalysisAction(for: selected)
             } else {
                 Text("SELECT A TRACK IN CRATE TO INSPECT CUES")
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
@@ -710,7 +764,7 @@ public struct WaveformEditorView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 10))
                         .foregroundColor(DJTheme.deckA)
-                    Text("Selected '\(selected)' · Click ANALYZE in crate row to view cue markers")
+                    Text(cueSummaryPrompt(for: selected))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(DJTheme.textSecondary)
                         .lineLimit(1)
@@ -740,8 +794,9 @@ public struct WaveformEditorView: View {
                 .padding(.vertical, 3)
                 .background(DJTheme.cardHeader)
                 .cornerRadius(3)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(StudioPressableStyle())
         }
         .padding(.horizontal, 4)
     }
@@ -768,6 +823,7 @@ public struct WaveformEditorView: View {
 
                             Text(formatTime(cueTime))
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
                                 .foregroundColor(DJTheme.textPrimary)
                         }
                         .padding(.horizontal, 6)
@@ -778,8 +834,9 @@ public struct WaveformEditorView: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .stroke(isSelected ? cue.color : Color.clear, lineWidth: 1)
                         )
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(StudioPressableStyle())
                     .help("Audition cue position for \(cue.displayName)")
                 }
 
@@ -802,8 +859,9 @@ public struct WaveformEditorView: View {
                     .padding(.vertical, 3)
                     .background(DJTheme.cardHeader)
                     .cornerRadius(3)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .help("Expand detailed cue nudge controls and minimap")
             } else {
                 HStack(spacing: 6) {
@@ -811,7 +869,7 @@ public struct WaveformEditorView: View {
                         .font(.system(size: 9))
                         .foregroundColor(DJTheme.textMuted)
                     if let selected = selectedTrackPath {
-                        Text("Selected '\(selected)' — click ANALYZE in crate row to inspect cue points")
+                        Text(cueSummaryPrompt(for: selected))
                             .font(.system(size: 9.5, design: .monospaced))
                             .foregroundColor(DJTheme.textSecondary)
                             .lineLimit(1)

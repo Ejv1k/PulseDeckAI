@@ -23,6 +23,17 @@ public enum DJTheme {
     public static let surfaceRaised = Color(red: 0.10, green: 0.11, blue: 0.15)
     public static let surfaceActive = Color(red: 0.14, green: 0.15, blue: 0.20)
     public static let borderActive = Color(red: 0.24, green: 0.27, blue: 0.36)
+
+    // Semantic Status Colors
+    public static let statusWarning = Color.orange
+    public static let statusError = Color(red: 1.00, green: 0.35, blue: 0.35)
+    public static let statusSuccess = Color(red: 0.20, green: 0.85, blue: 0.50)
+
+    // Studio Layout Foundations
+    public static let controlRadius: CGFloat = 4
+    public static let cardRadius: CGFloat = 6
+    public static let chipRadius: CGFloat = 3
+    public static let minTouchTarget: CGFloat = 28
 }
 
 /// Tactile button style providing responsive scale feedback on press (Emil Kowalski / Apple Design).
@@ -34,6 +45,6 @@ public struct StudioPressableStyle: ButtonStyle {
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
     }
 }

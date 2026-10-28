@@ -82,29 +82,32 @@ public struct StatusHeaderView: View {
 
             Spacer(minLength: 6)
 
-            Button(action: rescanLibrary) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                    Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")
+            // Library Actions Strip (Rescan + Reserved Open Library Placement)
+            HStack(spacing: 6) {
+                Button(action: rescanLibrary) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text(appState.isScanning ? "Scanning..." : "Rescan (⌘R)")
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(appState.isScanning ? DJTheme.deckA : DJTheme.textPrimary)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: DJTheme.minTouchTarget)
+                    .background(DJTheme.cardHeader)
+                    .cornerRadius(DJTheme.controlRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                            .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
+                    )
                 }
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(appState.isScanning ? DJTheme.deckA : DJTheme.textPrimary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(DJTheme.cardHeader)
-                .cornerRadius(4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(appState.isScanning ? DJTheme.deckA : DJTheme.border, lineWidth: 1)
-                )
+                .buttonStyle(StudioPressableStyle())
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(appState.isScanning)
+                .opacity(appState.isScanning ? 0.7 : 1.0)
+                .accessibilityLabel("Rescan Library")
+                .accessibilityHint("Scans library directory for new audio tracks and crates")
+                .help("Rescan library directory (⌘R)")
             }
-            .buttonStyle(StudioPressableStyle())
-            .keyboardShortcut("r", modifiers: .command)
-            .disabled(appState.isScanning)
-            .opacity(appState.isScanning ? 0.7 : 1.0)
-            .accessibilityLabel("Rescan Library")
-            .accessibilityHint("Scans library directory for new audio tracks and crates")
-            .help("Rescan library directory (⌘R)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)

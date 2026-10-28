@@ -360,17 +360,17 @@ public struct LibraryBrowserView: View {
                                             }
                                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                                             .padding(.horizontal, 6)
-                                            .frame(minHeight: 28)
+                                            .frame(minHeight: DJTheme.minTouchTarget)
                                             .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
                                             .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
-                                            .cornerRadius(3)
+                                            .cornerRadius(DJTheme.chipRadius)
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 3)
+                                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
                                                     .stroke(DJTheme.cue, lineWidth: 1)
                                             )
                                             .contentShape(Rectangle())
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(StudioPressableStyle())
                                         .help("Audition in headphones via Cue output")
                                     }
                                     .padding(.vertical, 2)
@@ -706,42 +706,101 @@ struct LibraryTrackAnalysisButton: View {
     var button: some View {
         Button { appState.analyzeTrack(relativePath: relativePath) } label: {
             HStack(spacing: 4) {
-                Image(systemName: "waveform.path")
-                Text("ANALYZE")
+                if let state = appState.analysisStatus(for: relativePath) {
+                    switch state {
+                    case .running:
+                        ProgressView().controlSize(.mini)
+                        Text("RUNNING")
+                    case .complete:
+                        Image(systemName: "checkmark")
+                        Text("ANALYZE")
+                    case .failed:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("RETRY")
+                    }
+                } else {
+                    Image(systemName: "waveform.path")
+                    Text("ANALYZE")
+                }
             }
             .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
+            .foregroundColor(buttonForegroundColor)
             .padding(.horizontal, 6)
-            .frame(minHeight: 28)
-            .background(DJTheme.deckA.opacity(0.15))
-            .cornerRadius(3)
+            .frame(minHeight: DJTheme.minTouchTarget)
+            .background(buttonBackgroundColor)
+            .cornerRadius(DJTheme.chipRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                    .stroke(buttonBorderColor, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .disabled(appState.isAnalyzingLibraryTrack)
-        .help(appState.isAnalyzingLibraryTrack
-              ? "One local analysis is running. Playback and library selection remain available."
-              : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown.")
+        .help(buttonHelp)
         .accessibilityLabel("Analyze \(relativePath) locally")
         .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            button.buttonStyle(.plain)
-            if let state = appState.analysisStatus(for: relativePath) {
-                HStack(spacing: 3) {
-                    if state == .running { ProgressView().controlSize(.mini) }
-                    Text(state.label)
-                        .font(.system(size: 9))
-                        .foregroundStyle(DJTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+    private var buttonForegroundColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA
+            case .complete:
+                return DJTheme.textSecondary
+            case .failed:
+                return .orange
             }
         }
+        return appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA
+    }
+
+    private var buttonBackgroundColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA.opacity(0.2)
+            case .complete:
+                return DJTheme.cardHeader
+            case .failed:
+                return Color.orange.opacity(0.15)
+            }
+        }
+        return DJTheme.deckA.opacity(0.15)
+    }
+
+    private var buttonBorderColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA
+            case .complete:
+                return DJTheme.border
+            case .failed:
+                return Color.orange
+            }
+        }
+        return DJTheme.deckA.opacity(0.5)
+    }
+
+    private var buttonHelp: String {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return "Analysis in progress for this track. Playback remains available."
+            case .complete:
+                return "Analysis complete. Click to re-run local analysis."
+            case .failed(let reason):
+                return "Analysis failed: \(reason). Click to retry."
+            }
+        }
+        return appState.isAnalyzingLibraryTrack
+            ? "One local analysis is running. Playback and library selection remain available."
+            : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown."
+    }
+
+    var body: some View {
+        button.buttonStyle(StudioPressableStyle())
     }
 }
 

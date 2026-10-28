@@ -216,143 +216,143 @@ public struct LibraryBrowserView: View {
                         }
                         .frame(maxWidth: .infinity)
                     } else {
-                        List {
-                            ForEach(Array(selected.audioFiles.enumerated()), id: \.element) { index, file in
-                                let relPath = "\(selected.folderName)/\(file)"
-                                let isSelected = appState.selectedTrackPath == relPath
-                                let isPreviewing = appState.previewTrackPath == relPath
-                                let trackEntry = appState.loadedCache?.tracks[relPath]
-                                let comp = trackEntry.flatMap { appState.compatibility(for: $0) }
-                                let transfer = LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath)
+                        ScrollView {
+                            LazyVStack(spacing: 4) {
+                                ForEach(Array(selected.audioFiles.enumerated()), id: \.element) { index, file in
+                                    let relPath = "\(selected.folderName)/\(file)"
+                                    let isSelected = appState.selectedTrackPath == relPath
+                                    let isPreviewing = appState.previewTrackPath == relPath
+                                    let trackEntry = appState.loadedCache?.tracks[relPath]
+                                    let comp = trackEntry.flatMap { appState.compatibility(for: $0) }
+                                    let transfer = LibraryTrackTransfer(libraryRoot: appState.libraryRootURL, relativePath: relPath)
 
-                                HStack(spacing: 10) {
-                                    // Row index & track selection button
-                                    LibraryTrackSelectionButton(appState: appState, relativePath: relPath) {
-                                        HStack(spacing: 8) {
-                                            Text(String(format: "%02d", index + 1))
-                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                                .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
-                                                .frame(width: 22, alignment: .leading)
+                                    HStack(spacing: 10) {
+                                        // Row index & track selection button
+                                        LibraryTrackSelectionButton(appState: appState, relativePath: relPath) {
+                                            HStack(spacing: 8) {
+                                                Text(String(format: "%02d", index + 1))
+                                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
+                                                    .frame(width: 22, alignment: .leading)
 
-                                            Image(systemName: isSelected ? "waveform.circle.fill" : "waveform")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
+                                                Image(systemName: isSelected ? "waveform.circle.fill" : "waveform")
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
 
-                                            Text(file)
-                                                .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .monospaced))
-                                                .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .draggable(transfer)
-                                    .onDrag { transfer.itemProvider }
-
-                                    Spacer()
-
-                                    // Real cached BPM & Musical Key metadata
-                                    if let track = trackEntry {
-                                        HStack(spacing: 6) {
-                                            if track.bpm > 0 {
-                                                Text(String(format: "%.1f BPM", track.bpm))
-                                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                                    .foregroundColor(DJTheme.deckA)
-                                            } else {
-                                                Text("BPM: UNKNOWN")
-                                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                                    .foregroundColor(DJTheme.textMuted)
+                                                Text(file)
+                                                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                                    .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
+                                                    .lineLimit(1)
                                             }
-
-                                            if !track.musicalKey.isEmpty && track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
-                                                Text(track.musicalKey)
-                                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                                    .foregroundColor(DJTheme.cue)
-                                            } else {
-                                                Text("KEY: UNKNOWN")
-                                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                                    .foregroundColor(DJTheme.textMuted)
-                                            }
+                                            .frame(minHeight: 28)
+                                            .contentShape(Rectangle())
                                         }
 
-                                        // Compatibility Badges against Reference Deck
-                                        if let comp {
-                                            HStack(spacing: 4) {
-                                                // Harmonic Key Badge
-                                                Text(comp.key.badgeLabel)
+                                        Spacer()
+
+                                        // Real cached BPM & Musical Key metadata
+                                        if let track = trackEntry {
+                                            HStack(spacing: 6) {
+                                                if track.bpm > 0 {
+                                                    Text(String(format: "%.1f BPM", track.bpm))
+                                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                        .foregroundColor(DJTheme.deckA)
+                                                } else {
+                                                    Text("BPM: UNKNOWN")
+                                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                        .foregroundColor(DJTheme.textMuted)
+                                                }
+
+                                                if !track.musicalKey.isEmpty && track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
+                                                    Text(track.musicalKey)
+                                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                        .foregroundColor(DJTheme.cue)
+                                                } else {
+                                                    Text("KEY: UNKNOWN")
+                                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                        .foregroundColor(DJTheme.textMuted)
+                                                }
+                                            }
+
+                                            // Compatibility Badges against Reference Deck
+                                            if let comp {
+                                                HStack(spacing: 4) {
+                                                    // Harmonic Key Badge
+                                                    Text(comp.key.badgeLabel)
+                                                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                        .padding(.horizontal, 5)
+                                                        .padding(.vertical, 2)
+                                                        .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : Color.red.opacity(0.2)))
+                                                        .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : .red))
+                                                        .cornerRadius(3)
+
+                                                    // Tempo Badge
+                                                    Text(comp.tempo.badgeLabel)
+                                                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                        .padding(.horizontal, 5)
+                                                        .padding(.vertical, 2)
+                                                        .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : Color.orange.opacity(0.2)))
+                                                        .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
+                                                        .cornerRadius(3)
+                                                }
+                                            } else {
+                                                Text("NO REF")
                                                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                                                     .padding(.horizontal, 5)
                                                     .padding(.vertical, 2)
-                                                    .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : Color.red.opacity(0.2)))
-                                                    .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : .red))
-                                                    .cornerRadius(3)
-
-                                                // Tempo Badge
-                                                Text(comp.tempo.badgeLabel)
-                                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                                    .padding(.horizontal, 5)
-                                                    .padding(.vertical, 2)
-                                                    .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : Color.orange.opacity(0.2)))
-                                                    .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
+                                                    .background(DJTheme.cardHeader)
+                                                    .foregroundColor(DJTheme.textMuted)
                                                     .cornerRadius(3)
                                             }
                                         } else {
-                                            Text("NO REF")
-                                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                            Text("UNANALYZED")
+                                                .font(.system(size: 9, design: .monospaced))
+                                                .foregroundColor(DJTheme.textMuted)
                                                 .padding(.horizontal, 5)
                                                 .padding(.vertical, 2)
                                                 .background(DJTheme.cardHeader)
-                                                .foregroundColor(DJTheme.textMuted)
                                                 .cornerRadius(3)
                                         }
-                                    } else {
-                                        Text("UNANALYZED")
-                                            .font(.system(size: 9, design: .monospaced))
-                                            .foregroundColor(DJTheme.textMuted)
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(DJTheme.cardHeader)
+
+                                        LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
+
+                                        // Headphone Audition Cue Button
+                                        Button(action: {
+                                            if isPreviewing {
+                                                appState.togglePreviewPlay()
+                                            } else {
+                                                appState.loadPreviewTrack(relativePath: relPath, playWhenReady: true)
+                                            }
+                                        }) {
+                                            HStack(spacing: 3) {
+                                                Image(systemName: (isPreviewing && appState.isPreviewPlaying) ? "pause.fill" : "headphones")
+                                                Text((isPreviewing && appState.isPreviewPlaying) ? "PAUSE" : "CUE")
+                                            }
+                                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                            .padding(.horizontal, 6)
+                                            .frame(minHeight: 28)
+                                            .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
+                                            .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
                                             .cornerRadius(3)
-                                    }
-
-                                    LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
-
-                                    // Headphone Audition Cue Button
-                                    Button(action: {
-                                        if isPreviewing {
-                                            appState.togglePreviewPlay()
-                                        } else {
-                                            appState.loadPreviewTrack(relativePath: relPath, playWhenReady: true)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 3)
+                                                    .stroke(DJTheme.cue, lineWidth: 1)
+                                            )
+                                            .contentShape(Rectangle())
                                         }
-                                    }) {
-                                        HStack(spacing: 3) {
-                                            Image(systemName: (isPreviewing && appState.isPreviewPlaying) ? "pause.fill" : "headphones")
-                                            Text((isPreviewing && appState.isPreviewPlaying) ? "PAUSE" : "CUE")
-                                        }
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
-                                        .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
-                                        .cornerRadius(3)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 3)
-                                                .stroke(DJTheme.cue, lineWidth: 1)
-                                        )
+                                        .buttonStyle(.plain)
+                                        .help("Audition in headphones via Cue output")
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("Audition in headphones via Cue output")
+                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 6)
+                                    .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
+                                    .cornerRadius(4)
+                                    .contentShape(Rectangle())
+                                    .draggable(transfer)
                                 }
-                                .padding(.vertical, 3)
-                                .padding(.horizontal, 6)
-                                .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
-                                .cornerRadius(4)
-                                .contentShape(Rectangle())
-                                .listRowBackground(DJTheme.cardBackground)
-                                .draggable(transfer)
-                                .onDrag { transfer.itemProvider }
                             }
+                            .padding(.vertical, 2)
                         }
-                        .listStyle(.plain)
                         .background(DJTheme.cardBackground)
                     }
 
@@ -586,7 +586,46 @@ struct LibraryTrackSelectionButton<Label: View>: View {
             .accessibilityIdentifier("trackSelectButton-\(relativePath)")
     }
 
-    var body: some View { button }
+    var body: some View {
+        button.buttonStyle(NonBlockingRowButtonStyle())
+    }
+}
+
+/// Primitive button style allowing pointer drag gestures to propagate to parent draggable containers
+/// while preserving keyboard navigation (focus, Space/Return activation) and accessible default action.
+struct NonBlockingRowButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        RowButtonContent(configuration: configuration)
+    }
+
+    private struct RowButtonContent: View {
+        let configuration: Configuration
+        @FocusState private var isFocused: Bool
+
+        var body: some View {
+            configuration.label
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    configuration.trigger()
+                }
+                .focusable()
+                .focused($isFocused)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(isFocused ? DJTheme.deckA : Color.clear, lineWidth: 1.5)
+                )
+                .onKeyPress(phases: .down) { press in
+                    if press.key == .space || press.key == .return {
+                        configuration.trigger()
+                        return .handled
+                    }
+                    return .ignored
+                }
+                .accessibilityAction(.default) {
+                    configuration.trigger()
+                }
+        }
+    }
 }
 
 @MainActor
@@ -603,13 +642,14 @@ struct LibraryTrackAnalysisButton: View {
             .font(.system(size: 9, weight: .bold, design: .monospaced))
             .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
             .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .frame(minHeight: 28)
             .background(DJTheme.deckA.opacity(0.15))
             .cornerRadius(3)
             .overlay(
                 RoundedRectangle(cornerRadius: 3)
                     .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
         .disabled(appState.isAnalyzingLibraryTrack)
         .help(appState.isAnalyzingLibraryTrack

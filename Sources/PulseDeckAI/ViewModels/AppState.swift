@@ -44,6 +44,12 @@ public final class AppState: ObservableObject {
     @Published public private(set) var libraryLocationError: String?
     private var libraryLocationStore: LibraryLocationStore?
     private var libraryLaunchIssue: LibraryLaunchLocation.Issue?
+    private var beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)?
+
+    /// Only this root may be consumed by library asset loaders. An unresolved display path is not active.
+    public var resolvedLibraryRootURL: URL? {
+        libraryLaunchIssue == nil ? libraryRootURL : nil
+    }
     private var chooseLibraryDirectory: @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
 
     public var libraryLocationUnavailableReason: String? {
@@ -269,11 +275,13 @@ public final class AppState: ObservableObject {
         beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil,
         libraryLocationStore: LibraryLocationStore? = nil,
         libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
+        beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)? = nil,
         chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
     ) {
         // Explicitly injected roots win; this initializer never restores normal app preferences.
         self.libraryLocationStore = libraryLocationStore
         self.libraryLaunchIssue = libraryLaunchIssue
+        self.beforeSoundboardPreloadForTesting = beforeSoundboardPreloadForTesting
         self.libraryLocationError = libraryLaunchIssue?.message
         self.chooseLibraryDirectory = chooseLibraryDirectory
         self.libraryRootURL = libraryRootURL
@@ -339,7 +347,7 @@ public final class AppState: ObservableObject {
         }
         self.soundboardPads = coordinator.soundboardController.padSnapshots
         self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
-        coordinator.soundboardController.preload(from: libraryRootURL)
+        preloadSoundboard()
     }
 
     private func handleDeviceError(_ error: CoreAudioError) {
@@ -433,6 +441,7 @@ public final class AppState: ObservableObject {
     /// reloading from disk if the shared in-memory cache is out of date.
     @discardableResult
     public func selectTrack(relativePath: String) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         let rootURL = libraryRootURL
         let standardizedRoot = rootURL.standardizedFileURL
         let isSameTrackAlreadySelected = (selectedTrackPath == relativePath &&
@@ -669,6 +678,10 @@ public final class AppState: ObservableObject {
     /// The single entry point shared by the real LOAD control and native library drops.
     @discardableResult
     public func loadTrack(relativePath: String, deck: DeckIdentifier) -> Bool {
+        guard resolvedLibraryRootURL != nil else {
+            reportDeckLoadFailure(libraryLocationError ?? "Open Library to choose a library root.", deck: deck)
+            return false
+        }
         guard !isTransitionBusy, pendingSafetyLockAutomationCommands == 0 else {
             reportDeckLoadFailure("Automation owns deck transport; finish or cancel it before loading.", deck: deck)
             return false
@@ -792,6 +805,7 @@ public final class AppState: ObservableObject {
     /// One bounded local analysis at a time; cache writes share the editor's persistence queue.
     @discardableResult
     func analyzeTrack(relativePath: String) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         if let analysisTask { return analysisTask }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
@@ -1000,7 +1014,9 @@ public final class AppState: ObservableObject {
 
     /// Preloads soundboard audio assets from current library root directory.
     public func preloadSoundboard() {
-        audioCoordinator?.soundboardController.preload(from: libraryRootURL)
+        guard let root = resolvedLibraryRootURL, let coordinator = audioCoordinator else { return }
+        beforeSoundboardPreloadForTesting?(root)
+        coordinator.soundboardController.preload(from: root)
     }
 
     private var lastSoundboardTriggerTimestamp: TimeInterval = 0.0
@@ -1227,6 +1243,7 @@ public final class AppState: ObservableObject {
     /// Runs audio file I/O off the MainActor to prevent UI hitches, and tracks generation to drop stale loads.
     @discardableResult
     public func loadPreviewTrack(relativePath: String, playWhenReady: Bool = false) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         let rootURL = self.libraryRootURL
         let standardizedRoot = rootURL.standardizedFileURL
         let fileURL = rootURL.appendingPathComponent(relativePath)

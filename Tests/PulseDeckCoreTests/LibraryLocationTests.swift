@@ -1,5 +1,7 @@
 import XCTest
 import Combine
+import AppKit
+import AVFoundation
 @testable import PulseDeckCore
 @testable import PulseDeckAI
 
@@ -160,6 +162,107 @@ final class LibraryLocationTests: XCTestCase {
         XCTAssertNil(app.scanSummary)
         XCTAssertNil(app.loadedCache)
         XCTAssertNil(f.store.chosenRoot)
+    }
+
+    private func populateAssets(_ root: URL) throws {
+        let sfx = root.appendingPathComponent("08_Soundboard_SFX")
+        let visuals = root.appendingPathComponent("09_Visual_Backgrounds_Media")
+        try FileManager.default.createDirectory(at: sfx, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: visuals, withIntermediateDirectories: true)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        do {
+            let file = try AVAudioFile(forWriting: sfx.appendingPathComponent("01 Quiet.wav"), settings: format.settings)
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410))
+            pcm.frameLength = 4410
+            let channels = try XCTUnwrap(pcm.floatChannelData)
+            for channel in 0..<2 {
+                for frame in 0..<4410 { channels[channel][frame] = Float(sin(Double(frame) * 0.05)) * 0.002 }
+            }
+            try file.write(from: pcm)
+        }
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let bytes = try XCTUnwrap(image.bitmapData)
+        bytes.initialize(repeating: 255, count: image.bytesPerRow * image.pixelsHigh)
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: visuals.appendingPathComponent("private.png"))
+    }
+
+    func testMalformedOverrideBlocksPopulatedFallbackConsumersUntilExplicitChoice() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let fallback = try f.root("PulseDeck_Library")
+        try populateAssets(fallback)
+        let launch = LibraryLocation.resolve(arguments: ["app", "--library-root", "relative"], workingDirectory: f.parent, store: f.store)
+        let audio = AudioEngineCoordinator(hal: MockAudioHardware())
+        defer { audio.stop() }
+        var preloadRoots: [URL] = []
+        let app = AppState(libraryRootURL: launch.root,
+            waveformEditorModel: WaveformEditorModel(libraryRootURL: launch.root),
+            audioCoordinator: audio, startCoordinator: false, libraryLocationStore: f.store,
+            libraryLaunchIssue: launch.issue, beforeSoundboardPreloadForTesting: { preloadRoots.append($0) },
+            chooseLibraryDirectory: { fallback })
+        let projector = ProjectorViewModel(); defer { projector.teardown() }
+        var mediaRoots: [URL] = []
+        PulseDeckApp.updateProjectorLibrary(from: app, model: projector, beforeDiscoveryForTesting: { mediaRoots.append($0) })
+        app.preloadSoundboard()
+        XCTAssertNil(app.resolvedLibraryRootURL)
+        // These synchronous hooks sit immediately before the real discovery calls, including constructor preload.
+        XCTAssertTrue(preloadRoots.isEmpty, "No soundboard discovery may be scheduled, even during initialization")
+        XCTAssertTrue(mediaRoots.isEmpty, "The actual onAppear bridge must never register a fallback root")
+        XCTAssertFalse(projector.mediaService.isScanning)
+        XCTAssertTrue(projector.mediaService.items.isEmpty)
+        XCTAssertTrue(audio.soundboardController.padSnapshots.allSatisfy(\.isFallback))
+        let assetPath = "08_Soundboard_SFX/01 Quiet.wav"
+        await app.selectTrack(relativePath: assetPath).value
+        await app.loadPreviewTrack(relativePath: assetPath).value
+        await app.analyzeTrack(relativePath: assetPath).value
+        XCTAssertFalse(app.loadTrack(relativePath: assetPath, deck: .deckA))
+        XCTAssertNil(app.selectedTrackPath)
+        XCTAssertNil(app.previewTrackPath)
+        XCTAssertNil(audio.deckAGraph.loadedTrackURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fallback.appendingPathComponent(PulseDeckCoreConfig.cacheFileName).path))
+
+        let padReady = expectation(description: "Chosen root's quiet file actually preloaded")
+        let mediaReady = expectation(description: "Chosen root's real image discovered")
+        let pads = app.$soundboardPads.filter { !$0.isEmpty && !$0[0].isFallback }.first().sink { _ in padReady.fulfill() }
+        let media = projector.mediaService.$items.filter { !$0.isEmpty }.first().sink { _ in mediaReady.fulfill() }
+        app.openLibrary()
+        PulseDeckApp.updateProjectorLibrary(from: app, model: projector, beforeDiscoveryForTesting: { mediaRoots.append($0) })
+        await fulfillment(of: [padReady, mediaReady], timeout: 5)
+        XCTAssertEqual(app.resolvedLibraryRootURL?.path, fallback.path)
+        XCTAssertFalse(preloadRoots.isEmpty)
+        XCTAssertTrue(preloadRoots.allSatisfy { $0.path == fallback.path })
+        XCTAssertEqual(mediaRoots.map(\.path), [fallback.path])
+        XCTAssertEqual(audio.soundboardController.padSnapshots[0].title, "01 Quiet")
+        XCTAssertEqual(projector.mediaService.items.first?.fileURL.lastPathComponent, "private.png")
+        XCTAssertEqual(f.store.chosenRoot?.path, fallback.path)
+        withExtendedLifetime((pads, media)) {}
+    }
+
+    func testValidExplicitRootDiscoversItsAssetsInsteadOfPopulatedCWDFallback() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let fallback = try f.root("PulseDeck_Library"), intended = try f.root("Explicit chosen library")
+        try populateAssets(fallback); try populateAssets(intended)
+        let launch = LibraryLocation.resolve(arguments: ["app", "--library-root", intended.path], workingDirectory: f.parent, store: f.store)
+        let audio = AudioEngineCoordinator(hal: MockAudioHardware()); defer { audio.stop() }
+        var preloadRoots: [URL] = []
+        let app = AppState(libraryRootURL: launch.root, waveformEditorModel: WaveformEditorModel(libraryRootURL: launch.root),
+            audioCoordinator: audio, startCoordinator: false, libraryLocationStore: f.store,
+            libraryLaunchIssue: launch.issue, beforeSoundboardPreloadForTesting: { preloadRoots.append($0) }, chooseLibraryDirectory: { nil })
+        let projector = ProjectorViewModel(); defer { projector.teardown() }
+        var mediaRoots: [URL] = []
+        let padReady = expectation(description: "Explicit root's quiet file preloaded")
+        let mediaReady = expectation(description: "Explicit root's image discovered")
+        let pads = app.$soundboardPads.filter { !$0.isEmpty && !$0[0].isFallback }.first().sink { _ in padReady.fulfill() }
+        let media = projector.mediaService.$items.filter { !$0.isEmpty }.first().sink { _ in mediaReady.fulfill() }
+        PulseDeckApp.updateProjectorLibrary(from: app, model: projector, beforeDiscoveryForTesting: { mediaRoots.append($0) })
+        await fulfillment(of: [padReady, mediaReady], timeout: 5)
+        XCTAssertEqual(app.resolvedLibraryRootURL?.path, intended.path)
+        XCTAssertEqual(preloadRoots.map(\.path), [intended.path])
+        XCTAssertEqual(mediaRoots.map(\.path), [intended.path])
+        XCTAssertEqual(projector.mediaService.items.first?.fileURL.deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath().path, intended.resolvingSymlinksInPath().path)
+        XCTAssertNil(f.store.chosenRoot, "An explicit launch must not persist a user choice")
+        withExtendedLifetime((pads, media)) {}
     }
 
     func testExplicitAbsolutePathAndFileURLWinWithoutOverwritingRememberedChoice() throws {

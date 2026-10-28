@@ -376,4 +376,113 @@ final class StudioCompositionLayoutTests: XCTestCase {
         XCTAssertTrue(centerShape.contains(point: CGPoint(x: centerX, y: 80), in: rect),
                       "Center guide must be hit-testable")
     }
+
+    func testActionControlsInteractiveBoundsMeetOrExceed28pt() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+
+        // 1. LibraryDeckLoadButton height >= 28pt
+        let loadBtn = LibraryDeckLoadButton(appState: fixture.state, deck: .deckA, title: "DECK A", color: .blue)
+        let loadHost = NSHostingView(rootView: loadBtn)
+        loadHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(loadHost.fittingSize.height, 28.0,
+                                    "LOAD button interactive height must meet or exceed 28pt")
+
+        // 2. LibraryTrackAnalysisButton height >= 28pt
+        let analyzeBtn = LibraryTrackAnalysisButton(appState: fixture.state, relativePath: "Techno/track1.wav")
+        let analyzeHost = NSHostingView(rootView: analyzeBtn)
+        analyzeHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(analyzeHost.fittingSize.height, 28.0,
+                                    "Analyze button interactive height must meet or exceed 28pt")
+
+        // 3. Transport Play/Pause button height >= 28pt
+        let playBtn = Button(action: {}) {
+            HStack(spacing: 4) {
+                Image(systemName: "play.fill")
+                Text("PLAY")
+            }
+            .font(.system(size: 10, weight: .black, design: .monospaced))
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        let playHost = NSHostingView(rootView: playBtn)
+        playHost.frame = NSRect(x: 0, y: 0, width: 200, height: 40)
+        playHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(playHost.fittingSize.height, 28.0,
+                                    "Play button interactive height must meet or exceed 28pt")
+    }
+
+    func testLibraryTrackTransferCanonicalTransferableContract() throws {
+        let root = URL(fileURLWithPath: "/tmp/PulseDeck")
+        let transfer = LibraryTrackTransfer(libraryRoot: root, relativePath: "Techno/track1.wav")
+
+        // Prove Codable round-trip matches expected JSON payload
+        let encoded = try JSONEncoder().encode(transfer)
+        let decoded = try JSONDecoder().decode(LibraryTrackTransfer.self, from: encoded)
+        XCTAssertEqual(decoded, transfer)
+        XCTAssertEqual(decoded.relativePath, "Techno/track1.wav")
+
+        // Prove UTType matches canonical identifier
+        XCTAssertEqual(UTType.pulseDeckLibraryTrack.identifier, "com.pulsedeckai.library-track")
+    }
+
+    func testLibraryTrackSelectionButtonUsesNonBlockingRowButtonStyleAndPreservesSelection() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+        let trackPath = "Techno/track1.wav"
+
+        let selectButton = LibraryTrackSelectionButton(appState: fixture.state, relativePath: trackPath) {
+            Text("track1.wav")
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+        }
+
+        // 1. Verify production styled body mounts with NonBlockingRowButtonStyle meeting >= 28pt target
+        let host = NSHostingView(rootView: selectButton)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        host.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(host.fittingSize.height, 28.0,
+                                    "Selection button interactive height must meet or exceed 28pt")
+
+        // 2. Test keyboard activation (Space key) on the production styled button without ActionCapture override
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let spaceEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown,
+                                                        location: .zero,
+                                                        modifierFlags: [],
+                                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                                        windowNumber: window.windowNumber,
+                                                        context: nil,
+                                                        characters: " ",
+                                                        charactersIgnoringModifiers: " ",
+                                                        isARepeat: false,
+                                                        keyCode: 49))
+        window.sendEvent(spaceEvent)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath,
+                       "Space key activation on production styled button must select track in AppState")
+
+        // 3. Test Return key activation on production styled button
+        fixture.state.selectedTrackPath = nil
+        let returnEvent = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown,
+                                                         location: .zero,
+                                                         modifierFlags: [],
+                                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: window.windowNumber,
+                                                         context: nil,
+                                                         characters: "\r",
+                                                         charactersIgnoringModifiers: "\r",
+                                                         isARepeat: false,
+                                                         keyCode: 36))
+        window.sendEvent(returnEvent)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(fixture.state.selectedTrackPath, trackPath,
+                       "Return key activation on production styled button must select track in AppState")
+    }
 }

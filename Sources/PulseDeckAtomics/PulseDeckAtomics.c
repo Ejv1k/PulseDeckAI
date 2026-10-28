@@ -8,7 +8,7 @@
 
 #define PD_RING_CAPACITY 32u
 #define PD_RING_MASK (PD_RING_CAPACITY - 1u)
-#define PD_MAX_CALLBACK_FRAMES 4096u
+#define PD_MAX_CALLBACK_FRAMES PD_METER_MAX_CALLBACK_FRAMES
 
 _Static_assert((PD_RING_CAPACITY & PD_RING_MASK) == 0u, "Ring capacity must be a power of two");
 

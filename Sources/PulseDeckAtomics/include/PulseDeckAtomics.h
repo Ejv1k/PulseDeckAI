@@ -7,6 +7,13 @@
 #define PD_METER_SPECTRUM_BINS 512u
 #define PD_METER_FFT_SIZE 1024u
 
+/* Absolute callback ceiling: 400 ms at AudioMeteringService's supported 192 kHz
+ * maximum. AVAudioNode's tap buffer size is a request, not a fixed callback size.
+ * Lower rates use the same ceiling; this is not a per-rate duration validator.
+ * Ring creation preallocates both PCM scratch buffers; callbacks never resize them.
+ * The FFT workspace and 32-record output queue remain independently bounded. */
+#define PD_METER_MAX_CALLBACK_FRAMES 76800u
+
 typedef struct PDMeterRing PDMeterRing;
 
 typedef struct {

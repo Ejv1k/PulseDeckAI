@@ -433,10 +433,11 @@ final class LibraryCuePreviewTests: XCTestCase {
         try makeSyntheticAudioFile(url: trackB, durationSeconds: 5.0)
 
         // Trigger load for track A, then immediately for track B
-        app.loadPreviewTrack(relativePath: "trackA.wav")
-        app.loadPreviewTrack(relativePath: "trackB.wav")
+        let taskA = app.loadPreviewTrack(relativePath: "trackA.wav")
+        let taskB = app.loadPreviewTrack(relativePath: "trackB.wav")
 
-        try await Task.sleep(nanoseconds: 150_000_000)
+        await taskA.value
+        await taskB.value
 
         // Final state must reflect Track B, not stale Track A
         XCTAssertEqual(app.previewTrackPath, "trackB.wav")

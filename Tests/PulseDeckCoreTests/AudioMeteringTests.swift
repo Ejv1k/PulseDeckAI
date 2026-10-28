@@ -21,6 +21,87 @@ final class AudioMeteringTests: XCTestCase {
         }
     }
 
+    private func assertFullCallbackMetrics(frameCount: Int, sampleRate: Double,
+                                           file: StaticString = #filePath, line: UInt = #line) throws {
+        let ring = try ring()
+        defer { pd_meter_ring_destroy(ring) }
+        var left = [Float](repeating: 0.003, count: frameCount)
+        var right = [Float](repeating: 0.004, count: frameCount)
+        // A peak beyond the original 4096-frame limit also proves metrics include the tail.
+        left[frameCount - 1] = 0.2
+        right[frameCount - 1] = -0.3
+        let pushed = left.withUnsafeBufferPointer { leftBuffer in
+            right.withUnsafeBufferPointer { rightBuffer in
+                pd_meter_ring_push_audio(ring, leftBuffer.baseAddress, rightBuffer.baseAddress,
+                                         2, UInt32(frameCount), sampleRate, UInt64(frameCount))
+            }
+        }
+        XCTAssertTrue(pushed, "Supported tap callback must not be dropped", file: file, line: line)
+        guard pushed else { return }
+        let sample = try XCTUnwrap(pop(ring), file: file, line: line)
+        let energy = Double(frameCount - 1) * (0.003 * 0.003 + 0.004 * 0.004) + 0.2 * 0.2 + 0.3 * 0.3
+        XCTAssertEqual(sample.rms, Float(sqrt(energy / Double(2 * frameCount))), accuracy: 0.000001,
+                       file: file, line: line)
+        XCTAssertEqual(sample.peak, 0.3, accuracy: 0.000001, file: file, line: line)
+        XCTAssertEqual(sample.frame_count, UInt32(frameCount), file: file, line: line)
+        XCTAssertEqual(sample.sample_rate, sampleRate, file: file, line: line)
+        XCTAssertEqual(sample.host_time, UInt64(frameCount), file: file, line: line)
+        XCTAssertEqual(sample.fft_size, 1024, file: file, line: line)
+        // The first 1024-frame stereo average stays 0.0035; the late peak must not resize the FFT.
+        XCTAssertEqual(bin(sample, 0), 0.0035, accuracy: 0.00005, file: file, line: line)
+        XCTAssertNil(pop(ring), file: file, line: line)
+        XCTAssertEqual(pd_meter_ring_dropped_count(ring), 0, file: file, line: line)
+    }
+
+    func testNative4410FrameCallbackPreservesFullStereoPeakAndRMS() throws {
+        try assertFullCallbackMetrics(frameCount: 4410, sampleRate: 44100)
+    }
+
+    func testNative4800FrameCallbackPreservesFullStereoPeakAndRMS() throws {
+        try assertFullCallbackMetrics(frameCount: 4800, sampleRate: 48000)
+    }
+
+    func testExactCallbackCapacityAndBeyondCapacityRejection() throws {
+        let capacity = Int(PD_METER_MAX_CALLBACK_FRAMES)
+        XCTAssertEqual(capacity, 76800)
+        try assertFullCallbackMetrics(frameCount: capacity, sampleRate: 192000)
+        let ring = try ring()
+        defer { pd_meter_ring_destroy(ring) }
+        let values = [Float](repeating: 0.125, count: capacity + 1)
+        let pushed = values.withUnsafeBufferPointer {
+            pd_meter_ring_push_audio(ring, $0.baseAddress, $0.baseAddress,
+                                     2, UInt32(values.count), 192000, 100)
+        }
+        XCTAssertFalse(pushed)
+        XCTAssertNil(pop(ring))
+        XCTAssertEqual(pd_meter_ring_dropped_count(ring), 1)
+    }
+
+    func testValidBuffersStillRejectUnsupportedChannelsAndRates() throws {
+        let ring = try ring()
+        defer { pd_meter_ring_destroy(ring) }
+        let values = [Float](repeating: 0.125, count: 1024)
+        values.withUnsafeBufferPointer { buffer in
+            for channels in [UInt32(0), 3] {
+                XCTAssertFalse(pd_meter_ring_push_audio(ring, buffer.baseAddress, buffer.baseAddress,
+                                                        channels, 1024, 48000, 1))
+            }
+            for rate in [Double(7999), 192001, .nan, .infinity] {
+                XCTAssertFalse(pd_meter_ring_push_audio(ring, buffer.baseAddress, buffer.baseAddress,
+                                                        2, 1024, rate, 2))
+            }
+            XCTAssertFalse(pd_meter_ring_push_audio(ring, buffer.baseAddress, buffer.baseAddress,
+                                                    2, 0, 48000, 3))
+            XCTAssertTrue(pd_meter_ring_push_audio(ring, buffer.baseAddress, nil,
+                                                   1, 1024, 8000, 4))
+        }
+        let sample = try XCTUnwrap(pop(ring))
+        XCTAssertEqual(sample.rms, 0.125, accuracy: 0.000001)
+        XCTAssertEqual(sample.peak, 0.125, accuracy: 0.000001)
+        XCTAssertNil(pop(ring))
+        XCTAssertEqual(pd_meter_ring_dropped_count(ring), 7)
+    }
+
     func testSilenceDCAndToneMetricsAndFrequencyBins() throws {
         let ring = try ring()
         defer { pd_meter_ring_destroy(ring) }

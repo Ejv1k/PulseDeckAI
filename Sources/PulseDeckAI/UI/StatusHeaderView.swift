@@ -49,6 +49,9 @@ public struct StatusHeaderView: View {
                         .foregroundColor(DJTheme.textSecondary)
                         .lineLimit(1)
                 }
+                .help(appState.libraryRootURL.standardizedFileURL.path)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Library directory: \(appState.libraryRootURL.standardizedFileURL.path)")
 
                 Circle()
                     .fill(DJTheme.border)
@@ -64,6 +67,9 @@ public struct StatusHeaderView: View {
                         .foregroundColor(DJTheme.deckA)
                         .lineLimit(1)
                 }
+                .help(appState.statusMessage)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Status: \(appState.statusMessage)")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)

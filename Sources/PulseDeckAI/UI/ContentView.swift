@@ -25,7 +25,11 @@ public struct ContentView: View {
                 DeckStudioView(appState: appState)
 
                 // Shared 60 FPS Multi-Band Waveform & Cue Editor
-                WaveformEditorView(model: appState.waveformEditorModel)
+                WaveformEditorView(
+                    model: appState.waveformEditorModel,
+                    selectedTrackPath: appState.selectedTrackPath,
+                    analysisStatus: appState.selectedTrackPath.flatMap { appState.analysisStatus(for: $0) }
+                )
 
                 // DJ Crates Sidebar & Track Browser
                 LibraryBrowserView(appState: appState)

@@ -7,6 +7,8 @@ import PulseDeckCore
 /// hotkeys I/O without overriding text inputs, and atomic cache persistence.
 public struct WaveformEditorView: View {
     @ObservedObject public var model: WaveformEditorModel
+    var selectedTrackPath: String?
+    var analysisStatus: LibraryTrackAnalysisStatus?
     @FocusState private var isWaveformFocused: Bool
     @State private var hoveredCue: CueType? = nil
     @State private var dragInitialHandle: (cue: CueType, x: CGFloat)? = nil
@@ -15,6 +17,46 @@ public struct WaveformEditorView: View {
 
     public init(model: WaveformEditorModel) {
         self.model = model
+        self.selectedTrackPath = nil
+        self.analysisStatus = nil
+    }
+
+    init(
+        model: WaveformEditorModel,
+        selectedTrackPath: String? = nil,
+        analysisStatus: LibraryTrackAnalysisStatus? = nil
+    ) {
+        self.model = model
+        self.selectedTrackPath = selectedTrackPath
+        self.analysisStatus = analysisStatus
+    }
+
+    private func pendingStatusText(for path: String) -> String {
+        if let status = analysisStatus {
+            switch status {
+            case .running:
+                return "Analysis in progress…"
+            case .complete:
+                return "Analysis ready · Loading waveform…"
+            case .failed(let reason):
+                return "Analysis failed: \(reason) · Click ANALYZE to retry"
+            }
+        }
+        return "Waveform pending · Click ANALYZE in crate row"
+    }
+
+    private func pendingCanvasPrompt(for path: String) -> String {
+        if let status = analysisStatus {
+            switch status {
+            case .running:
+                return "Local audio analysis in progress. Waveform will appear upon completion."
+            case .complete:
+                return "Analysis complete. Waveform is preparing to render."
+            case .failed(let reason):
+                return "Analysis error: \(reason). Click ANALYZE in the crate row to retry."
+            }
+        }
+        return "Selected track has pending waveform data. Click ANALYZE in the crate row to generate waveform, beat grid, and cues."
     }
 
     public var body: some View {
@@ -96,6 +138,23 @@ public struct WaveformEditorView: View {
                                     .foregroundColor(DJTheme.cue)
                                     .cornerRadius(2)
                             }
+                        }
+                    }
+                } else if let selected = selectedTrackPath {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.system(size: 13))
+                            .foregroundColor(DJTheme.deckA)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(selected)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textPrimary)
+                                .lineLimit(1)
+
+                            Text(pendingStatusText(for: selected))
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
                         }
                     }
                 } else {
@@ -180,6 +239,10 @@ public struct WaveformEditorView: View {
                         .help("Reset to full track view")
                     }
                 }
+            } else if selectedTrackPath != nil {
+                Text("CLICK ANALYZE IN CRATE TO GENERATE CUES")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(DJTheme.deckA)
             } else {
                 Text("SELECT A TRACK IN CRATE TO INSPECT CUES")
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
@@ -217,8 +280,24 @@ public struct WaveformEditorView: View {
 
                     // Playhead Scrub Marker
                     playheadMarker(width: width, height: height)
+                } else if let selected = selectedTrackPath {
+                    VStack(spacing: 4) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.system(size: 20))
+                            .foregroundColor(DJTheme.deckA)
+                        Text("Selected: \(selected)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(DJTheme.textPrimary)
+                            .lineLimit(1)
+                        Text(pendingCanvasPrompt(for: selected))
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(DJTheme.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // Compact helpful select/analyze empty state
+                    // Compact helpful select/analyze empty state (no selection)
                     VStack(spacing: 4) {
                         Image(systemName: "waveform")
                             .font(.system(size: 20))
@@ -226,7 +305,7 @@ public struct WaveformEditorView: View {
                         Text("No track active in waveform editor")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundColor(DJTheme.textSecondary)
-                        Text("Select an analyzed track from library to inspect waveform, beat grid, and cues.")
+                        Text("Select a track from library to inspect waveform, beat grid, and cues.")
                             .font(.system(size: 9.5, design: .monospaced))
                             .foregroundColor(DJTheme.textMuted)
                     }
@@ -626,6 +705,17 @@ public struct WaveformEditorView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            } else if let selected = selectedTrackPath {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                        .foregroundColor(DJTheme.deckA)
+                    Text("Selected '\(selected)' · Click ANALYZE in crate row to view cue markers")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(DJTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
@@ -720,9 +810,16 @@ public struct WaveformEditorView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 9))
                         .foregroundColor(DJTheme.textMuted)
-                    Text("Select a track in the library to inspect cue points")
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundColor(DJTheme.textMuted)
+                    if let selected = selectedTrackPath {
+                        Text("Selected '\(selected)' — click ANALYZE in crate row to inspect cue points")
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(DJTheme.textSecondary)
+                            .lineLimit(1)
+                    } else {
+                        Text("Select a track in the library to inspect cue points")
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                    }
                 }
                 Spacer()
 

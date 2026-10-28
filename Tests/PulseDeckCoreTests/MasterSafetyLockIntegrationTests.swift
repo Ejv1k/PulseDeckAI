@@ -13,7 +13,8 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         let audio: AudioEngineCoordinator
         let app: AppState
 
-        init() throws {
+        init(libraryLocationStore: LibraryLocationStore? = nil,
+             libraryChooser: @escaping @MainActor () -> URL? = { nil }) throws {
             root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             audio = AudioEngineCoordinator(hal: MockAudioHardware())
@@ -54,7 +55,8 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
                         analyzerVersion: "safety-test", analysisTimestamp: "2026-10-25T00:00:00Z")
                 }
                 app = AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
-                    loadedCache: PulseDeckLibraryCache(tracks: tracks), audioCoordinator: audio, startCoordinator: false)
+                    loadedCache: PulseDeckLibraryCache(tracks: tracks), audioCoordinator: audio, startCoordinator: false,
+                    libraryLocationStore: libraryLocationStore, chooseLibraryDirectory: libraryChooser)
                 app.selectedTrackPath = "a.wav"; app.loadSelectedTrackIntoDeck(deck: .deckA)
                 app.selectedTrackPath = "b.wav"; app.loadSelectedTrackIntoDeck(deck: .deckB)
                 app.updateCrossfader(position: 0)
@@ -363,6 +365,36 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenLibraryGatePreservesStateAndPreferenceWhileAutoPilotOwnsTransport() async throws {
+        let suite = "OpenLibrarySafety." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = LibraryLocationStore(defaults: defaults)
+        var chooserCalls = 0
+        let f = try Fixture(libraryLocationStore: store, libraryChooser: { chooserCalls += 1; return nil })
+        defer { f.cleanup() }
+        store.remember(f.root)
+        f.app.transitionPhraseBars = 8
+        let selection = f.app.selectedTrackPath
+        let cacheTracks = f.app.loadedCache?.tracks.count
+        await f.app.toggleAutoPilot()
+        XCTAssertTrue(f.app.isAutoPilotArmed)
+        XCTAssertFalse(f.app.canOpenLibrary)
+        XCTAssertNotNil(f.app.libraryLocationUnavailableReason)
+        f.app.openLibrary()
+        XCTAssertEqual(chooserCalls, 0)
+        XCTAssertEqual(f.app.libraryRootURL, f.root)
+        XCTAssertEqual(f.app.selectedTrackPath, selection)
+        XCTAssertEqual(f.app.loadedCache?.tracks.count, cacheTracks)
+        XCTAssertEqual(store.chosenRoot?.path, f.root.path)
+        await f.app.cancelTransition()
+        XCTAssertTrue(f.app.canOpenLibrary)
+        f.app.openLibrary()
+        XCTAssertEqual(chooserCalls, 1, "After cancellation the chooser becomes available; cancel still preserves the root")
+        XCTAssertEqual(store.chosenRoot?.path, f.root.path)
+    }
+
+    @MainActor
     func testPendingAutomationStartReservesManualTransportBeforePublication() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.app.transitionPhraseBars = 8
@@ -386,6 +418,8 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
             return XCTFail("Validated transition never reached its controlled handoff")
         }
         XCTAssertFalse(f.app.isTransitionBusy, "Published backend state has not arrived yet")
+        XCTAssertFalse(f.app.canOpenLibrary, "Pending automation also reserves library switching")
+        XCTAssertNotNil(f.app.libraryLocationUnavailableReason)
         let generation = f.audio.deckAGraph.scheduleGeneration
         XCTAssertFalse(f.app.forcePauseFocusedMasterDeck())
         XCTAssertFalse(f.app.stopDeck(deck: .deckA))

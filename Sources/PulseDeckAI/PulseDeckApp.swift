@@ -8,6 +8,17 @@ public struct PulseDeckApp: App {
 
     public init() {}
 
+    /// Shared by the actual startup/root-change hooks; never register an unresolved fallback with the media service.
+    @MainActor
+    static func updateProjectorLibrary(
+        from appState: AppState, model: ProjectorViewModel,
+        beforeDiscoveryForTesting: ((URL) -> Void)? = nil
+    ) {
+        guard let root = appState.resolvedLibraryRootURL else { return }
+        beforeDiscoveryForTesting?(root)
+        model.updateLibraryRoot(root)
+    }
+
     public var body: some Scene {
         WindowGroup {
             ContentView()
@@ -15,10 +26,10 @@ public struct PulseDeckApp: App {
                 .environmentObject(projectorViewModel)
                 .frame(minWidth: 1024, idealWidth: 1200, minHeight: 680, idealHeight: 760)
                 .onAppear {
-                    projectorViewModel.updateLibraryRoot(appState.libraryRootURL)
+                    Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }
-                .onChange(of: appState.libraryRootURL) { _, newURL in
-                    projectorViewModel.updateLibraryRoot(newURL)
+                .onChange(of: appState.resolvedLibraryRootURL) { _, _ in
+                    Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }
                 .onKeyPress(phases: [.down, .repeat]) { press in
                     ProjectorKeyboardRouter.handleKeyPress(press, viewModel: projectorViewModel)

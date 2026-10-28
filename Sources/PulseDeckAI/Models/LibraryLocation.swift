@@ -29,7 +29,19 @@ final class LibraryLocationStore {
 
 struct LibraryLaunchLocation {
     let root: URL
-    let error: String?
+    enum Issue {
+        case malformedOverride(String)
+        case unavailableRoot(String)
+
+        var message: String {
+            switch self {
+            case .malformedOverride(let message), .unavailableRoot(let message): return message
+            }
+        }
+    }
+
+    let issue: Issue?
+    var error: String? { issue?.message }
 }
 
 enum LibraryLocation {
@@ -64,13 +76,13 @@ enum LibraryLocation {
             }
         } catch {
             // Keep startup blocked rather than scanning a different fallback library after an invalid override.
-            return LibraryLaunchLocation(root: legacyRoot, error: error.localizedDescription)
+            return LibraryLaunchLocation(root: legacyRoot, issue: .malformedOverride(error.localizedDescription))
         }
         do {
-            return LibraryLaunchLocation(root: try validate(root), error: nil)
+            return LibraryLaunchLocation(root: try validate(root), issue: nil)
         } catch {
             // Preserve the unavailable requested/remembered path for display and recovery.
-            return LibraryLaunchLocation(root: root, error: error.localizedDescription)
+            return LibraryLaunchLocation(root: root, issue: .unavailableRoot(error.localizedDescription))
         }
     }
 

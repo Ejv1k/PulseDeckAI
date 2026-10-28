@@ -43,7 +43,13 @@ public final class AppState: ObservableObject {
     }
     @Published public private(set) var libraryLocationError: String?
     private var libraryLocationStore: LibraryLocationStore?
-    private var requiresLibrarySelection = false
+    private var libraryLaunchIssue: LibraryLaunchLocation.Issue?
+    private var beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)?
+
+    /// Only this root may be consumed by library asset loaders. An unresolved display path is not active.
+    public var resolvedLibraryRootURL: URL? {
+        libraryLaunchIssue == nil ? libraryRootURL : nil
+    }
     private var chooseLibraryDirectory: @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
 
     public var libraryLocationUnavailableReason: String? {
@@ -242,7 +248,7 @@ public final class AppState: ObservableObject {
             store: locationStore)
         self.libraryLocationStore = locationStore
         self.libraryLocationError = location.error
-        self.requiresLibrarySelection = location.error != nil
+        self.libraryLaunchIssue = location.issue
         self.libraryRootURL = location.root
         let editor = WaveformEditorModel(libraryRootURL: location.root)
         self.waveformEditorModel = editor
@@ -268,10 +274,15 @@ public final class AppState: ObservableObject {
         startCoordinator: Bool = true,
         beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil,
         libraryLocationStore: LibraryLocationStore? = nil,
+        libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
+        beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)? = nil,
         chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
     ) {
         // Explicitly injected roots win; this initializer never restores normal app preferences.
         self.libraryLocationStore = libraryLocationStore
+        self.libraryLaunchIssue = libraryLaunchIssue
+        self.beforeSoundboardPreloadForTesting = beforeSoundboardPreloadForTesting
+        self.libraryLocationError = libraryLaunchIssue?.message
         self.chooseLibraryDirectory = chooseLibraryDirectory
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
@@ -336,7 +347,7 @@ public final class AppState: ObservableObject {
         }
         self.soundboardPads = coordinator.soundboardController.padSnapshots
         self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
-        coordinator.soundboardController.preload(from: libraryRootURL)
+        preloadSoundboard()
     }
 
     private func handleDeviceError(_ error: CoreAudioError) {
@@ -348,9 +359,19 @@ public final class AppState: ObservableObject {
     /// from out-of-order background task completion.
     @discardableResult
     public func refreshLibrary() -> Task<Void, Never>? {
-        guard !requiresLibrarySelection else { return nil }
+        if case .malformedOverride = libraryLaunchIssue { return nil }
         guard !self.isScanning else {
             // Drop concurrent rescan requests while a scan is actively running
+            return nil
+        }
+
+        do {
+            _ = try LibraryLocation.validate(libraryRootURL)
+            libraryLaunchIssue = nil
+            libraryLocationError = nil
+        } catch {
+            libraryLaunchIssue = .unavailableRoot(error.localizedDescription)
+            libraryLocationError = error.localizedDescription
             return nil
         }
 
@@ -420,6 +441,7 @@ public final class AppState: ObservableObject {
     /// reloading from disk if the shared in-memory cache is out of date.
     @discardableResult
     public func selectTrack(relativePath: String) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         let rootURL = libraryRootURL
         let standardizedRoot = rootURL.standardizedFileURL
         let isSameTrackAlreadySelected = (selectedTrackPath == relativePath &&
@@ -656,6 +678,10 @@ public final class AppState: ObservableObject {
     /// The single entry point shared by the real LOAD control and native library drops.
     @discardableResult
     public func loadTrack(relativePath: String, deck: DeckIdentifier) -> Bool {
+        guard resolvedLibraryRootURL != nil else {
+            reportDeckLoadFailure(libraryLocationError ?? "Open Library to choose a library root.", deck: deck)
+            return false
+        }
         guard !isTransitionBusy, pendingSafetyLockAutomationCommands == 0 else {
             reportDeckLoadFailure("Automation owns deck transport; finish or cancel it before loading.", deck: deck)
             return false
@@ -779,6 +805,7 @@ public final class AppState: ObservableObject {
     /// One bounded local analysis at a time; cache writes share the editor's persistence queue.
     @discardableResult
     func analyzeTrack(relativePath: String) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         if let analysisTask { return analysisTask }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
@@ -987,7 +1014,9 @@ public final class AppState: ObservableObject {
 
     /// Preloads soundboard audio assets from current library root directory.
     public func preloadSoundboard() {
-        audioCoordinator?.soundboardController.preload(from: libraryRootURL)
+        guard let root = resolvedLibraryRootURL, let coordinator = audioCoordinator else { return }
+        beforeSoundboardPreloadForTesting?(root)
+        coordinator.soundboardController.preload(from: root)
     }
 
     private var lastSoundboardTriggerTimestamp: TimeInterval = 0.0
@@ -1214,6 +1243,7 @@ public final class AppState: ObservableObject {
     /// Runs audio file I/O off the MainActor to prevent UI hitches, and tracks generation to drop stale loads.
     @discardableResult
     public func loadPreviewTrack(relativePath: String, playWhenReady: Bool = false) -> Task<Void, Never> {
+        guard resolvedLibraryRootURL != nil else { return Task {} }
         let rootURL = self.libraryRootURL
         let standardizedRoot = rootURL.standardizedFileURL
         let fileURL = rootURL.appendingPathComponent(relativePath)
@@ -1463,7 +1493,7 @@ public final class AppState: ObservableObject {
 
     /// Updates the library root URL and resets any audition preview state.
     public func updateLibraryRootURL(_ newURL: URL) {
-        requiresLibrarySelection = false
+        libraryLaunchIssue = nil
         libraryLocationError = nil
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)

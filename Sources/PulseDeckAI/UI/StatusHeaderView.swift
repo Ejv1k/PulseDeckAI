@@ -63,14 +63,28 @@ public struct StatusHeaderView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(DJTheme.textMuted)
 
-                    Text(appState.libraryRootURL.lastPathComponent)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundColor(DJTheme.textSecondary)
-                        .lineLimit(1)
+                    if let resolved = appState.resolvedLibraryRootURL {
+                        Text(resolved.lastPathComponent)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundColor(DJTheme.textSecondary)
+                            .lineLimit(1)
+                    } else {
+                        HStack(spacing: 2) {
+                            Text(appState.libraryRootURL.lastPathComponent)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                            Text("(Unresolved)")
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
-                .help(appState.libraryRootURL.standardizedFileURL.path)
+                .help(appState.resolvedLibraryRootURL?.standardizedFileURL.path ?? (appState.libraryLocationError ?? "Unresolved library path: \(appState.libraryRootURL.standardizedFileURL.path). Click Open Library… (⌘O) to choose a valid directory."))
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Library directory: \(appState.libraryRootURL.standardizedFileURL.path)")
+                .accessibilityLabel(appState.resolvedLibraryRootURL != nil
+                    ? "Library directory: \(appState.libraryRootURL.standardizedFileURL.path)"
+                    : "Unresolved library directory: \(appState.libraryRootURL.standardizedFileURL.path)")
 
                 Circle()
                     .fill(DJTheme.border)

@@ -156,14 +156,14 @@ public struct DeckStudioView: View {
                     }
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(isPlaying ? DJTheme.background : DJTheme.textPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, minHeight: 28)
                     .background(isPlaying ? color : DJTheme.cardHeader)
                     .cornerRadius(4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(color, lineWidth: 1)
                     )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
@@ -176,7 +176,12 @@ public struct DeckStudioView: View {
                 } label: {
                     Image(systemName: "stop.fill")
                         .foregroundStyle(DJTheme.textPrimary)
-                        .padding(6)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 28)
+                        .background(DJTheme.cardHeader)
+                        .cornerRadius(4)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DJTheme.border, lineWidth: 1))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.isTransitionBusy)
@@ -194,13 +199,14 @@ public struct DeckStudioView: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(isCueActive ? DJTheme.background : DJTheme.cue)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .frame(minHeight: 28)
                     .background(isCueActive ? DJTheme.cue : DJTheme.cardHeader)
                     .cornerRadius(4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
-                            .stroke(DJTheme.cue, lineWidth: 1)
+                            .stroke(isCueActive ? DJTheme.cue : DJTheme.border, lineWidth: 1)
                     )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("deckCueButton-\(deck.rawValue)")
@@ -545,11 +551,12 @@ struct LibraryDeckLoadButton: View {
             Label("LOAD", systemImage: "arrow.down.doc.fill")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundColor(DJTheme.textPrimary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 7)
+                .frame(minHeight: 28)
                 .background(color.opacity(0.2))
                 .cornerRadius(3)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
+                .contentShape(Rectangle())
         }
         .help(appState.selectedTrackPath == nil
               ? "Select a library track first. Analysis is optional."

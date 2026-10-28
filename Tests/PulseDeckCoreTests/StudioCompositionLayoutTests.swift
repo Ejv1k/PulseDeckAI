@@ -365,10 +365,7 @@ final class StudioCompositionLayoutTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let artifactDirs = [
-            URL(fileURLWithPath: "/Users/tomaselagin/.ao/data/artifacts/pulsedeckai-82"),
-            URL(fileURLWithPath: "/Users/tomaselagin/.gemini/antigravity-cli/brain/c1160ef7-b503-4688-a9d5-f67d8b2f0d53")
-        ]
+        let exportDir = ProcessInfo.processInfo.environment["PULSEDECK_CAPTURE_EXPORT_DIR"]
 
         for target in targets {
             let (window, root) = mountProductionView(fixture, size: target.size)
@@ -392,9 +389,17 @@ final class StudioCompositionLayoutTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
             XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
 
-            // Copy to artifact directories if they exist
-            for dir in artifactDirs where FileManager.default.fileExists(atPath: dir.path) {
-                try? png.write(to: dir.appendingPathComponent(target.name))
+            // Attach to test results for runner diagnostics
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.lifetime = .keepAlways
+            attachment.name = target.name
+            add(attachment)
+
+            // Optional export when explicitly requested via runner setting
+            if let exportDir = exportDir, !exportDir.isEmpty {
+                let exportURL = URL(fileURLWithPath: exportDir)
+                try? FileManager.default.createDirectory(at: exportURL, withIntermediateDirectories: true)
+                try? png.write(to: exportURL.appendingPathComponent(target.name))
             }
         }
     }
@@ -402,8 +407,8 @@ final class StudioCompositionLayoutTests: XCTestCase {
     func testCaptureProductionContentViewWorstCaseBitmap() throws {
         let fixture = try RealisticFixture(); defer { fixture.cleanup() }
 
-        // Create crate with long Unicode title and complex track
-        let longCrateName = "Favorites (Festival Mainstage 2026 / VIP Exclusives & Extended Cuts)"
+        // Create crate with long Unicode title and complex track (single-level directory without slash)
+        let longCrateName = "Favorites (Festival Mainstage 2026 · VIP Exclusives & Extended Cuts)"
         let crateURL = fixture.root.appendingPathComponent(longCrateName)
         try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
 
@@ -425,23 +430,33 @@ final class StudioCompositionLayoutTests: XCTestCase {
 
         let summary = LibraryScanner().scan(libraryURL: fixture.root)
         fixture.state.scanSummary = summary
-        let crate = summary.crates.first(where: { $0.folderName == longCrateName })
+        let crate = try XCTUnwrap(summary.crates.first(where: { $0.folderName == longCrateName }),
+                                  "Long crate name folder must be discovered as a top-level crate")
+        XCTAssertTrue(crate.audioFiles.contains(longTrackFileName),
+                      "Long track filename must be enumerated inside discovered crate")
         fixture.state.selectedCrate = crate
         let relPath = "\(longCrateName)/\(longTrackFileName)"
         fixture.state.selectTrack(relativePath: relPath)
+        XCTAssertEqual(fixture.state.selectedTrackPath, relPath,
+                       "Selected track path must point to worst-case track relative path")
         fixture.state.analyzeTrack(relativePath: relPath)
+        XCTAssertNotNil(fixture.state.analysisStatus(for: relPath),
+                        "Analysis status must be active for worst-case track")
         fixture.state.statusMessage = "Analyzing audio stems & calculating transient beat grid (local FFT heuristic)..."
+
+        // Verify worst-case track row button executes and retains selection
+        let selectButton = LibraryTrackSelectionButton(appState: fixture.state, relativePath: relPath) {
+            Text(longTrackFileName)
+        }
+        try pressButton(selectButton.button)
+        XCTAssertEqual(fixture.state.selectedTrackPath, relPath,
+                       "LibraryTrackSelectionButton must select worst-case track")
 
         let targetSize = NSSize(width: 1024, height: 680)
         let targetName = "studio_composition_1024x680_worstcase.png"
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("studio_bitmaps_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let artifactDirs = [
-            URL(fileURLWithPath: "/Users/tomaselagin/.ao/data/artifacts/pulsedeckai-82"),
-            URL(fileURLWithPath: "/Users/tomaselagin/.gemini/antigravity-cli/brain/c1160ef7-b503-4688-a9d5-f67d8b2f0d53")
-        ]
 
         let (window, root) = mountProductionView(fixture, size: targetSize)
         defer { window.contentViewController = nil; window.contentView = nil; window.close() }
@@ -463,8 +478,18 @@ final class StudioCompositionLayoutTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(targetName)")
         XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
 
-        for dir in artifactDirs where FileManager.default.fileExists(atPath: dir.path) {
-            try? png.write(to: dir.appendingPathComponent(targetName))
+        // Attach to test results for runner diagnostics
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.lifetime = .keepAlways
+        attachment.name = targetName
+        add(attachment)
+
+        // Optional export when explicitly requested via runner setting
+        if let exportDir = ProcessInfo.processInfo.environment["PULSEDECK_CAPTURE_EXPORT_DIR"],
+           !exportDir.isEmpty {
+            let exportURL = URL(fileURLWithPath: exportDir)
+            try? FileManager.default.createDirectory(at: exportURL, withIntermediateDirectories: true)
+            try? png.write(to: exportURL.appendingPathComponent(targetName))
         }
     }
 
@@ -588,6 +613,58 @@ final class StudioCompositionLayoutTests: XCTestCase {
         playHost.layoutSubtreeIfNeeded()
         XCTAssertGreaterThanOrEqual(playHost.fittingSize.height, 28.0,
                                     "Play button interactive height must meet or exceed 28pt")
+
+        // 4. Transition Execute & Arm buttons interactive height >= 28pt and hit-testable at target margins
+        let transitionExecuteBtn = Button(action: {}) {
+            Label("Execute", systemImage: "arrow.left.arrow.right")
+                .font(.system(size: 10.5, weight: .semibold))
+                .padding(.horizontal, 8)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(StudioPressableStyle())
+
+        let execHost = NSHostingView(rootView: transitionExecuteBtn)
+        let execFitting = execHost.fittingSize
+        let execWindow = NSWindow(contentRect: NSRect(origin: .zero, size: execFitting),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+        execWindow.isReleasedWhenClosed = false
+        execWindow.contentView = execHost
+        execHost.frame = NSRect(origin: .zero, size: execFitting)
+        execHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(execFitting.height, 28.0,
+                                    "Execute button interactive height must meet or exceed 28pt")
+        let execMidX = execFitting.width / 2
+        XCTAssertNotNil(execHost.hitTest(NSPoint(x: execMidX, y: 2)), "Near-bottom margin must be interactive hit target")
+        XCTAssertNotNil(execHost.hitTest(NSPoint(x: execMidX, y: execFitting.height - 2)), "Near-top margin must be interactive hit target")
+        execWindow.contentView = nil
+        execWindow.close()
+
+        // 5. Audition Beat Step button interactive height >= 28pt and hit-testable at target margins
+        let beatStepBtn = Button(action: {}) {
+            Text("-4b")
+                .font(.system(size: 9, weight: .semibold))
+                .padding(.horizontal, 6)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(StudioPressableStyle())
+
+        let beatHost = NSHostingView(rootView: beatStepBtn)
+        let beatFitting = beatHost.fittingSize
+        let beatWindow = NSWindow(contentRect: NSRect(origin: .zero, size: beatFitting),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+        beatWindow.isReleasedWhenClosed = false
+        beatWindow.contentView = beatHost
+        beatHost.frame = NSRect(origin: .zero, size: beatFitting)
+        beatHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(beatFitting.height, 28.0,
+                                    "Beat step button interactive height must meet or exceed 28pt")
+        let beatMidX = beatFitting.width / 2
+        XCTAssertNotNil(beatHost.hitTest(NSPoint(x: beatMidX, y: 2)), "Beat step near-bottom margin must be hit target")
+        XCTAssertNotNil(beatHost.hitTest(NSPoint(x: beatMidX, y: beatFitting.height - 2)), "Beat step near-top margin must be hit target")
+        beatWindow.contentView = nil
+        beatWindow.close()
     }
 
     func testLibraryTrackTransferCanonicalTransferableContract() throws {

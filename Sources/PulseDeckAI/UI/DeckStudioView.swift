@@ -335,6 +335,16 @@ public struct DeckStudioView: View {
                 } label: {
                     Label("Execute", systemImage: "arrow.left.arrow.right")
                         .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(appState.transitionIsReady && !appState.isTransitionBusy ? DJTheme.master : DJTheme.textMuted)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .background(DJTheme.cardHeader)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(appState.transitionIsReady && !appState.isTransitionBusy ? DJTheme.master.opacity(0.6) : DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(StudioPressableStyle())
                 .disabled(!appState.transitionIsReady || appState.isTransitionBusy)
@@ -345,6 +355,16 @@ public struct DeckStudioView: View {
                 } label: {
                     Label(appState.isAutoPilotArmed ? "Disarm" : "Arm", systemImage: "autopilot")
                         .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(appState.isAutoPilotArmed ? DJTheme.cue : DJTheme.textPrimary)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .background(appState.isAutoPilotArmed ? DJTheme.cue.opacity(0.18) : DJTheme.cardHeader)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(appState.isAutoPilotArmed ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isAutoPilotArmed ? false : (appState.autoPilotReadinessMessage != nil || appState.isTransitionBusy))
@@ -358,6 +378,16 @@ public struct DeckStudioView: View {
                     } label: {
                         Label("Cancel", systemImage: "xmark.circle")
                             .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(DJTheme.statusError)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .cornerRadius(DJTheme.controlRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                    .stroke(DJTheme.statusError.opacity(0.6), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(StudioPressableStyle())
                     .help("Cancel the armed transition or restore the outgoing deck after an active transition")

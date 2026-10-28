@@ -283,17 +283,19 @@ public struct WaveformEditorView: View {
                     .help("Zoom in (+)")
 
                     if model.zoomLevel > 1.05 {
-                        Button("Fit") {
+                        Button(action: {
                             model.resetZoom()
+                        }) {
+                            Text("Fit")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .frame(minHeight: DJTheme.minTouchTarget)
+                                .background(DJTheme.cardHeader)
+                                .foregroundColor(DJTheme.deckA)
+                                .cornerRadius(DJTheme.chipRadius)
+                                .contentShape(Rectangle())
                         }
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .padding(.horizontal, 6)
-                        .frame(minHeight: DJTheme.minTouchTarget)
-                        .background(DJTheme.cardHeader)
-                        .foregroundColor(DJTheme.deckA)
-                        .cornerRadius(DJTheme.chipRadius)
                         .buttonStyle(StudioPressableStyle())
-                        .contentShape(Rectangle())
                         .help("Reset to full track view")
                     }
                 }
@@ -797,7 +799,7 @@ public struct WaveformEditorView: View {
                 }
                 .foregroundColor(DJTheme.textSecondary)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+                .frame(minHeight: DJTheme.minTouchTarget)
                 .background(DJTheme.cardHeader)
                 .cornerRadius(DJTheme.chipRadius)
                 .contentShape(Rectangle())
@@ -862,7 +864,7 @@ public struct WaveformEditorView: View {
                     }
                     .foregroundColor(DJTheme.textSecondary)
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .frame(minHeight: DJTheme.minTouchTarget)
                     .background(DJTheme.cardHeader)
                     .cornerRadius(DJTheme.chipRadius)
                     .contentShape(Rectangle())

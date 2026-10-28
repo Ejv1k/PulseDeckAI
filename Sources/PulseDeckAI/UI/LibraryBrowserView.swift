@@ -552,77 +552,89 @@ public struct LibraryBrowserView: View {
 
                 // Beat Step Buttons (disabled when authentic measured grid is absent)
                 HStack(spacing: 4) {
-                    Button("-4b") {
+                    Button(action: {
                         appState.stepPreview(beats: -4.0)
+                    }) {
+                        Text("-4b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step backward 4 beats / 1 bar (Shift+Left)")
-                    .buttonStyle(StudioPressableStyle())
-                    .font(.system(size: 9, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: DJTheme.minTouchTarget)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(DJTheme.chipRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                            .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
-                    )
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("-1b") {
+                    Button(action: {
                         appState.stepPreview(beats: -1.0)
+                    }) {
+                        Text("-1b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step backward 1 beat (Left)")
-                    .buttonStyle(StudioPressableStyle())
-                    .font(.system(size: 9, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: DJTheme.minTouchTarget)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(DJTheme.chipRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                            .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
-                    )
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("+1b") {
+                    Button(action: {
                         appState.stepPreview(beats: 1.0)
+                    }) {
+                        Text("+1b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step forward 1 beat (Right)")
-                    .buttonStyle(StudioPressableStyle())
-                    .font(.system(size: 9, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: DJTheme.minTouchTarget)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(DJTheme.chipRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                            .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
-                    )
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("+4b") {
+                    Button(action: {
                         appState.stepPreview(beats: 4.0)
+                    }) {
+                        Text("+4b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
-                    .help("Step forward 4 beats / 1 bar (Shift+Right)")
                     .buttonStyle(StudioPressableStyle())
-                    .font(.system(size: 9, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: DJTheme.minTouchTarget)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(DJTheme.chipRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                            .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
-                    )
                     .disabled(!appState.previewHasUsableBeatGrid)
+                    .help("Step forward 4 beats / 1 bar (Shift+Right)")
                 }
             }
         }

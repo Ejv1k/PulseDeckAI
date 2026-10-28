@@ -24,6 +24,14 @@ PulseDeck AI delivers a complete, verified DJ workstation:
 
 ## 2. System Requirements & Hardware Setup
 
+### Opening and remembering your library
+
+Use **File → Open Library…** (`Cmd + O`) to choose the library **root containing crate subfolders**, usually `PulseDeck_Library`; do not choose an individual crate. Opening a library only scans existing files. It does not create, move, delete, or analyze your music. Cancel keeps the current library unchanged. Finish or cancel an armed/active transition before switching libraries.
+
+The app remembers only a folder explicitly accepted in Open Library. Ordinary launches restore that folder without depending on the working directory. If it is unavailable, its path and a recovery error remain visible: reconnect it or use Open Library. The app never silently substitutes another library.
+
+For an explicit launch override, pass `--library-root "/absolute/path/to/PulseDeck_Library"` to the executable. A local `file:///...` URL is also accepted. Overrides take precedence over the remembered folder and do not replace that preference. Without either, the legacy fallback is `current working directory/PulseDeck_Library`. Older launcher artifacts set only the CWD for their older binary; a launcher for this version must pass `--library-root` when its library argument is intended to override the remembered choice. Explicit roots injected by tests remain independent of normal app preferences.
+
 ### 2.1 Hardware Baseline
 * **Computer:** Apple MacBook Pro (14" or 16", Apple Silicon M1 Pro with 16GB Unified Memory or better).
 * **Operating System:** macOS Sonoma 14.0 or newer (macOS 15 Sequoia supported).

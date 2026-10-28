@@ -30,6 +30,13 @@ public struct PulseDeckApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
+                Button("Open Library…") {
+                    appState.openLibrary()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+                .disabled(!appState.canOpenLibrary)
+                .help(appState.libraryLocationUnavailableReason ?? "Choose the library root containing crate subfolders")
+
                 Button("Rescan Library") {
                     projectorViewModel.refreshLibrary(from: appState)
                 }

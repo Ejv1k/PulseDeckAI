@@ -17,6 +17,8 @@ public final class AppState: ObservableObject {
     @Published public var libraryRootURL: URL {
         didSet {
             if oldValue.standardizedFileURL != libraryRootURL.standardizedFileURL {
+                scanGeneration &+= 1
+                isScanning = false
                 analysisTask?.cancel()
                 for task in deckAnalysisValidationTasks.values { task.cancel() }
                 deckAnalysisValidationTasks.removeAll()
@@ -39,6 +41,19 @@ public final class AppState: ObservableObject {
             }
         }
     }
+    @Published public private(set) var libraryLocationError: String?
+    private var libraryLocationStore: LibraryLocationStore?
+    private var requiresLibrarySelection = false
+    private var chooseLibraryDirectory: @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
+
+    public var libraryLocationUnavailableReason: String? {
+        isTransitionBusy || pendingSafetyLockAutomationCommands > 0
+            ? "Finish or cancel the transition before changing libraries."
+            : nil
+    }
+
+    public var canOpenLibrary: Bool { libraryLocationUnavailableReason == nil }
+
     @Published public var scanSummary: LibraryScanSummary?
     @Published public var selectedCrate: LibraryCrateInfo?
     @Published public var isScanning: Bool = false
@@ -220,11 +235,16 @@ public final class AppState: ObservableObject {
             statusMessage = "Audio Startup Error: \(error.localizedDescription)"
         }
 
-        // Resolve library folder relative to current working directory or bundle
-        let cwd = FileManager.default.currentDirectoryPath
-        let defaultURL = URL(fileURLWithPath: cwd).appendingPathComponent(PulseDeckCoreConfig.defaultLibraryFolderName)
-        self.libraryRootURL = defaultURL
-        let editor = WaveformEditorModel(libraryRootURL: defaultURL)
+        let locationStore = LibraryLocationStore.applicationStore()
+        let location = LibraryLocation.resolve(
+            arguments: ProcessInfo.processInfo.arguments,
+            workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+            store: locationStore)
+        self.libraryLocationStore = locationStore
+        self.libraryLocationError = location.error
+        self.requiresLibrarySelection = location.error != nil
+        self.libraryRootURL = location.root
+        let editor = WaveformEditorModel(libraryRootURL: location.root)
         self.waveformEditorModel = editor
         self.beforePreviewFilePreparation = nil
         self.cacheLoader = { url in
@@ -246,8 +266,13 @@ public final class AppState: ObservableObject {
         cacheLoader: (@Sendable (URL) async -> PulseDeckLibraryCache?)? = nil,
         audioCoordinator: AudioEngineCoordinator? = nil,
         startCoordinator: Bool = true,
-        beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil
+        beforePreviewFilePreparation: (@Sendable (URL) async -> Void)? = nil,
+        libraryLocationStore: LibraryLocationStore? = nil,
+        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
     ) {
+        // Explicitly injected roots win; this initializer never restores normal app preferences.
+        self.libraryLocationStore = libraryLocationStore
+        self.chooseLibraryDirectory = chooseLibraryDirectory
         self.libraryRootURL = libraryRootURL
         self.waveformEditorModel = waveformEditorModel
         self.audioCoordinator = audioCoordinator
@@ -321,10 +346,12 @@ public final class AppState: ObservableObject {
     /// Scans the library root and updates published state on MainActor.
     /// Strictly limits scanning to one in-flight operation and protects against stale results
     /// from out-of-order background task completion.
-    public func refreshLibrary() {
+    @discardableResult
+    public func refreshLibrary() -> Task<Void, Never>? {
+        guard !requiresLibrarySelection else { return nil }
         guard !self.isScanning else {
             // Drop concurrent rescan requests while a scan is actively running
-            return
+            return nil
         }
 
         self.isScanning = true
@@ -334,7 +361,7 @@ public final class AppState: ObservableObject {
         let expectedCacheGeneration = waveformEditorModel.cachePublicationGeneration(for: url)
 
         // Perform scanner on background thread, deliver result to MainActor
-        Task.detached(priority: .userInitiated) { [scanner, cacheLoader] in
+        return Task.detached(priority: .userInitiated) { [scanner, cacheLoader] in
             let summary = scanner.scan(libraryURL: url)
             let cacheURL = url.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
             let cache = await cacheLoader(cacheURL)
@@ -1420,8 +1447,24 @@ public final class AppState: ObservableObject {
         self.compatibilityReferenceDeck = deck
     }
 
+    /// Presents the native folder chooser. Cancel and automation ownership leave the library untouched.
+    public func openLibrary() {
+        guard canOpenLibrary, let chosen = chooseLibraryDirectory() else { return }
+        // The modal panel runs a nested event loop; recheck ownership when it returns.
+        guard canOpenLibrary else { return }
+        do {
+            let root = try LibraryLocation.validate(chosen)
+            libraryLocationStore?.remember(root)
+            updateLibraryRootURL(root)
+        } catch {
+            libraryLocationError = error.localizedDescription
+        }
+    }
+
     /// Updates the library root URL and resets any audition preview state.
     public func updateLibraryRootURL(_ newURL: URL) {
+        requiresLibrarySelection = false
+        libraryLocationError = nil
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)
         refreshLibrary()

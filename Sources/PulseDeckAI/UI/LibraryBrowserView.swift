@@ -32,7 +32,7 @@ public struct LibraryBrowserView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        if let crates = appState.scanSummary?.crates {
+                        if let crates = appState.scanSummary?.crates, !crates.isEmpty {
                             ForEach(crates) { crate in
                                 Button(action: {
                                     appState.selectCrate(crate)
@@ -89,6 +89,36 @@ public struct LibraryBrowserView: View {
                                 }
                                 .buttonStyle(.plain)
                             }
+                        } else if appState.isScanning {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini)
+                                Text("Scanning library...")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(DJTheme.textMuted)
+                            }
+                            .padding(8)
+                        } else if let error = appState.scanSummary?.scanError {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("Scan Error", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.orange)
+                                Text(error)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(DJTheme.textSecondary)
+                                    .lineLimit(4)
+                            }
+                            .padding(8)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("No Crates", systemImage: "folder.badge.questionmark")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(DJTheme.textSecondary)
+                                Text("Add crate subfolders:\nPulseDeck_Library/Favorites/track.mp3")
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(DJTheme.textMuted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(8)
                         }
                     }
                     .padding(4)
@@ -364,10 +394,50 @@ public struct LibraryBrowserView: View {
                     // Dedicated Audition Transport & Scrub Strip
                     auditionControlBar
                 } else {
-                    Text("Select a crate from the library")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(DJTheme.textMuted)
+                    if appState.isScanning {
+                        VStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Scanning library directory...")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+                        }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let error = appState.scanSummary?.scanError {
+                        VStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.orange)
+                            Text("Library Scan Error")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textPrimary)
+                            Text(error)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if (appState.scanSummary?.crates ?? []).isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "folder.badge.questionmark")
+                                .font(.system(size: 28))
+                                .foregroundColor(DJTheme.textMuted)
+                            Text("No Crates Found in Library")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(DJTheme.textPrimary)
+                            Text("Audio files must be placed inside subfolders of the library directory to form crates.\nExample: PulseDeck_Library/Favorites/track.mp3")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(DJTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Text("Select a crate from the library")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(DJTheme.textMuted)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             .padding(8)

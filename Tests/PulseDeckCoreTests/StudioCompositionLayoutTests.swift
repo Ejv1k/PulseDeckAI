@@ -20,9 +20,9 @@ final class StudioCompositionLayoutTests: XCTestCase {
             try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
 
             let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
-            let sampleWAV = crateURL.appendingPathComponent("track1.wav")
-            do {
-                let file = try AVAudioFile(forWriting: sampleWAV, settings: format.settings)
+
+            func createWAV(at url: URL, seconds: Int) throws {
+                let file = try AVAudioFile(forWriting: url, settings: format.settings)
                 let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
                 buffer.frameLength = buffer.frameCapacity
                 let data = try XCTUnwrap(buffer.floatChannelData)
@@ -31,48 +31,138 @@ final class StudioCompositionLayoutTests: XCTestCase {
                     data[0][frame] = sample
                     data[1][frame] = sample
                 }
-                try file.write(from: buffer)
+                for _ in 0..<seconds {
+                    try file.write(from: buffer)
+                }
             }
 
-            audio = AudioEngineCoordinator(hal: MockAudioHardware())
+            let sampleWAV1 = crateURL.appendingPathComponent("track1.wav")
+            try createWAV(at: sampleWAV1, seconds: 120)
+
+            let sampleWAV2 = crateURL.appendingPathComponent("track2.wav")
+            try createWAV(at: sampleWAV2, seconds: 120)
+
+            let hal = MockAudioHardware()
+            hal.addDevice(
+                id: 1,
+                uid: "BuiltInSpeakerDevice",
+                name: "Studio Display Speakers (Built-in)",
+                manufacturer: "Apple Inc.",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: 0
+            )
+            hal.addDevice(
+                id: 2,
+                uid: "BuiltInHeadphoneDevice",
+                name: "External Headphones (3.5mm Jack)",
+                manufacturer: "Apple Inc.",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: 0
+            )
+            hal.setDefaultOutputID(1)
+
+            audio = AudioEngineCoordinator(hal: hal)
             try audio.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
             try audio.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
             try audio.start()
 
-            let peaks = [Float](repeating: 0.5, count: 200)
-            let entry = TrackCacheEntry(
+            // Generate undulating multi-band peaks (intro build, main drop, breakdown, outro)
+            var lowPeaks: [Float] = []
+            var midPeaks: [Float] = []
+            var highPeaks: [Float] = []
+            var compPeaks: [Float] = []
+            for i in 0..<300 {
+                let progress = Double(i) / 300.0
+                let envelope: Double
+                if progress < 0.2 {
+                    envelope = 0.25 + 0.65 * (progress / 0.2)
+                } else if progress < 0.55 {
+                    envelope = 0.85 + 0.12 * sin(Double(i) * 0.4)
+                } else if progress < 0.75 {
+                    envelope = 0.35 + 0.2 * sin(Double(i) * 0.2)
+                } else {
+                    envelope = 0.8 * (1.0 - (progress - 0.75) / 0.25) + 0.15
+                }
+                let low = Float(max(0.08, min(0.98, envelope * (0.65 + 0.35 * sin(Double(i) * 0.35)))))
+                let mid = Float(max(0.06, min(0.92, envelope * (0.55 + 0.35 * cos(Double(i) * 0.22)))))
+                let high = Float(max(0.05, min(0.88, envelope * (0.45 + 0.35 * sin(Double(i) * 0.5)))))
+                let peak = max(low, max(mid, high))
+                lowPeaks.append(low)
+                midPeaks.append(mid)
+                highPeaks.append(high)
+                compPeaks.append(peak)
+            }
+
+            let waveformMeta = WaveformMetadata(
+                sampleCount: 120 * 44100,
+                downsampleFactor: 512,
+                peakValues: compPeaks,
+                lowBandPeaks: lowPeaks,
+                midBandPeaks: midPeaks,
+                highBandPeaks: highPeaks
+            )
+
+            let fp1 = try LibraryTrackSource.fingerprint(at: sampleWAV1)
+            let val1 = try sampleWAV1.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let modTime1 = ISO8601DateFormatter().string(from: val1.contentModificationDate ?? Date())
+
+            let entry1 = TrackCacheEntry(
                 relativePath: "Techno/track1.wav",
-                fileFingerprint: "fingerprint-1",
-                fileSizeBytes: 176400,
-                fileModificationTime: "2026-10-26T20:00:00Z",
-                duration: 240.0,
+                fileFingerprint: fp1,
+                fileSizeBytes: Int64(val1.fileSize ?? 0),
+                fileModificationTime: modTime1,
+                duration: 120.0,
+                sampleRate: 44100,
+                channels: 2,
+                bitDepth: 16,
+                bpm: 126.0,
+                musicalKey: "8A",
+                confidence: 0.95,
+                waveformMetadata: waveformMeta,
+                beatGrid: BeatGrid(
+                    firstBeatOffsetSeconds: 0.24,
+                    beatIntervalSeconds: 60.0 / 126.0,
+                    beatTimestamps: stride(from: 0.24, to: 120.0, by: 60.0 / 126.0).map { $0 }
+                ),
+                structure: TrackStructure(sections: [], vocalSegments: []),
+                cueMarkers: CueMarkers(startTrimCue: 0.48, vocalEntryCue: 15.2, mixOutCue: 105.0, endTrimCue: 118.5),
+                analyzerVersion: "local-dsp-1",
+                analysisTimestamp: "2026-10-28T20:00:00Z"
+            )
+
+            let fp2 = try LibraryTrackSource.fingerprint(at: sampleWAV2)
+            let val2 = try sampleWAV2.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let modTime2 = ISO8601DateFormatter().string(from: val2.contentModificationDate ?? Date())
+
+            let entry2 = TrackCacheEntry(
+                relativePath: "Techno/track2.wav",
+                fileFingerprint: fp2,
+                fileSizeBytes: Int64(val2.fileSize ?? 0),
+                fileModificationTime: modTime2,
+                duration: 120.0,
                 sampleRate: 44100,
                 channels: 2,
                 bitDepth: 16,
                 bpm: 125.0,
-                musicalKey: "Unknown",
+                musicalKey: "8A",
                 confidence: 0.95,
-                waveformMetadata: WaveformMetadata(
-                    sampleCount: 240 * 44100,
-                    downsampleFactor: 512,
-                    peakValues: peaks,
-                    lowBandPeaks: peaks,
-                    midBandPeaks: peaks,
-                    highBandPeaks: peaks
-                ),
+                waveformMetadata: waveformMeta,
                 beatGrid: BeatGrid(
-                    firstBeatOffsetSeconds: 0,
-                    beatIntervalSeconds: 0.48,
-                    beatTimestamps: stride(from: 0, to: 240.0, by: 0.48).map { $0 }
+                    firstBeatOffsetSeconds: 0.24,
+                    beatIntervalSeconds: 60.0 / 125.0,
+                    beatTimestamps: stride(from: 0.24, to: 120.0, by: 60.0 / 125.0).map { $0 }
                 ),
                 structure: TrackStructure(sections: [], vocalSegments: []),
-                cueMarkers: CueMarkers(startTrimCue: 0.5, vocalEntryCue: 28.8, mixOutCue: 210.0, endTrimCue: 238.0),
+                cueMarkers: CueMarkers(startTrimCue: 0.48, vocalEntryCue: 15.2, mixOutCue: 105.0, endTrimCue: 118.5),
                 analyzerVersion: "local-dsp-1",
-                analysisTimestamp: "2026-10-26T20:00:00Z"
+                analysisTimestamp: "2026-10-28T20:00:00Z"
             )
 
             var cache = PulseDeckLibraryCache(libraryRoot: root.lastPathComponent)
-            cache.tracks[entry.relativePath] = entry
+            cache.tracks[entry1.relativePath] = entry1
+            cache.tracks[entry2.relativePath] = entry2
 
             let cacheURL = root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
             try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
@@ -90,8 +180,17 @@ final class StudioCompositionLayoutTests: XCTestCase {
             let summary = LibraryScanner().scan(libraryURL: root)
             state.scanSummary = summary
             state.selectedCrate = summary.crates.first
-            state.selectTrack(relativePath: entry.relativePath)
+            state.selectTrack(relativePath: entry1.relativePath)
             state.setMasterSafetyLockEnabled(false)
+
+            state.refreshOutputDevices()
+            state.selectOutputDevice(role: .master, uid: "BuiltInSpeakerDevice")
+            state.selectOutputDevice(role: .cue, uid: "BuiltInHeadphoneDevice")
+
+            state.loadTrack(relativePath: entry1.relativePath, deck: .deckA)
+            state.loadTrack(relativePath: entry2.relativePath, deck: .deckB)
+            state.focusMasterDeck(.deckA)
+            state.waveformEditorModel.loadTrack(entry1)
         }
 
         func cleanup() {

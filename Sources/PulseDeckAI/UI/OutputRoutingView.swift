@@ -16,15 +16,15 @@ public struct OutputRoutingView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(Color.red)
                     Text("Audio Engine Notice: \(startupError)")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(Color.red)
                     Spacer()
                 }
-                .padding(4)
+                .padding(6)
                 .background(Color.red.opacity(0.12))
-                .cornerRadius(4)
+                .cornerRadius(DJTheme.controlRadius)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                         .stroke(Color.red.opacity(0.3), lineWidth: 1)
                 )
             }
@@ -36,8 +36,8 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
-                    Text("SHARED OUTPUT: Master and Cue route to same physical device (\(appState.masterDeviceDescriptor?.name ?? masterUID)). Headphone audition is audible on Master.")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    Text("Shared Output: Master and Cue route to same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)). Audition is audible on Master.")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.orange)
                         .lineLimit(1)
                     Spacer()
@@ -45,9 +45,9 @@ public struct OutputRoutingView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color.orange.opacity(0.12))
-                .cornerRadius(4)
+                .cornerRadius(DJTheme.controlRadius)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                         .stroke(Color.orange.opacity(0.4), lineWidth: 1)
                 )
             }
@@ -55,7 +55,7 @@ public struct OutputRoutingView: View {
             HStack(spacing: 8) {
                 routingStrip(
                     role: .master,
-                    title: "MASTER (FOH)",
+                    title: "Master (FOH)",
                     color: DJTheme.master,
                     selectedUID: appState.masterOutputUID,
                     descriptor: appState.masterDeviceDescriptor,
@@ -66,7 +66,7 @@ public struct OutputRoutingView: View {
 
                 routingStrip(
                     role: .cue,
-                    title: "HEADPHONES / CUE",
+                    title: "Headphones / Cue",
                     color: DJTheme.cue,
                     selectedUID: appState.cueOutputUID,
                     descriptor: appState.cueDeviceDescriptor,
@@ -87,7 +87,7 @@ public struct OutputRoutingView: View {
                         .cornerRadius(DJTheme.controlRadius)
                         .overlay(
                             RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                                .stroke(DJTheme.border, lineWidth: 1)
+                                .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                 }
@@ -113,7 +113,7 @@ public struct OutputRoutingView: View {
                 .frame(width: 7, height: 7)
 
             Text(title)
-                .font(.system(size: 9.5, weight: .black, design: .monospaced))
+                .font(.system(size: 10.5, weight: .bold))
                 .foregroundColor(color)
                 .lineLimit(1)
 
@@ -137,59 +137,60 @@ public struct OutputRoutingView: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .controlSize(.small)
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .font(.system(size: 10, weight: .medium))
             .accentColor(color)
 
             if isFallback {
-                Text("FALLBACK")
-                    .font(.system(size: 7.5, weight: .black, design: .monospaced))
+                Text("Fallback")
+                    .font(.system(size: 8, weight: .semibold))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(DJTheme.cue.opacity(0.2))
+                    .background(DJTheme.cue.opacity(0.18))
                     .foregroundColor(DJTheme.cue)
-                    .cornerRadius(2)
+                    .cornerRadius(DJTheme.chipRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 2)
-                            .stroke(DJTheme.cue, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                            .stroke(DJTheme.cue.opacity(0.8), lineWidth: 1)
                     )
             }
 
             if descriptor?.isBluetooth == true {
                 Text("BT")
-                    .font(.system(size: 7.5, weight: .black, design: .monospaced))
+                    .font(.system(size: 8, weight: .semibold))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
                     .background(DJTheme.textAccent.opacity(0.2))
                     .foregroundColor(DJTheme.textAccent)
-                    .cornerRadius(2)
+                    .cornerRadius(DJTheme.chipRadius)
             }
 
             Spacer(minLength: 4)
 
             if let error {
                 Text(error)
-                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(Color.red)
                     .lineLimit(1)
             } else if let warning {
                 Text(warning)
-                    .font(.system(size: 8, weight: .regular, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .regular))
                     .foregroundColor(DJTheme.textAccent)
                     .lineLimit(1)
             } else if let desc = descriptor {
                 Text("\(desc.outputChannelCount)ch · \(Int(desc.sampleRate))Hz")
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundColor(DJTheme.textMuted)
+                    .font(.system(size: 8.5, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundColor(DJTheme.textSecondary)
                     .lineLimit(1)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(DJTheme.cardBackground)
-        .cornerRadius(4)
+        .cornerRadius(DJTheme.cardRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(isFallback ? DJTheme.cue.opacity(0.5) : DJTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(isFallback ? DJTheme.cue.opacity(0.5) : DJTheme.border.opacity(0.6), lineWidth: 1)
         )
     }
 }

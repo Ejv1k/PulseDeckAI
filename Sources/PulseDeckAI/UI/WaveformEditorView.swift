@@ -66,30 +66,30 @@ public struct WaveformEditorView: View {
             case .running:
                 HStack(spacing: 4) {
                     ProgressView().controlSize(.mini)
-                    Text("ANALYZING…")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    Text("Analyzing…")
+                        .font(.system(size: 9.5, weight: .semibold))
                         .foregroundColor(DJTheme.deckA)
                 }
             case .complete:
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 9))
-                    Text("LOADING…")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    Text("Loading…")
+                        .font(.system(size: 9.5, weight: .semibold))
                 }
                 .foregroundColor(DJTheme.master)
             case .failed:
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9))
-                    Text("RETRY ANALYZE IN CRATE")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    Text("Retry in Crate")
+                        .font(.system(size: 9.5, weight: .semibold))
                 }
                 .foregroundColor(.orange)
             }
         } else {
-            Text("CLICK ANALYZE IN CRATE TO GENERATE CUES")
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+            Text("Click Analyze in crate to inspect cues")
+                .font(.system(size: 9.5, weight: .medium))
                 .foregroundColor(DJTheme.deckA)
         }
     }
@@ -161,26 +161,28 @@ public struct WaveformEditorView: View {
                 if let track = model.currentTrack {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(track.relativePath)
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundColor(DJTheme.textPrimary)
                             .lineLimit(1)
 
                         HStack(spacing: 8) {
                             Text(formatTime(track.duration))
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium))
+                                .monospacedDigit()
                                 .foregroundColor(DJTheme.textSecondary)
 
-                            Text(String(format: "BPM: %.1f", track.bpm))
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            Text(String(format: "%.1f BPM", track.bpm))
+                                .font(.system(size: 10, weight: .bold))
+                                .monospacedDigit()
                                 .foregroundColor(DJTheme.deckA)
 
                             Text("Key: \(track.musicalKey)")
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)
 
                             if track.manualOverrides.isManual {
-                                Text("MANUAL OVERRIDE")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                Text("Manual Override")
+                                    .font(.system(size: 8.5, weight: .semibold))
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
                                     .background(DJTheme.cue.opacity(0.2))
@@ -197,18 +199,18 @@ public struct WaveformEditorView: View {
 
                         VStack(alignment: .leading, spacing: 1) {
                             Text(selected)
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
                                 .lineLimit(1)
 
                             Text(pendingStatusText(for: selected))
-                                .font(.system(size: 9.5, design: .monospaced))
+                                .font(.system(size: 9.5))
                                 .foregroundColor(DJTheme.textSecondary)
                         }
                     }
                 } else {
-                    Text("NO TRACK LOADED — SELECT A TRACK IN CRATE")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    Text("No Track Loaded — Select a track in crate")
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DJTheme.textMuted)
                 }
             }
@@ -225,8 +227,8 @@ public struct WaveformEditorView: View {
                             .font(.system(size: 11))
                             .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
 
-                        Text(model.aiTrimBypass ? "AI TRIM: BYPASSED" : "AI TRIM: ACTIVE")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        Text(model.aiTrimBypass ? "AI Trim: Bypassed" : "AI Trim: Active")
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
                     }
                     .padding(.horizontal, 8)
@@ -262,7 +264,7 @@ public struct WaveformEditorView: View {
                     .help("Zoom out (-)")
 
                     Text(String(format: "%.1fx", model.zoomLevel))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(DJTheme.textSecondary)
                         .frame(width: 36)
@@ -281,10 +283,10 @@ public struct WaveformEditorView: View {
                     .help("Zoom in (+)")
 
                     if model.zoomLevel > 1.05 {
-                        Button("FIT") {
+                        Button("Fit") {
                             model.resetZoom()
                         }
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .semibold))
                         .padding(.horizontal, 6)
                         .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardHeader)
@@ -298,8 +300,8 @@ public struct WaveformEditorView: View {
             } else if let selected = selectedTrackPath {
                 headerToolbarAnalysisAction(for: selected)
             } else {
-                Text("SELECT A TRACK IN CRATE TO INSPECT CUES")
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                Text("Select a track in crate to inspect cues")
+                    .font(.system(size: 9.5, weight: .medium))
                     .foregroundColor(DJTheme.textMuted)
             }
         }
@@ -340,11 +342,11 @@ public struct WaveformEditorView: View {
                             .font(.system(size: 20))
                             .foregroundColor(DJTheme.deckA)
                         Text("Selected: \(selected)")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(DJTheme.textPrimary)
                             .lineLimit(1)
                         Text(pendingCanvasPrompt(for: selected))
-                            .font(.system(size: 9.5, design: .monospaced))
+                            .font(.system(size: 9.5))
                             .foregroundColor(DJTheme.textSecondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 16)
@@ -357,20 +359,20 @@ public struct WaveformEditorView: View {
                             .font(.system(size: 20))
                             .foregroundColor(DJTheme.textMuted)
                         Text("No track active in waveform editor")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(DJTheme.textSecondary)
                         Text("Select a track from library to inspect waveform, beat grid, and cues.")
-                            .font(.system(size: 9.5, design: .monospaced))
+                            .font(.system(size: 9.5))
                             .foregroundColor(DJTheme.textMuted)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .coordinateSpace(name: Self.waveformCoordinateSpaceName)
-            .cornerRadius(4)
+            .cornerRadius(DJTheme.controlRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(DJTheme.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
             )
             .contentShape(Rectangle())
             .onTapGesture { location in
@@ -539,11 +541,12 @@ public struct WaveformEditorView: View {
             // Top Badge Handle (anchored within canvas bounds to prevent edge clipping)
             HStack(spacing: 2) {
                 Text(cue.shortLabel)
-                    .font(.system(size: 8, weight: .black, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(.black)
 
                 Text(formatTime(cueTime))
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8, weight: .bold))
+                    .monospacedDigit()
                     .foregroundColor(.black)
             }
             .lineLimit(1)
@@ -708,21 +711,22 @@ public struct WaveformEditorView: View {
 
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(cue.displayName)
-                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 9, weight: .semibold))
                                     .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
 
                                 Text(formatTime(cueTime))
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .monospacedDigit()
                                     .foregroundColor(DJTheme.textPrimary)
                             }
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(isSelected ? cue.color.opacity(0.15) : DJTheme.cardHeader)
-                        .cornerRadius(4)
+                        .cornerRadius(DJTheme.controlRadius)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(isSelected ? cue.color : DJTheme.border, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(isSelected ? cue.color : DJTheme.border.opacity(0.6), lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
@@ -734,28 +738,30 @@ public struct WaveformEditorView: View {
                 // Nudge Controls for Selected Cue
                 if let selected = model.selectedCue {
                     HStack(spacing: 4) {
-                        Text("NUDGE \(selected.shortLabel):")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        Text("Nudge \(selected.shortLabel):")
+                            .font(.system(size: 9.5, weight: .medium))
                             .foregroundColor(DJTheme.textMuted)
 
                         Button("-50ms") {
                             model.nudgeCue(selected, deltaSeconds: -0.050)
                         }
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 4)
+                        .font(.system(size: 9, weight: .semibold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(DJTheme.cardHeader)
-                        .cornerRadius(3)
+                        .cornerRadius(DJTheme.chipRadius)
                         .buttonStyle(.plain)
 
                         Button("+50ms") {
                             model.nudgeCue(selected, deltaSeconds: 0.050)
                         }
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 4)
+                        .font(.system(size: 9, weight: .semibold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(DJTheme.cardHeader)
-                        .cornerRadius(3)
+                        .cornerRadius(DJTheme.chipRadius)
                         .buttonStyle(.plain)
                     }
                 }
@@ -765,7 +771,7 @@ public struct WaveformEditorView: View {
                         .font(.system(size: 10))
                         .foregroundColor(DJTheme.deckA)
                     Text(cueSummaryPrompt(for: selected))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10))
                         .foregroundColor(DJTheme.textSecondary)
                         .lineLimit(1)
                 }
@@ -776,7 +782,7 @@ public struct WaveformEditorView: View {
                         .font(.system(size: 10))
                         .foregroundColor(DJTheme.textMuted)
                     Text("Select a track in the library to inspect and edit cue markers")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10))
                         .foregroundColor(DJTheme.textMuted)
                 }
                 Spacer()
@@ -786,14 +792,14 @@ public struct WaveformEditorView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 8))
-                    Text("COMPACT")
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    Text("Compact")
+                        .font(.system(size: 9, weight: .semibold))
                 }
                 .foregroundColor(DJTheme.textSecondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(DJTheme.cardHeader)
-                .cornerRadius(3)
+                .cornerRadius(DJTheme.chipRadius)
                 .contentShape(Rectangle())
             }
             .buttonStyle(StudioPressableStyle())
@@ -818,20 +824,20 @@ public struct WaveformEditorView: View {
                                 .frame(width: 6, height: 6)
 
                             Text(cue.shortLabel)
-                                .font(.system(size: 8.5, weight: .black, design: .monospaced))
+                                .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(isSelected ? cue.color : DJTheme.textSecondary)
 
                             Text(formatTime(cueTime))
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .font(.system(size: 9.5, weight: .semibold))
                                 .monospacedDigit()
                                 .foregroundColor(DJTheme.textPrimary)
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(isSelected ? cue.color.opacity(0.18) : DJTheme.cardHeader)
-                        .cornerRadius(3)
+                        .cornerRadius(DJTheme.chipRadius)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 3)
+                            RoundedRectangle(cornerRadius: DJTheme.chipRadius)
                                 .stroke(isSelected ? cue.color : Color.clear, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
@@ -851,14 +857,14 @@ public struct WaveformEditorView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 8))
-                        Text("NUDGE & MINIMAP")
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        Text("Nudge & Minimap")
+                            .font(.system(size: 9, weight: .semibold))
                     }
                     .foregroundColor(DJTheme.textSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(DJTheme.cardHeader)
-                    .cornerRadius(3)
+                    .cornerRadius(DJTheme.chipRadius)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(StudioPressableStyle())
@@ -870,12 +876,12 @@ public struct WaveformEditorView: View {
                         .foregroundColor(DJTheme.textMuted)
                     if let selected = selectedTrackPath {
                         Text(cueSummaryPrompt(for: selected))
-                            .font(.system(size: 9.5, design: .monospaced))
+                            .font(.system(size: 9.5))
                             .foregroundColor(DJTheme.textSecondary)
                             .lineLimit(1)
                     } else {
                         Text("Select a track in the library to inspect cue points")
-                            .font(.system(size: 9.5, design: .monospaced))
+                            .font(.system(size: 9.5))
                             .foregroundColor(DJTheme.textMuted)
                     }
                 }

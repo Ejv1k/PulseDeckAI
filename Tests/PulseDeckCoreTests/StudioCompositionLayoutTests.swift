@@ -20,9 +20,9 @@ final class StudioCompositionLayoutTests: XCTestCase {
             try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
 
             let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
-            let sampleWAV = crateURL.appendingPathComponent("track1.wav")
-            do {
-                let file = try AVAudioFile(forWriting: sampleWAV, settings: format.settings)
+
+            func createWAV(at url: URL, seconds: Int) throws {
+                let file = try AVAudioFile(forWriting: url, settings: format.settings)
                 let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
                 buffer.frameLength = buffer.frameCapacity
                 let data = try XCTUnwrap(buffer.floatChannelData)
@@ -31,48 +31,138 @@ final class StudioCompositionLayoutTests: XCTestCase {
                     data[0][frame] = sample
                     data[1][frame] = sample
                 }
-                try file.write(from: buffer)
+                for _ in 0..<seconds {
+                    try file.write(from: buffer)
+                }
             }
 
-            audio = AudioEngineCoordinator(hal: MockAudioHardware())
+            let sampleWAV1 = crateURL.appendingPathComponent("track1.wav")
+            try createWAV(at: sampleWAV1, seconds: 120)
+
+            let sampleWAV2 = crateURL.appendingPathComponent("track2.wav")
+            try createWAV(at: sampleWAV2, seconds: 120)
+
+            let hal = MockAudioHardware()
+            hal.addDevice(
+                id: 1,
+                uid: "BuiltInSpeakerDevice",
+                name: "Studio Display Speakers (Built-in)",
+                manufacturer: "Apple Inc.",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: 0
+            )
+            hal.addDevice(
+                id: 2,
+                uid: "BuiltInHeadphoneDevice",
+                name: "External Headphones (3.5mm Jack)",
+                manufacturer: "Apple Inc.",
+                outputChannels: 2,
+                sampleRate: 48000.0,
+                transportType: 0
+            )
+            hal.setDefaultOutputID(1)
+
+            audio = AudioEngineCoordinator(hal: hal)
             try audio.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
             try audio.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
             try audio.start()
 
-            let peaks = [Float](repeating: 0.5, count: 200)
-            let entry = TrackCacheEntry(
+            // Generate undulating multi-band peaks (intro build, main drop, breakdown, outro)
+            var lowPeaks: [Float] = []
+            var midPeaks: [Float] = []
+            var highPeaks: [Float] = []
+            var compPeaks: [Float] = []
+            for i in 0..<300 {
+                let progress = Double(i) / 300.0
+                let envelope: Double
+                if progress < 0.2 {
+                    envelope = 0.25 + 0.65 * (progress / 0.2)
+                } else if progress < 0.55 {
+                    envelope = 0.85 + 0.12 * sin(Double(i) * 0.4)
+                } else if progress < 0.75 {
+                    envelope = 0.35 + 0.2 * sin(Double(i) * 0.2)
+                } else {
+                    envelope = 0.8 * (1.0 - (progress - 0.75) / 0.25) + 0.15
+                }
+                let low = Float(max(0.08, min(0.98, envelope * (0.65 + 0.35 * sin(Double(i) * 0.35)))))
+                let mid = Float(max(0.06, min(0.92, envelope * (0.55 + 0.35 * cos(Double(i) * 0.22)))))
+                let high = Float(max(0.05, min(0.88, envelope * (0.45 + 0.35 * sin(Double(i) * 0.5)))))
+                let peak = max(low, max(mid, high))
+                lowPeaks.append(low)
+                midPeaks.append(mid)
+                highPeaks.append(high)
+                compPeaks.append(peak)
+            }
+
+            let waveformMeta = WaveformMetadata(
+                sampleCount: 120 * 44100,
+                downsampleFactor: 512,
+                peakValues: compPeaks,
+                lowBandPeaks: lowPeaks,
+                midBandPeaks: midPeaks,
+                highBandPeaks: highPeaks
+            )
+
+            let fp1 = try LibraryTrackSource.fingerprint(at: sampleWAV1)
+            let val1 = try sampleWAV1.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let modTime1 = ISO8601DateFormatter().string(from: val1.contentModificationDate ?? Date())
+
+            let entry1 = TrackCacheEntry(
                 relativePath: "Techno/track1.wav",
-                fileFingerprint: "fingerprint-1",
-                fileSizeBytes: 176400,
-                fileModificationTime: "2026-10-26T20:00:00Z",
-                duration: 240.0,
+                fileFingerprint: fp1,
+                fileSizeBytes: Int64(val1.fileSize ?? 0),
+                fileModificationTime: modTime1,
+                duration: 120.0,
+                sampleRate: 44100,
+                channels: 2,
+                bitDepth: 16,
+                bpm: 126.0,
+                musicalKey: "8A",
+                confidence: 0.95,
+                waveformMetadata: waveformMeta,
+                beatGrid: BeatGrid(
+                    firstBeatOffsetSeconds: 0.24,
+                    beatIntervalSeconds: 60.0 / 126.0,
+                    beatTimestamps: stride(from: 0.24, to: 120.0, by: 60.0 / 126.0).map { $0 }
+                ),
+                structure: TrackStructure(sections: [], vocalSegments: []),
+                cueMarkers: CueMarkers(startTrimCue: 0.48, vocalEntryCue: 15.2, mixOutCue: 105.0, endTrimCue: 118.5),
+                analyzerVersion: "local-dsp-1",
+                analysisTimestamp: "2026-10-28T20:00:00Z"
+            )
+
+            let fp2 = try LibraryTrackSource.fingerprint(at: sampleWAV2)
+            let val2 = try sampleWAV2.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let modTime2 = ISO8601DateFormatter().string(from: val2.contentModificationDate ?? Date())
+
+            let entry2 = TrackCacheEntry(
+                relativePath: "Techno/track2.wav",
+                fileFingerprint: fp2,
+                fileSizeBytes: Int64(val2.fileSize ?? 0),
+                fileModificationTime: modTime2,
+                duration: 120.0,
                 sampleRate: 44100,
                 channels: 2,
                 bitDepth: 16,
                 bpm: 125.0,
-                musicalKey: "Unknown",
+                musicalKey: "8A",
                 confidence: 0.95,
-                waveformMetadata: WaveformMetadata(
-                    sampleCount: 240 * 44100,
-                    downsampleFactor: 512,
-                    peakValues: peaks,
-                    lowBandPeaks: peaks,
-                    midBandPeaks: peaks,
-                    highBandPeaks: peaks
-                ),
+                waveformMetadata: waveformMeta,
                 beatGrid: BeatGrid(
-                    firstBeatOffsetSeconds: 0,
-                    beatIntervalSeconds: 0.48,
-                    beatTimestamps: stride(from: 0, to: 240.0, by: 0.48).map { $0 }
+                    firstBeatOffsetSeconds: 0.24,
+                    beatIntervalSeconds: 60.0 / 125.0,
+                    beatTimestamps: stride(from: 0.24, to: 120.0, by: 60.0 / 125.0).map { $0 }
                 ),
                 structure: TrackStructure(sections: [], vocalSegments: []),
-                cueMarkers: CueMarkers(startTrimCue: 0.5, vocalEntryCue: 28.8, mixOutCue: 210.0, endTrimCue: 238.0),
+                cueMarkers: CueMarkers(startTrimCue: 0.48, vocalEntryCue: 15.2, mixOutCue: 105.0, endTrimCue: 118.5),
                 analyzerVersion: "local-dsp-1",
-                analysisTimestamp: "2026-10-26T20:00:00Z"
+                analysisTimestamp: "2026-10-28T20:00:00Z"
             )
 
             var cache = PulseDeckLibraryCache(libraryRoot: root.lastPathComponent)
-            cache.tracks[entry.relativePath] = entry
+            cache.tracks[entry1.relativePath] = entry1
+            cache.tracks[entry2.relativePath] = entry2
 
             let cacheURL = root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
             try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
@@ -90,8 +180,17 @@ final class StudioCompositionLayoutTests: XCTestCase {
             let summary = LibraryScanner().scan(libraryURL: root)
             state.scanSummary = summary
             state.selectedCrate = summary.crates.first
-            state.selectTrack(relativePath: entry.relativePath)
+            state.selectTrack(relativePath: entry1.relativePath)
             state.setMasterSafetyLockEnabled(false)
+
+            state.refreshOutputDevices()
+            state.selectOutputDevice(role: .master, uid: "BuiltInSpeakerDevice")
+            state.selectOutputDevice(role: .cue, uid: "BuiltInHeadphoneDevice")
+
+            state.loadTrack(relativePath: entry1.relativePath, deck: .deckA)
+            state.loadTrack(relativePath: entry2.relativePath, deck: .deckB)
+            state.focusMasterDeck(.deckA)
+            state.waveformEditorModel.loadTrack(entry1)
         }
 
         func cleanup() {
@@ -266,6 +365,8 @@ final class StudioCompositionLayoutTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
+        let exportDir = ProcessInfo.processInfo.environment["PULSEDECK_CAPTURE_EXPORT_DIR"]
+
         for target in targets {
             let (window, root) = mountProductionView(fixture, size: target.size)
             defer { window.contentViewController = nil; window.contentView = nil; window.close() }
@@ -287,6 +388,108 @@ final class StudioCompositionLayoutTests: XCTestCase {
             try png.write(to: tempFile)
             XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(target.name)")
             XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
+
+            // Attach to test results for runner diagnostics
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.lifetime = .keepAlways
+            attachment.name = target.name
+            add(attachment)
+
+            // Optional export when explicitly requested via runner setting
+            if let exportDir = exportDir, !exportDir.isEmpty {
+                let exportURL = URL(fileURLWithPath: exportDir)
+                try? FileManager.default.createDirectory(at: exportURL, withIntermediateDirectories: true)
+                try? png.write(to: exportURL.appendingPathComponent(target.name))
+            }
+        }
+    }
+
+    func testCaptureProductionContentViewWorstCaseBitmap() throws {
+        let fixture = try RealisticFixture(); defer { fixture.cleanup() }
+
+        // Create crate with long Unicode title and complex track (single-level directory without slash)
+        let longCrateName = "Favorites (Festival Mainstage 2026 · VIP Exclusives & Extended Cuts)"
+        let crateURL = fixture.root.appendingPathComponent(longCrateName)
+        try FileManager.default.createDirectory(at: crateURL, withIntermediateDirectories: true)
+
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        let longTrackFileName = "01. 日本語・Кириллица ♫ Extra Long Club Edit [Remix (Extended 12\" VIP Mix)].wav"
+        let sampleWAV = crateURL.appendingPathComponent(longTrackFileName)
+        do {
+            let file = try AVAudioFile(forWriting: sampleWAV, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100))
+            buffer.frameLength = buffer.frameCapacity
+            let data = try XCTUnwrap(buffer.floatChannelData)
+            for frame in 0..<Int(buffer.frameLength) {
+                let sample = Float(sin(Double(frame) * 0.06) * 0.2)
+                data[0][frame] = sample
+                data[1][frame] = sample
+            }
+            try file.write(from: buffer)
+        }
+
+        let summary = LibraryScanner().scan(libraryURL: fixture.root)
+        fixture.state.scanSummary = summary
+        let crate = try XCTUnwrap(summary.crates.first(where: { $0.folderName == longCrateName }),
+                                  "Long crate name folder must be discovered as a top-level crate")
+        XCTAssertTrue(crate.audioFiles.contains(longTrackFileName),
+                      "Long track filename must be enumerated inside discovered crate")
+        fixture.state.selectedCrate = crate
+        let relPath = "\(longCrateName)/\(longTrackFileName)"
+        fixture.state.selectTrack(relativePath: relPath)
+        XCTAssertEqual(fixture.state.selectedTrackPath, relPath,
+                       "Selected track path must point to worst-case track relative path")
+        fixture.state.analyzeTrack(relativePath: relPath)
+        XCTAssertNotNil(fixture.state.analysisStatus(for: relPath),
+                        "Analysis status must be active for worst-case track")
+        fixture.state.statusMessage = "Analyzing audio stems & calculating transient beat grid (local FFT heuristic)..."
+
+        // Verify worst-case track row button executes and retains selection
+        let selectButton = LibraryTrackSelectionButton(appState: fixture.state, relativePath: relPath) {
+            Text(longTrackFileName)
+        }
+        try pressButton(selectButton.button)
+        XCTAssertEqual(fixture.state.selectedTrackPath, relPath,
+                       "LibraryTrackSelectionButton must select worst-case track")
+
+        let targetSize = NSSize(width: 1024, height: 680)
+        let targetName = "studio_composition_1024x680_worstcase.png"
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("studio_bitmaps_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let (window, root) = mountProductionView(fixture, size: targetSize)
+        defer { window.contentViewController = nil; window.contentView = nil; window.close() }
+
+        let rect = NSRect(origin: .zero, size: targetSize)
+        guard let rep = root.bitmapImageRepForCachingDisplay(in: rect) else {
+            XCTFail("Failed to allocate bitmapImageRep for \(targetName)")
+            return
+        }
+        root.cacheDisplay(in: rect, to: rep)
+
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            XCTFail("Failed to convert bitmap to PNG for \(targetName)")
+            return
+        }
+
+        let tempFile = tempDir.appendingPathComponent(targetName)
+        try png.write(to: tempFile)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempFile.path), "Saved \(targetName)")
+        XCTAssertGreaterThan(png.count, 50_000, "Rendered PNG bitmap must be non-empty")
+
+        // Attach to test results for runner diagnostics
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.lifetime = .keepAlways
+        attachment.name = targetName
+        add(attachment)
+
+        // Optional export when explicitly requested via runner setting
+        if let exportDir = ProcessInfo.processInfo.environment["PULSEDECK_CAPTURE_EXPORT_DIR"],
+           !exportDir.isEmpty {
+            let exportURL = URL(fileURLWithPath: exportDir)
+            try? FileManager.default.createDirectory(at: exportURL, withIntermediateDirectories: true)
+            try? png.write(to: exportURL.appendingPathComponent(targetName))
         }
     }
 
@@ -410,6 +613,58 @@ final class StudioCompositionLayoutTests: XCTestCase {
         playHost.layoutSubtreeIfNeeded()
         XCTAssertGreaterThanOrEqual(playHost.fittingSize.height, 28.0,
                                     "Play button interactive height must meet or exceed 28pt")
+
+        // 4. Transition Execute & Arm buttons interactive height >= 28pt and hit-testable at target margins
+        let transitionExecuteBtn = Button(action: {}) {
+            Label("Execute", systemImage: "arrow.left.arrow.right")
+                .font(.system(size: 10.5, weight: .semibold))
+                .padding(.horizontal, 8)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(StudioPressableStyle())
+
+        let execHost = NSHostingView(rootView: transitionExecuteBtn)
+        let execFitting = execHost.fittingSize
+        let execWindow = NSWindow(contentRect: NSRect(origin: .zero, size: execFitting),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+        execWindow.isReleasedWhenClosed = false
+        execWindow.contentView = execHost
+        execHost.frame = NSRect(origin: .zero, size: execFitting)
+        execHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(execFitting.height, 28.0,
+                                    "Execute button interactive height must meet or exceed 28pt")
+        let execMidX = execFitting.width / 2
+        XCTAssertNotNil(execHost.hitTest(NSPoint(x: execMidX, y: 2)), "Near-bottom margin must be interactive hit target")
+        XCTAssertNotNil(execHost.hitTest(NSPoint(x: execMidX, y: execFitting.height - 2)), "Near-top margin must be interactive hit target")
+        execWindow.contentView = nil
+        execWindow.close()
+
+        // 5. Audition Beat Step button interactive height >= 28pt and hit-testable at target margins
+        let beatStepBtn = Button(action: {}) {
+            Text("-4b")
+                .font(.system(size: 9, weight: .semibold))
+                .padding(.horizontal, 6)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(StudioPressableStyle())
+
+        let beatHost = NSHostingView(rootView: beatStepBtn)
+        let beatFitting = beatHost.fittingSize
+        let beatWindow = NSWindow(contentRect: NSRect(origin: .zero, size: beatFitting),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+        beatWindow.isReleasedWhenClosed = false
+        beatWindow.contentView = beatHost
+        beatHost.frame = NSRect(origin: .zero, size: beatFitting)
+        beatHost.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(beatFitting.height, 28.0,
+                                    "Beat step button interactive height must meet or exceed 28pt")
+        let beatMidX = beatFitting.width / 2
+        XCTAssertNotNil(beatHost.hitTest(NSPoint(x: beatMidX, y: 2)), "Beat step near-bottom margin must be hit target")
+        XCTAssertNotNil(beatHost.hitTest(NSPoint(x: beatMidX, y: beatFitting.height - 2)), "Beat step near-top margin must be hit target")
+        beatWindow.contentView = nil
+        beatWindow.close()
     }
 
     func testLibraryTrackTransferCanonicalTransferableContract() throws {

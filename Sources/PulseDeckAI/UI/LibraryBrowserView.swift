@@ -15,15 +15,16 @@ public struct LibraryBrowserView: View {
             // Left Column: Crates Navigation List
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("DJ CRATES (\(appState.scanSummary?.totalCrates ?? 0))")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    Text("Crates (\(appState.scanSummary?.totalCrates ?? 0))")
+                        .font(.system(size: 11.5, weight: .semibold))
                         .foregroundColor(DJTheme.textSecondary)
 
                     Spacer()
 
                     if let summary = appState.scanSummary {
                         Text("\(summary.totalAudioTracks) files")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium))
+                            .monospacedDigit()
                             .foregroundColor(DJTheme.deckA)
                     }
                 }
@@ -50,14 +51,14 @@ public struct LibraryBrowserView: View {
 
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(crate.displayName)
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold))
                                                 .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.textPrimary : DJTheme.textSecondary)
                                                 .lineLimit(2)
                                                 .multilineTextAlignment(.leading)
 
                                             if !crate.isReadable {
                                                 Text("Unreadable")
-                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                    .font(.system(size: 9.5, weight: .semibold))
                                                     .foregroundColor(.orange)
                                             }
                                         }
@@ -70,21 +71,22 @@ public struct LibraryBrowserView: View {
                                                 .foregroundColor(.orange)
                                         } else {
                                             Text("\(crate.trackCount)")
-                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                .font(.system(size: 10.5, weight: .bold))
+                                                .monospacedDigit()
                                                 .padding(.horizontal, 6)
                                                 .padding(.vertical, 2)
-                                                .background(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.3) : DJTheme.cardHeader)
+                                                .background(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.2) : DJTheme.cardHeader)
                                                 .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.deckA : DJTheme.textMuted)
-                                                .cornerRadius(3)
+                                                .cornerRadius(DJTheme.chipRadius)
                                         }
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 6)
                                     .background(appState.selectedCrate?.id == crate.id ? DJTheme.cardHeader : Color.clear)
-                                    .cornerRadius(4)
+                                    .cornerRadius(DJTheme.controlRadius)
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .stroke(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.5) : Color.clear, lineWidth: 1)
+                                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                            .stroke(appState.selectedCrate?.id == crate.id ? DJTheme.deckA.opacity(0.4) : Color.clear, lineWidth: 1)
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -92,18 +94,18 @@ public struct LibraryBrowserView: View {
                         } else if appState.isScanning {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.mini)
-                                Text("Scanning library...")
-                                    .font(.system(size: 10, design: .monospaced))
+                                Text("Scanning library…")
+                                    .font(.system(size: 10))
                                     .foregroundColor(DJTheme.textMuted)
                             }
                             .padding(8)
                         } else if let error = appState.scanSummary?.scanError {
                             VStack(alignment: .leading, spacing: 4) {
                                 Label("Scan Error", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 10.5, weight: .semibold))
                                     .foregroundColor(.orange)
                                 Text(error)
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: 9.5))
                                     .foregroundColor(DJTheme.textSecondary)
                                     .lineLimit(4)
                             }
@@ -111,10 +113,10 @@ public struct LibraryBrowserView: View {
                         } else {
                             VStack(alignment: .leading, spacing: 6) {
                                 Label("No Crates", systemImage: "folder.badge.questionmark")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 10.5, weight: .semibold))
                                     .foregroundColor(DJTheme.textSecondary)
                                 Text("Add crate subfolders:\nPulseDeck_Library/Favorites/track.mp3")
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: 9.5))
                                     .foregroundColor(DJTheme.textMuted)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -126,10 +128,10 @@ public struct LibraryBrowserView: View {
             }
             .frame(width: 260)
             .background(DJTheme.cardBackground)
-            .cornerRadius(6)
+            .cornerRadius(DJTheme.cardRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(DJTheme.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                    .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
             )
 
             // Right Column: Crate Detail, Compatibility Badges, Track List & Audition Bar
@@ -139,11 +141,11 @@ public struct LibraryBrowserView: View {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(selected.displayName)
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
 
                             Text("Folder: \(selected.folderName)")
-                                .font(.system(size: 9.5, design: .monospaced))
+                                .font(.system(size: 10))
                                 .foregroundColor(DJTheme.textMuted)
                         }
 
@@ -151,8 +153,8 @@ public struct LibraryBrowserView: View {
 
                         // Compatibility Reference Deck Selector
                         HStack(spacing: 6) {
-                            Text("REF:")
-                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            Text("Ref:")
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(DJTheme.textSecondary)
 
                             Button(action: {
@@ -162,17 +164,17 @@ public struct LibraryBrowserView: View {
                                     Circle()
                                         .fill(DJTheme.deckA)
                                         .frame(width: 5, height: 5)
-                                    Text("DECK A")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    Text("Deck A")
+                                        .font(.system(size: 9.5, weight: .semibold))
                                 }
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
-                                .background(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA.opacity(0.25) : DJTheme.cardHeader)
+                                .background(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA.opacity(0.2) : DJTheme.cardHeader)
                                 .foregroundColor(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA : DJTheme.textMuted)
-                                .cornerRadius(3)
+                                .cornerRadius(DJTheme.chipRadius)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .stroke(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA : Color.clear, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                        .stroke(appState.compatibilityReferenceDeck == .deckA ? DJTheme.deckA.opacity(0.8) : DJTheme.border.opacity(0.6), lineWidth: 1)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -184,29 +186,30 @@ public struct LibraryBrowserView: View {
                                     Circle()
                                         .fill(DJTheme.deckB)
                                         .frame(width: 5, height: 5)
-                                    Text("DECK B")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    Text("Deck B")
+                                        .font(.system(size: 9.5, weight: .semibold))
                                 }
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
-                                .background(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB.opacity(0.25) : DJTheme.cardHeader)
+                                .background(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB.opacity(0.2) : DJTheme.cardHeader)
                                 .foregroundColor(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB : DJTheme.textMuted)
-                                .cornerRadius(3)
+                                .cornerRadius(DJTheme.chipRadius)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .stroke(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB : Color.clear, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                        .stroke(appState.compatibilityReferenceDeck == .deckB ? DJTheme.deckB.opacity(0.8) : DJTheme.border.opacity(0.6), lineWidth: 1)
                                 )
                             }
                             .buttonStyle(.plain)
 
                             if let ref = appState.referenceTrack {
-                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM ?") • \(ref.musicalKey.isEmpty ? "KEY ?" : ref.musicalKey)")
-                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM —") • \(ref.musicalKey.isEmpty ? "Key —" : ref.musicalKey)")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .monospacedDigit()
                                     .foregroundColor(DJTheme.textSecondary)
                                     .lineLimit(1)
                             } else {
-                                Text("(NO TRACK)")
-                                    .font(.system(size: 9, design: .monospaced))
+                                Text("(No Track)")
+                                    .font(.system(size: 9.5))
                                     .foregroundColor(DJTheme.textMuted)
                             }
                         }
@@ -214,7 +217,7 @@ public struct LibraryBrowserView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(DJTheme.cardHeader)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
 
                     if !selected.isReadable {
                         VStack(spacing: 8) {
@@ -223,10 +226,10 @@ public struct LibraryBrowserView: View {
                                 .font(.system(size: 32))
                                 .foregroundColor(.orange)
                             Text("Crate Unreadable")
-                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
                             Text(selected.errorMessage ?? "Permission denied or directory listing failure")
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 11))
                                 .foregroundColor(DJTheme.textSecondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
@@ -240,7 +243,7 @@ public struct LibraryBrowserView: View {
                                 .font(.system(size: 32))
                                 .foregroundColor(DJTheme.textMuted)
                             Text("No audio files currently in this crate")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11.5, weight: .medium))
                                 .foregroundColor(DJTheme.textMuted)
                             Spacer()
                         }
@@ -261,7 +264,8 @@ public struct LibraryBrowserView: View {
                                         LibraryTrackSelectionButton(appState: appState, relativePath: relPath) {
                                             HStack(spacing: 8) {
                                                 Text(String(format: "%02d", index + 1))
-                                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                    .font(.system(size: 10.5, weight: .semibold))
+                                                    .monospacedDigit()
                                                     .foregroundColor(isSelected ? DJTheme.master : DJTheme.deckA)
                                                     .frame(width: 22, alignment: .leading)
 
@@ -270,7 +274,7 @@ public struct LibraryBrowserView: View {
                                                     .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
 
                                                 Text(file)
-                                                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                                                     .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
                                                     .lineLimit(1)
                                             }
@@ -285,21 +289,22 @@ public struct LibraryBrowserView: View {
                                             HStack(spacing: 6) {
                                                 if track.bpm > 0 {
                                                     Text(String(format: "%.1f BPM", track.bpm))
-                                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                        .font(.system(size: 9.5, weight: .semibold))
+                                                        .monospacedDigit()
                                                         .foregroundColor(DJTheme.deckA)
                                                 } else {
-                                                    Text("BPM: UNKNOWN")
-                                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                    Text("BPM —")
+                                                        .font(.system(size: 9, weight: .medium))
                                                         .foregroundColor(DJTheme.textMuted)
                                                 }
 
                                                 if !track.musicalKey.isEmpty && track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
                                                     Text(track.musicalKey)
-                                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                                        .font(.system(size: 9.5, weight: .semibold))
                                                         .foregroundColor(DJTheme.cue)
                                                 } else {
-                                                    Text("KEY: UNKNOWN")
-                                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                    Text("Key —")
+                                                        .font(.system(size: 9, weight: .medium))
                                                         .foregroundColor(DJTheme.textMuted)
                                                 }
                                             }
@@ -309,39 +314,39 @@ public struct LibraryBrowserView: View {
                                                 HStack(spacing: 4) {
                                                     // Harmonic Key Badge
                                                     Text(comp.key.badgeLabel)
-                                                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                        .font(.system(size: 8.5, weight: .bold))
                                                         .padding(.horizontal, 5)
                                                         .padding(.vertical, 2)
                                                         .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : Color.red.opacity(0.2)))
                                                         .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : .red))
-                                                        .cornerRadius(3)
+                                                        .cornerRadius(DJTheme.chipRadius)
 
                                                     // Tempo Badge
                                                     Text(comp.tempo.badgeLabel)
-                                                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                        .font(.system(size: 8.5, weight: .bold))
                                                         .padding(.horizontal, 5)
                                                         .padding(.vertical, 2)
                                                         .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : Color.orange.opacity(0.2)))
                                                         .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
-                                                        .cornerRadius(3)
+                                                        .cornerRadius(DJTheme.chipRadius)
                                                 }
                                             } else {
-                                                Text("NO REF")
-                                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                                Text("No Ref")
+                                                    .font(.system(size: 8.5, weight: .medium))
                                                     .padding(.horizontal, 5)
                                                     .padding(.vertical, 2)
                                                     .background(DJTheme.cardHeader)
                                                     .foregroundColor(DJTheme.textMuted)
-                                                    .cornerRadius(3)
+                                                    .cornerRadius(DJTheme.chipRadius)
                                             }
                                         } else {
-                                            Text("UNANALYZED")
-                                                .font(.system(size: 9, design: .monospaced))
+                                            Text("Unanalyzed")
+                                                .font(.system(size: 9, weight: .medium))
                                                 .foregroundColor(DJTheme.textMuted)
                                                 .padding(.horizontal, 5)
                                                 .padding(.vertical, 2)
                                                 .background(DJTheme.cardHeader)
-                                                .cornerRadius(3)
+                                                .cornerRadius(DJTheme.chipRadius)
                                         }
 
                                         LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
@@ -356,27 +361,27 @@ public struct LibraryBrowserView: View {
                                         }) {
                                             HStack(spacing: 3) {
                                                 Image(systemName: (isPreviewing && appState.isPreviewPlaying) ? "pause.fill" : "headphones")
-                                                Text((isPreviewing && appState.isPreviewPlaying) ? "PAUSE" : "CUE")
+                                                Text((isPreviewing && appState.isPreviewPlaying) ? "Pause" : "Cue")
                                             }
-                                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                            .font(.system(size: 9.5, weight: .semibold))
                                             .padding(.horizontal, 6)
-                                            .frame(minHeight: 28)
-                                            .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.2))
+                                            .frame(minHeight: DJTheme.minTouchTarget)
+                                            .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.18))
                                             .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
-                                            .cornerRadius(3)
+                                            .cornerRadius(DJTheme.chipRadius)
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 3)
-                                                    .stroke(DJTheme.cue, lineWidth: 1)
+                                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                                    .stroke(DJTheme.cue.opacity(0.8), lineWidth: 1)
                                             )
                                             .contentShape(Rectangle())
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(StudioPressableStyle())
                                         .help("Audition in headphones via Cue output")
                                     }
                                     .padding(.vertical, 2)
                                     .padding(.horizontal, 6)
                                     .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
-                                    .cornerRadius(4)
+                                    .cornerRadius(DJTheme.controlRadius)
                                     .contentShape(Rectangle())
                                     .draggable(transfer)
                                 }
@@ -386,7 +391,7 @@ public struct LibraryBrowserView: View {
                         .background(DJTheme.cardBackground)
                     }
 
-                    Text("Select a track, then LOAD A/B or drag onto a deck. Analyze locally for waveforms and beat tools; no account required.")
+                    Text("Select a track, then Load A/B or drag onto a deck. Analyze locally for waveforms and beat tools; no account required.")
                         .font(.system(size: 10))
                         .foregroundStyle(DJTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -397,8 +402,8 @@ public struct LibraryBrowserView: View {
                     if appState.isScanning {
                         VStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Scanning library directory...")
-                                .font(.system(size: 11, design: .monospaced))
+                            Text("Scanning library directory…")
+                                .font(.system(size: 11))
                                 .foregroundColor(DJTheme.textSecondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -408,10 +413,10 @@ public struct LibraryBrowserView: View {
                                 .font(.system(size: 28))
                                 .foregroundColor(.orange)
                             Text("Library Scan Error")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
                             Text(error)
-                                .font(.system(size: 10.5, design: .monospaced))
+                                .font(.system(size: 10.5))
                                 .foregroundColor(DJTheme.textSecondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
@@ -423,10 +428,10 @@ public struct LibraryBrowserView: View {
                                 .font(.system(size: 28))
                                 .foregroundColor(DJTheme.textMuted)
                             Text("No Crates Found in Library")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
                             Text("Audio files must be placed inside subfolders of the library directory to form crates.\nExample: PulseDeck_Library/Favorites/track.mp3")
-                                .font(.system(size: 10.5, design: .monospaced))
+                                .font(.system(size: 10.5))
                                 .foregroundColor(DJTheme.textSecondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
@@ -434,7 +439,7 @@ public struct LibraryBrowserView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         Text("Select a crate from the library")
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(.system(size: 11.5))
                             .foregroundColor(DJTheme.textMuted)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -442,10 +447,10 @@ public struct LibraryBrowserView: View {
             }
             .padding(8)
             .background(DJTheme.cardBackground)
-            .cornerRadius(6)
+            .cornerRadius(DJTheme.cardRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(DJTheme.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                    .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
             )
         }
     }
@@ -460,18 +465,18 @@ public struct LibraryBrowserView: View {
                     .foregroundColor(DJTheme.cue)
 
                 if let previewPath = appState.previewTrackPath {
-                    Text("AUDITION:")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    Text("Audition:")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DJTheme.textSecondary)
 
                     Text(previewPath)
-                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .semibold))
                         .foregroundColor(DJTheme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
-                    Text("HEADPHONE AUDITION — SELECT TRACK OR CLICK CUE")
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    Text("Headphone audition — select track or click Cue")
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(DJTheme.textMuted)
                 }
 
@@ -479,13 +484,14 @@ public struct LibraryBrowserView: View {
 
                 if let error = appState.previewErrorMessage {
                     Text(error)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .semibold))
                         .foregroundColor(.red)
                         .lineLimit(1)
                 }
 
                 Text("\(formatTime(appState.previewPositionSeconds)) / \(formatTime(appState.previewDurationSeconds))")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .monospacedDigit()
                     .foregroundColor(DJTheme.cue)
             }
 
@@ -496,20 +502,21 @@ public struct LibraryBrowserView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: appState.isPreviewPlaying ? "pause.fill" : "play.fill")
-                        Text(appState.isPreviewPlaying ? "PAUSE" : "AUDITION")
+                        Text(appState.isPreviewPlaying ? "Pause" : "Audition")
                     }
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .semibold))
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .frame(minHeight: DJTheme.minTouchTarget)
                     .background(appState.isPreviewPlaying ? DJTheme.cue : DJTheme.cardHeader)
                     .foregroundColor(appState.isPreviewPlaying ? DJTheme.background : DJTheme.textPrimary)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(DJTheme.cue, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                            .stroke(DJTheme.cue.opacity(0.8), lineWidth: 1)
                     )
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.previewTrackPath == nil)
 
                 // Stop Button
@@ -518,12 +525,18 @@ public struct LibraryBrowserView: View {
                 }) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 10))
-                        .padding(5)
+                        .padding(6)
+                        .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardHeader)
                         .foregroundColor(DJTheme.textSecondary)
-                        .cornerRadius(4)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.previewTrackPath == nil)
 
                 // Bounded Continuous Scrub Slider
@@ -539,66 +552,98 @@ public struct LibraryBrowserView: View {
 
                 // Beat Step Buttons (disabled when authentic measured grid is absent)
                 HStack(spacing: 4) {
-                    Button("-4b") {
+                    Button(action: {
                         appState.stepPreview(beats: -4.0)
+                    }) {
+                        Text("-4b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step backward 4 beats / 1 bar (Shift+Left)")
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(3)
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("-1b") {
+                    Button(action: {
                         appState.stepPreview(beats: -1.0)
+                    }) {
+                        Text("-1b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step backward 1 beat (Left)")
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(3)
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("+1b") {
+                    Button(action: {
                         appState.stepPreview(beats: 1.0)
+                    }) {
+                        Text("+1b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
+                    .disabled(!appState.previewHasUsableBeatGrid)
                     .help("Step forward 1 beat (Right)")
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(3)
-                    .disabled(!appState.previewHasUsableBeatGrid)
 
-                    Button("+4b") {
+                    Button(action: {
                         appState.stepPreview(beats: 4.0)
+                    }) {
+                        Text("+4b")
+                            .font(.system(size: 9, weight: .semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
+                            .cornerRadius(DJTheme.chipRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                    .stroke(DJTheme.border.opacity(0.7), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
-                    .help("Step forward 4 beats / 1 bar (Shift+Right)")
-                    .buttonStyle(.plain)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(DJTheme.cardHeader)
-                    .foregroundColor(appState.previewHasUsableBeatGrid ? DJTheme.textPrimary : DJTheme.textMuted)
-                    .cornerRadius(3)
+                    .buttonStyle(StudioPressableStyle())
                     .disabled(!appState.previewHasUsableBeatGrid)
+                    .help("Step forward 4 beats / 1 bar (Shift+Right)")
                 }
             }
         }
         .padding(8)
         .background(DJTheme.cardHeader)
-        .cornerRadius(4)
+        .cornerRadius(DJTheme.controlRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(isAuditionFocused ? DJTheme.cue.opacity(0.8) : DJTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                .stroke(isAuditionFocused ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.7), lineWidth: 1)
         )
         .focusable()
         .focused($isAuditionFocused)
@@ -706,42 +751,101 @@ struct LibraryTrackAnalysisButton: View {
     var button: some View {
         Button { appState.analyzeTrack(relativePath: relativePath) } label: {
             HStack(spacing: 4) {
-                Image(systemName: "waveform.path")
-                Text("ANALYZE")
+                if let state = appState.analysisStatus(for: relativePath) {
+                    switch state {
+                    case .running:
+                        ProgressView().controlSize(.mini)
+                        Text("Running")
+                    case .complete:
+                        Image(systemName: "checkmark")
+                        Text("Analyze")
+                    case .failed:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Retry")
+                    }
+                } else {
+                    Image(systemName: "waveform.path")
+                    Text("Analyze")
+                }
             }
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA)
+            .font(.system(size: 9.5, weight: .semibold))
+            .foregroundColor(buttonForegroundColor)
             .padding(.horizontal, 6)
-            .frame(minHeight: 28)
-            .background(DJTheme.deckA.opacity(0.15))
-            .cornerRadius(3)
+            .frame(minHeight: DJTheme.minTouchTarget)
+            .background(buttonBackgroundColor)
+            .cornerRadius(DJTheme.chipRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .stroke(DJTheme.deckA.opacity(0.5), lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                    .stroke(buttonBorderColor, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .disabled(appState.isAnalyzingLibraryTrack)
-        .help(appState.isAnalyzingLibraryTrack
-              ? "One local analysis is running. Playback and library selection remain available."
-              : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown.")
+        .help(buttonHelp)
         .accessibilityLabel("Analyze \(relativePath) locally")
         .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            button.buttonStyle(.plain)
-            if let state = appState.analysisStatus(for: relativePath) {
-                HStack(spacing: 3) {
-                    if state == .running { ProgressView().controlSize(.mini) }
-                    Text(state.label)
-                        .font(.system(size: 9))
-                        .foregroundStyle(DJTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+    private var buttonForegroundColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA
+            case .complete:
+                return DJTheme.textSecondary
+            case .failed:
+                return .orange
             }
         }
+        return appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA
+    }
+
+    private var buttonBackgroundColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA.opacity(0.2)
+            case .complete:
+                return DJTheme.cardHeader
+            case .failed:
+                return Color.orange.opacity(0.15)
+            }
+        }
+        return DJTheme.deckA.opacity(0.15)
+    }
+
+    private var buttonBorderColor: Color {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return DJTheme.deckA
+            case .complete:
+                return DJTheme.border
+            case .failed:
+                return Color.orange
+            }
+        }
+        return DJTheme.deckA.opacity(0.5)
+    }
+
+    private var buttonHelp: String {
+        if let state = appState.analysisStatus(for: relativePath) {
+            switch state {
+            case .running:
+                return "Analysis in progress for this track. Playback remains available."
+            case .complete:
+                return "Analysis complete. Click to re-run local analysis."
+            case .failed(let reason):
+                return "Analysis failed: \(reason). Click to retry."
+            }
+        }
+        return appState.isAnalyzingLibraryTrack
+            ? "One local analysis is running. Playback and library selection remain available."
+            : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown."
+    }
+
+    var body: some View {
+        button.buttonStyle(StudioPressableStyle())
     }
 }
 

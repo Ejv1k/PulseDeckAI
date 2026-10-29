@@ -80,7 +80,7 @@ public struct DeckStudioView: View {
                     .frame(width: 8, height: 8)
 
                 Text(title)
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(color)
 
                 Spacer()
@@ -89,9 +89,9 @@ public struct DeckStudioView: View {
             }
 
             if appState.isMasterDeckOnAir(deck) {
-                Label(appState.isMasterSafetyLockEnabled ? "ON AIR · LOCKED" : "ON AIR · UNLOCKED",
+                Label(appState.isMasterSafetyLockEnabled ? "On Air · Locked" : "On Air · Unlocked",
                       systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(color)
             }
 
@@ -107,35 +107,37 @@ public struct DeckStudioView: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let track {
                     Text(track.relativePath)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(DJTheme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
                     HStack(spacing: 8) {
                         Text(formatDuration(track.duration))
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .font(.system(size: 9.5, weight: .medium))
+                            .monospacedDigit()
                             .foregroundColor(DJTheme.textSecondary)
 
                         if track.bpm > 0 {
                             Text(String(format: "%.1f BPM", track.bpm))
-                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .font(.system(size: 9.5, weight: .bold))
+                                .monospacedDigit()
                                 .foregroundColor(color)
                         }
 
                         if !track.musicalKey.isEmpty {
                             Text(track.musicalKey)
-                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .font(.system(size: 9.5, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)
                         }
                     }
                 } else {
                     Text("No Track Loaded")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DJTheme.textMuted)
 
-                    Text("Select a track and click LOAD, or drag it here")
-                        .font(.system(size: 9, design: .monospaced))
+                    Text("Select a track and click Load, or drag it here")
+                        .font(.system(size: 9.5))
                         .foregroundColor(DJTheme.textMuted)
                 }
             }
@@ -152,20 +154,20 @@ public struct DeckStudioView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        Text(isPlaying ? "PAUSE" : "PLAY")
+                        Text(isPlaying ? "Pause" : "Play")
                     }
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(isPlaying ? DJTheme.background : DJTheme.textPrimary)
-                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .frame(maxWidth: .infinity, minHeight: DJTheme.minTouchTarget)
                     .background(isPlaying ? color : DJTheme.cardHeader)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(color, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                            .stroke(isPlaying ? color : DJTheme.border.opacity(0.8), lineWidth: 1)
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isTransitionBusy)
                 .accessibilityIdentifier("deckPlayPauseButton-\(deck.rawValue)")
                 .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
@@ -177,13 +179,13 @@ public struct DeckStudioView: View {
                     Image(systemName: "stop.fill")
                         .foregroundStyle(DJTheme.textPrimary)
                         .padding(.horizontal, 8)
-                        .frame(minHeight: 28)
+                        .frame(minHeight: DJTheme.minTouchTarget)
                         .background(DJTheme.cardHeader)
-                        .cornerRadius(4)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DJTheme.border, lineWidth: 1))
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(RoundedRectangle(cornerRadius: DJTheme.controlRadius).stroke(DJTheme.border.opacity(0.8), lineWidth: 1))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isTransitionBusy)
                 .accessibilityIdentifier("deckStopButton-\(deck.rawValue)")
                 .accessibilityLabel("Stop \(title)")
@@ -194,21 +196,21 @@ public struct DeckStudioView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "headphones")
-                        Text("CUE")
+                        Text("Cue")
                     }
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(isCueActive ? DJTheme.background : DJTheme.cue)
                     .padding(.horizontal, 10)
-                    .frame(minHeight: 28)
+                    .frame(minHeight: DJTheme.minTouchTarget)
                     .background(isCueActive ? DJTheme.cue : DJTheme.cardHeader)
-                    .cornerRadius(4)
+                    .cornerRadius(DJTheme.controlRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(isCueActive ? DJTheme.cue : DJTheme.border, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                            .stroke(isCueActive ? DJTheme.cue : DJTheme.border.opacity(0.8), lineWidth: 1)
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StudioPressableStyle())
                 .accessibilityIdentifier("deckCueButton-\(deck.rawValue)")
                 .accessibilityLabel("Cue \(title)")
                 .help("Toggle Pre-Fader Listen (PFL) in headphones")
@@ -216,10 +218,10 @@ public struct DeckStudioView: View {
         }
         .padding(10)
         .background(DJTheme.cardBackground)
-        .cornerRadius(6)
+        .cornerRadius(DJTheme.cardRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(color.opacity(appState.focusedMasterDeck == deck ? 0.9 : 0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(appState.focusedMasterDeck == deck ? color.opacity(0.8) : DJTheme.border.opacity(0.6), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("deckPanel-\(deck.rawValue)")
@@ -237,8 +239,8 @@ public struct DeckStudioView: View {
         VStack(spacing: 6) {
             MasterSafetyLockButton(appState: appState)
 
-            Text("CROSSFADER")
-                .font(.system(size: 9, weight: .black, design: .monospaced))
+            Text("Crossfader")
+                .font(.system(size: 9.5, weight: .semibold))
                 .foregroundColor(DJTheme.textMuted)
 
             Slider(
@@ -253,20 +255,20 @@ public struct DeckStudioView: View {
             .disabled(appState.isTransitionBusy)
 
             HStack {
-                Text("DECK A")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                Text("Deck A")
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(DJTheme.deckA)
 
                 Spacer()
 
-                Text("CENTER")
-                    .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                Text("Center")
+                    .font(.system(size: 8, weight: .medium))
                     .foregroundColor(DJTheme.textMuted)
 
                 Spacer()
 
-                Text("DECK B")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                Text("Deck B")
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(DJTheme.deckB)
             }
 
@@ -278,36 +280,36 @@ public struct DeckStudioView: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: appState.isTalkoverActive ? "speaker.wave.2.bubble.fill" : "speaker.wave.2.bubble")
-                    Text("TALKOVER")
+                    Text("Talkover")
                 }
-                .font(.system(size: 9.5, weight: .black, design: .monospaced))
+                .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(appState.isTalkoverActive ? DJTheme.background : DJTheme.textPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: DJTheme.minTouchTarget)
                 .background(appState.isTalkoverActive ? Color.yellow : DJTheme.cardHeader)
-                .cornerRadius(4)
+                .cornerRadius(DJTheme.controlRadius)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(appState.isTalkoverActive ? Color.yellow : DJTheme.border, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                        .stroke(appState.isTalkoverActive ? Color.yellow : DJTheme.border.opacity(0.8), lineWidth: 1)
                 )
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(StudioPressableStyle())
             .help("Ducks Master music (-16.5 dB attenuation + vocal pocket EQ); microphone is external (Hotkey: T)")
         }
         .padding(8)
         .background(DJTheme.cardBackground)
-        .cornerRadius(6)
+        .cornerRadius(DJTheme.cardRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(DJTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
         )
     }
 
     private func transitionControls() -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("TRANSITION")
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                Text("Transition")
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DJTheme.textMuted)
 
                 Picker("Macro", selection: $appState.transitionMacroStyle) {
@@ -321,7 +323,7 @@ public struct DeckStudioView: View {
 
                 Picker("Phrase bars", selection: $appState.transitionPhraseBars) {
                     ForEach([8, 16, 32], id: \.self) { bars in
-                        Text("\(bars) BARS").tag(bars)
+                        Text("\(bars) Bars").tag(bars)
                     }
                 }
                 .labelsHidden()
@@ -331,16 +333,40 @@ public struct DeckStudioView: View {
                 Button {
                     Task { await appState.executeTransition() }
                 } label: {
-                    Label("EXECUTE", systemImage: "arrow.left.arrow.right")
+                    Label("Execute", systemImage: "arrow.left.arrow.right")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(appState.transitionIsReady && !appState.isTransitionBusy ? DJTheme.master : DJTheme.textMuted)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .background(DJTheme.cardHeader)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(appState.transitionIsReady && !appState.isTransitionBusy ? DJTheme.master.opacity(0.6) : DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(StudioPressableStyle())
                 .disabled(!appState.transitionIsReady || appState.isTransitionBusy)
                 .help("Start the selected macro from the outgoing deck's current playhead")
 
                 Button {
                     Task { await appState.toggleAutoPilot() }
                 } label: {
-                    Label(appState.isAutoPilotArmed ? "DISARM" : "ARM", systemImage: "autopilot")
+                    Label(appState.isAutoPilotArmed ? "Disarm" : "Arm", systemImage: "autopilot")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(appState.isAutoPilotArmed ? DJTheme.cue : DJTheme.textPrimary)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .background(appState.isAutoPilotArmed ? DJTheme.cue.opacity(0.18) : DJTheme.cardHeader)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(appState.isAutoPilotArmed ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isAutoPilotArmed ? false : (appState.autoPilotReadinessMessage != nil || appState.isTransitionBusy))
                 .help(appState.isAutoPilotArmed
                     ? "Disarm the one-shot transition"
@@ -350,8 +376,20 @@ public struct DeckStudioView: View {
                     Button {
                         Task { await appState.cancelTransition() }
                     } label: {
-                        Label("CANCEL", systemImage: "xmark.circle")
+                        Label("Cancel", systemImage: "xmark.circle")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(DJTheme.statusError)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: DJTheme.minTouchTarget)
+                            .background(DJTheme.cardHeader)
+                            .cornerRadius(DJTheme.controlRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                    .stroke(DJTheme.statusError.opacity(0.6), lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(StudioPressableStyle())
                     .help("Cancel the armed transition or restore the outgoing deck after an active transition")
                 }
 
@@ -360,7 +398,7 @@ public struct DeckStudioView: View {
 
             HStack(spacing: 8) {
                 Text(appState.transitionReadinessText)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 9.5, weight: .medium))
                     .foregroundColor(appState.transitionIsReady ? DJTheme.textSecondary : DJTheme.textMuted)
                     .lineLimit(1)
 
@@ -368,17 +406,18 @@ public struct DeckStudioView: View {
                     ProgressView(value: appState.transitionProgress)
                         .frame(width: 120)
                     Text("\(Int(appState.transitionProgress * 100))%")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .bold))
+                        .monospacedDigit()
                         .foregroundColor(DJTheme.textAccent)
                 } else if appState.isAutoPilotArmed {
-                    Text("AUTOPILOT ARMED AT MIX OUT")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    Text("AutoPilot Armed at Mix Out")
+                        .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(DJTheme.textAccent)
                 }
 
                 if let error = appState.transitionErrorMessage {
                     Text(error)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(.red)
                         .lineLimit(1)
                         .help(error)
@@ -387,10 +426,10 @@ public struct DeckStudioView: View {
         }
         .padding(8)
         .background(DJTheme.cardBackground)
-        .cornerRadius(6)
+        .cornerRadius(DJTheme.cardRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(DJTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
         )
     }
 
@@ -406,15 +445,15 @@ public struct DeckStudioView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "square.grid.3x3.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: 9.5))
                         .foregroundColor(DJTheme.textSecondary)
-                    Text("RAM SOUNDBOARD SFX [F1–F8]")
-                        .font(.system(size: 9.5, weight: .black, design: .monospaced))
+                    Text("Soundboard (RAM Preloaded)")
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(DJTheme.textPrimary)
 
                     if !isSoundboardExpanded {
-                        Text("· 8 PADS ACTIVE (HOTKEYS ON)")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        Text("· 8 Pads Active [F1–F8]")
+                            .font(.system(size: 9, weight: .medium))
                             .foregroundColor(DJTheme.textMuted)
                     }
 
@@ -422,7 +461,8 @@ public struct DeckStudioView: View {
 
                     if appState.soundboardTotalRAMBytes > 0 {
                         Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .monospacedDigit()
                             .foregroundColor(DJTheme.textMuted)
                     }
                 }
@@ -431,10 +471,10 @@ public struct DeckStudioView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(DJTheme.cardBackground)
-        .cornerRadius(6)
+        .cornerRadius(DJTheme.cardRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(DJTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
         )
     }
 
@@ -445,7 +485,7 @@ public struct DeckStudioView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text("[\(pad.keyLabel)]")
-                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textSecondary)
 
                     Spacer()
@@ -456,32 +496,34 @@ public struct DeckStudioView: View {
                 }
 
                 Text(pad.title)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textPrimary)
                     .lineLimit(1)
 
                 HStack {
-                    Text(pad.isFallback ? "FALLBACK" : "RAM")
-                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                    Text(pad.isFallback ? "Fallback" : "RAM")
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
 
                     Spacer()
 
                     Text(formatDuration(pad.durationSeconds))
-                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        .font(.system(size: 8, weight: .medium))
+                        .monospacedDigit()
                         .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
                 }
             }
             .padding(6)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 36)
             .background(pad.isPlaying ? Color.yellow : DJTheme.cardHeader)
-            .cornerRadius(4)
+            .cornerRadius(DJTheme.controlRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange.opacity(0.5) : DJTheme.border), lineWidth: 1)
+                RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                    .stroke(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StudioPressableStyle())
         .help("Trigger Pad \(pad.index + 1) (\(pad.title)) - Hotkey: \(pad.keyLabel)")
     }
 
@@ -511,7 +553,7 @@ struct MasterSafetyLockButton: View {
 
     var body: some View {
         button
-            .buttonStyle(.plain)
+            .buttonStyle(StudioPressableStyle())
             .accessibilityLabel("Master Safety Lock")
             .accessibilityValue(appState.isMasterSafetyLockEnabled ? "On" : "Off")
             .help("Protect on-air deck transport. Shift+Space confirms one pause on the focused deck without unlocking.")
@@ -527,10 +569,12 @@ struct MasterSafetyLockButton: View {
             }
             appState.setMasterSafetyLockEnabled(!appState.isMasterSafetyLockEnabled)
         } label: {
-            Label("SAFETY LOCK", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
-                .font(.system(size: 9, weight: .black, design: .monospaced))
+            Label("Safety Lock", systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(appState.isMasterSafetyLockEnabled ? DJTheme.cue : DJTheme.textSecondary)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 6)
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
         }
     }
 }
@@ -548,14 +592,14 @@ struct LibraryDeckLoadButton: View {
             appState.focusMasterDeck(deck)
             appState.loadSelectedTrackIntoDeck(deck: deck)
         } label: {
-            Label("LOAD", systemImage: "arrow.down.doc.fill")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+            Label("Load", systemImage: "arrow.down.doc.fill")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(DJTheme.textPrimary)
                 .padding(.horizontal, 7)
-                .frame(minHeight: 28)
-                .background(color.opacity(0.2))
-                .cornerRadius(3)
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
+                .frame(minHeight: DJTheme.minTouchTarget)
+                .background(color.opacity(0.18))
+                .cornerRadius(DJTheme.chipRadius)
+                .overlay(RoundedRectangle(cornerRadius: DJTheme.chipRadius).stroke(color.opacity(0.8), lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .help(appState.selectedTrackPath == nil
@@ -565,5 +609,5 @@ struct LibraryDeckLoadButton: View {
         .accessibilityIdentifier("deckLoadButton-\(deck.rawValue)")
     }
 
-    var body: some View { button.buttonStyle(.plain) }
+    var body: some View { button.buttonStyle(StudioPressableStyle()) }
 }

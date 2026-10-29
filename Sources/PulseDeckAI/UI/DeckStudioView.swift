@@ -393,6 +393,28 @@ public struct DeckStudioView: View {
                     .help("Cancel the armed transition or restore the outgoing deck after an active transition")
                 }
 
+                Button {
+                    appState.isAdvisorPanelOpen.toggle()
+                } label: {
+                    Label("AI Adviser", systemImage: "sparkles")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundColor(appState.isAdvisorPanelOpen ? DJTheme.cue : DJTheme.textAccent)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .background(appState.isAdvisorPanelOpen ? DJTheme.cue.opacity(0.18) : DJTheme.cardHeader)
+                        .cornerRadius(DJTheme.controlRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DJTheme.controlRadius)
+                                .stroke(appState.isAdvisorPanelOpen ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.7), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(StudioPressableStyle())
+                .popover(isPresented: $appState.isAdvisorPanelOpen, arrowEdge: .bottom) {
+                    AIAdvisorPanelView(appState: appState)
+                }
+                .help("Open read-only cooperative AI DJ adviser panel")
+
                 Spacer(minLength: 0)
             }
 

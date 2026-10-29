@@ -1,13 +1,37 @@
 import Foundation
 
-struct GeminiAdvisorClient: Sendable {
-    let config: GeminiAdvisorConfig
+public struct GeminiAdvisorClient: Sendable {
+    public let config: GeminiAdvisorConfig
     let transport: any AdvisorHTTPTransport
     let clock: any AdvisorClock
     let rateLimiter: GeminiRollingWindowRateLimiter
-    let apiKeyProvider: @Sendable () -> String?
+    public let apiKeyProvider: @Sendable () -> String?
 
-    func recommend(
+    public init(
+        config: GeminiAdvisorConfig = GeminiAdvisorConfig(),
+        apiKeyProvider: @escaping @Sendable () -> String?
+    ) {
+        let transport = URLSessionAdvisorHTTPTransport()
+        let clock = SystemAdvisorClock()
+        let rateLimiter = GeminiRollingWindowRateLimiter(limit: config.requestsPerMinute, clock: clock)
+        self.init(config: config, transport: transport, clock: clock, rateLimiter: rateLimiter, apiKeyProvider: apiKeyProvider)
+    }
+
+    init(
+        config: GeminiAdvisorConfig,
+        transport: any AdvisorHTTPTransport,
+        clock: any AdvisorClock,
+        rateLimiter: GeminiRollingWindowRateLimiter,
+        apiKeyProvider: @escaping @Sendable () -> String?
+    ) {
+        self.config = config
+        self.transport = transport
+        self.clock = clock
+        self.rateLimiter = rateLimiter
+        self.apiKeyProvider = apiKeyProvider
+    }
+
+    public func recommend(
         currentTrack: TrackCacheEntry,
         availableTracks: [TrackCacheEntry]
     ) async throws -> AdvisorRecommendation {

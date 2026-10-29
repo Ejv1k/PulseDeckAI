@@ -218,7 +218,7 @@ actor GeminiRollingWindowRateLimiter {
     }
 }
 
-enum AIAdvisorError: LocalizedError, Sendable, Equatable {
+public enum AIAdvisorError: LocalizedError, Sendable, Equatable {
     case invalidHTTPResponse
     case invalidConfiguration
     case responseTooLarge
@@ -229,7 +229,7 @@ enum AIAdvisorError: LocalizedError, Sendable, Equatable {
     case noProviderAvailable
     case allProvidersUnavailable(cloudStatus: Int?, localStatus: Int?)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .invalidHTTPResponse:
             return "Advisor returned a non-HTTP response"

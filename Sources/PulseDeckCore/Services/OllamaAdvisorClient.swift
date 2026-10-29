@@ -1,8 +1,52 @@
 import Foundation
 
-struct OllamaAdvisorClient: Sendable {
-    let config: OllamaFallbackConfig
+public struct OllamaAdvisorClient: LocalAdvisorProvider, Sendable {
+    public let config: OllamaFallbackConfig
     let transport: any AdvisorHTTPTransport
+
+    public init(config: OllamaFallbackConfig = OllamaFallbackConfig()) {
+        self.init(config: config, transport: URLSessionAdvisorHTTPTransport())
+    }
+
+    init(config: OllamaFallbackConfig, transport: any AdvisorHTTPTransport) {
+        self.config = config
+        self.transport = transport
+    }
+
+    public var modelIdentifier: String {
+        "Ollama: \(config.model)"
+    }
+
+    public var isAvailable: Bool {
+        get async {
+            guard config.isEnabled,
+                  var components = URLComponents(url: config.endpoint, resolvingAgainstBaseURL: false) else {
+                return false
+            }
+            components.path = "/api/tags"
+            guard let url = components.url else { return false }
+            var request = URLRequest(url: url, timeoutInterval: 2.0)
+            request.httpMethod = "GET"
+            do {
+                let response = try await transport.send(request)
+                guard (200..<300).contains(response.statusCode),
+                      let root = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+                      let models = root["models"] as? [[String: Any]] else {
+                    return false
+                }
+                return models.contains { ($0["name"] as? String) == config.model }
+            } catch {
+                return false
+            }
+        }
+    }
+
+    public func recommend(
+        currentTrack: TrackCacheEntry,
+        candidates: [TrackCacheEntry]
+    ) async throws -> AdvisorRecommendation {
+        try await recommend(currentTrack: currentTrack, availableTracks: candidates)
+    }
 
     func recommend(
         currentTrack: TrackCacheEntry,

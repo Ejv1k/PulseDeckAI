@@ -38,6 +38,7 @@ public final class AppState: ObservableObject {
                 previewHasUsableBeatGrid = false
                 previewIsReady = false
                 preloadSoundboard()
+                cancelAdvisor()
             }
         }
     }
@@ -68,6 +69,11 @@ public final class AppState: ObservableObject {
     @Published public private(set) var coordinatorErrorMessage: String?
     @Published public private(set) var loadedCache: PulseDeckLibraryCache?
     @Published public var selectedTrackPath: String?
+
+    public var selectedTrack: TrackCacheEntry? {
+        guard let path = selectedTrackPath, let cache = loadedCache else { return nil }
+        return cache.tracks[path]
+    }
 
     @Published private var deckLoadMessages: [DeckIdentifier: String] = [:]
     @Published private var analysisStatuses: [String: LibraryTrackAnalysisStatus] = [:]
@@ -128,6 +134,19 @@ public final class AppState: ObservableObject {
     @Published public private(set) var previewErrorMessage: String?
     @Published public private(set) var previewHasUsableBeatGrid: Bool = false
     @Published public var compatibilityReferenceDeck: DeckIdentifier = .deckA
+
+    // Cooperative AI Adviser State (Read-Only)
+    @Published public var advisorMode: AdvisorMode = .localOnly
+    @Published public var selectedLocalModel: String = "gemma3:4b"
+    @Published public var isAdvisorPanelOpen: Bool = false
+    @Published public private(set) var activeRecommendation: CooperativeRecommendation?
+    @Published public private(set) var advisorErrorMessage: String?
+    @Published public private(set) var isAdvisorLoading: Bool = false
+    public let secretStore: any SecretStore
+
+    private var advisorCoordinator: CooperativeAdvisorCoordinator
+    private var advisorGeneration: UInt64 = 0
+    private var activeAdvisorTask: Task<Void, Never>?
 
     public let waveformEditorModel: WaveformEditorModel
     public let audioCoordinator: AudioEngineCoordinator?
@@ -250,6 +269,13 @@ public final class AppState: ObservableObject {
         self.libraryLocationError = location.error
         self.libraryLaunchIssue = location.issue
         self.libraryRootURL = location.root
+        let defaultStore = KeychainSecretStore()
+        self.secretStore = defaultStore
+        let localProvider = OllamaAdvisorClient(config: OllamaFallbackConfig(model: "gemma3:4b"))
+        let geminiClient = GeminiAdvisorClient(apiKeyProvider: { [defaultStore] in
+            defaultStore.getSecret(forKey: "GEMINI_API_KEY") ?? ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
+        })
+        self.advisorCoordinator = CooperativeAdvisorCoordinator(localProvider: localProvider, cloudClient: geminiClient)
         let editor = WaveformEditorModel(libraryRootURL: location.root)
         self.waveformEditorModel = editor
         self.beforePreviewFilePreparation = nil
@@ -276,8 +302,21 @@ public final class AppState: ObservableObject {
         libraryLocationStore: LibraryLocationStore? = nil,
         libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
         beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)? = nil,
-        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
+        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() },
+        secretStore: (any SecretStore)? = nil,
+        advisorCoordinator: CooperativeAdvisorCoordinator? = nil
     ) {
+        let store = secretStore ?? InMemorySecretStore()
+        self.secretStore = store
+        if let coordinator = advisorCoordinator {
+            self.advisorCoordinator = coordinator
+        } else {
+            let localProvider = OllamaAdvisorClient(config: OllamaFallbackConfig(model: "gemma3:4b"))
+            let geminiClient = GeminiAdvisorClient(apiKeyProvider: { [store] in
+                store.getSecret(forKey: "GEMINI_API_KEY") ?? ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
+            })
+            self.advisorCoordinator = CooperativeAdvisorCoordinator(localProvider: localProvider, cloudClient: geminiClient)
+        }
         // Explicitly injected roots win; this initializer never restores normal app preferences.
         self.libraryLocationStore = libraryLocationStore
         self.libraryLaunchIssue = libraryLaunchIssue
@@ -716,6 +755,7 @@ public final class AppState: ObservableObject {
             deckAnalysisValidationIDs[deck] = nil
             deckLoadedSourceIdentities[deck] = sourceIdentity
             if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
+            cancelAdvisor()
             deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
             statusMessage = deckLoadMessages[deck] ?? "Loaded"
             if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
@@ -1498,5 +1538,100 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)
         refreshLibrary()
+    }
+
+    // MARK: - Cooperative AI Adviser Actions
+
+    /// Requests an AI recommendation for the given track or current library selection.
+    /// In cooperative mode, yields local provisional advice first, then background cloud refinement.
+    /// Strictly read-only advice: does not mutate transport, arm transitions, or alter audio.
+    public func requestAdvice(for track: TrackCacheEntry? = nil) {
+        let targetTrack = track ?? selectedTrack ?? referenceTrack
+        guard let currentTrack = targetTrack else {
+            advisorErrorMessage = "Select a track in the library or load a reference deck first."
+            return
+        }
+        guard let cache = loadedCache else {
+            advisorErrorMessage = "Library cache is not loaded."
+            return
+        }
+
+        advisorErrorMessage = nil
+        isAdvisorLoading = true
+        advisorGeneration &+= 1
+        let gen = advisorGeneration
+
+        activeAdvisorTask?.cancel()
+        activeAdvisorTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let candidates = Array(cache.tracks.values).filter { $0.isValid && $0.relativePath != currentTrack.relativePath }
+            do {
+                let stream = await self.advisorCoordinator.streamRecommendation(
+                    currentTrack: currentTrack,
+                    candidates: candidates,
+                    mode: self.advisorMode,
+                    generationID: gen
+                )
+                for try await rec in stream {
+                    guard self.advisorGeneration == gen else { break }
+                    self.activeRecommendation = rec
+                    self.isAdvisorLoading = rec.isRefining
+                }
+                if self.advisorGeneration == gen {
+                    self.isAdvisorLoading = false
+                }
+            } catch is CancellationError {
+                // Task cancelled cleanly
+            } catch {
+                guard self.advisorGeneration == gen else { return }
+                self.advisorErrorMessage = error.localizedDescription
+                self.isAdvisorLoading = false
+            }
+        }
+    }
+
+    /// Explicitly applies the suggested transition bars to the transition planner.
+    /// Does not arm or execute the transition.
+    public func applySuggestedBars(_ bars: Int) {
+        guard (1...64).contains(bars) else { return }
+        self.transitionPhraseBars = bars
+    }
+
+    /// Cancels any active advisor generation and discards pending background refinements.
+    public func cancelAdvisor() {
+        advisorGeneration &+= 1
+        activeAdvisorTask?.cancel()
+        activeAdvisorTask = nil
+        isAdvisorLoading = false
+        Task {
+            await advisorCoordinator.cancel()
+        }
+    }
+
+    /// Dynamically switches local advisor provider model (e.g. "gemma3:4b" or "llama3:latest").
+    public func updateLocalModel(_ model: String) {
+        self.selectedLocalModel = model
+        let client = OllamaAdvisorClient(config: OllamaFallbackConfig(model: model))
+        Task {
+            await self.advisorCoordinator.setLocalProvider(client)
+        }
+    }
+
+    /// Saves or clears the Gemini API key in the secure secret store.
+    public func setGeminiAPIKey(_ key: String?) {
+        secretStore.setSecret(key, forKey: "GEMINI_API_KEY")
+    }
+
+    /// Checks if a valid Gemini API key is configured either in SecretStore or environment.
+    public var hasGeminiAPIKey: Bool {
+        if let key = secretStore.getSecret(forKey: "GEMINI_API_KEY"),
+           !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"],
+           !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return false
     }
 }

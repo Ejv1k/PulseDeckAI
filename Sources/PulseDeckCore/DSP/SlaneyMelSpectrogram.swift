@@ -82,14 +82,22 @@ public struct SlaneyMelSpectrogram: Sendable {
         }
 
         if srcFormat.sampleRate == sampleRate && srcFormat.channelCount == 1 && srcFormat.commonFormat == .pcmFormatFloat32 {
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: srcFormat, frameCapacity: AVAudioFrameCount(srcLength)) else {
+            var samples: [Float] = []
+            samples.reserveCapacity(Int(srcLength))
+            let chunkCapacity: AVAudioFrameCount = 16384
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: srcFormat, frameCapacity: chunkCapacity) else {
                 throw MelSpectrogramError.bufferAllocationFailed
             }
-            try file.read(into: buffer)
-            guard let channelData = buffer.floatChannelData else {
-                throw MelSpectrogramError.unreadableAudio("Missing float channel data")
+            while file.framePosition < srcLength {
+                let framesRemaining = AVAudioFrameCount(srcLength - file.framePosition)
+                let toRead = min(chunkCapacity, framesRemaining)
+                try file.read(into: buffer, frameCount: toRead)
+                guard buffer.frameLength > 0, let channelData = buffer.floatChannelData else {
+                    break
+                }
+                samples.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength)))
             }
-            return Array(UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength)))
+            return samples
         }
 
         guard let converter = AVAudioConverter(from: srcFormat, to: targetFormat) else {
@@ -115,7 +123,7 @@ public struct SlaneyMelSpectrogram: Sendable {
                 return nil
             }
             do {
-                try file.read(into: inBuffer)
+                try file.read(into: inBuffer, frameCount: readCapacity)
                 outStatus.pointee = .haveData
                 return inBuffer
             } catch {

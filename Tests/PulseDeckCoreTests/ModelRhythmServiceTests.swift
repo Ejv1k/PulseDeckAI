@@ -28,7 +28,7 @@ final class ModelRhythmServiceTests: XCTestCase {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
         let file = try AVAudioFile(forWriting: fileURL, settings: format.settings)
 
-        let totalFrames = AVAudioFrameCount(durationSeconds * sampleRate)
+        let totalFrames = AVAudioFrameCount(round(durationSeconds * sampleRate))
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else {
             throw MelSpectrogramError.bufferAllocationFailed
         }
@@ -120,6 +120,35 @@ final class ModelRhythmServiceTests: XCTestCase {
 
         // 1.0s at 22,050 Hz should be ~22,050 samples
         XCTAssertEqual(resampled.count, 22050, accuracy: 50)
+    }
+
+    func testLoopedAudioSampleLoadingExactFrames() throws {
+        // 30,429 frames (non-power-of-two, 1.38s at 22,050 Hz)
+        let exactFrames = 30429
+        let wavURL = try createSyntheticWAV(durationSeconds: Double(exactFrames) / 22050.0, sampleRate: 22050.0, bpm: 120.0)
+        let samples = try SlaneyMelSpectrogram.loadAudioSamples(from: wavURL)
+        XCTAssertEqual(samples.count, exactFrames, "Looped audio loader must read all frames without premature truncation")
+    }
+
+    func testQAEvidenceFixturesIfPresent() async throws {
+        let shortURL = URL(fileURLWithPath: "/var/folders/1h/6xqn450n79l88dgzb89r9k0r0000gn/T/rhythm-native93-luita8p4/evidence/fixtures/short_nonzero.wav")
+        let multiURL = URL(fileURLWithPath: "/var/folders/1h/6xqn450n79l88dgzb89r9k0r0000gn/T/rhythm-native93-luita8p4/evidence/fixtures/multichunk_stereo.wav")
+        guard FileManager.default.fileExists(atPath: shortURL.path) && FileManager.default.fileExists(atPath: multiURL.path) else { return }
+
+        let shortPCM = try SlaneyMelSpectrogram.loadAudioSamples(from: shortURL)
+        XCTAssertEqual(shortPCM.count, 30429)
+
+        let service = try ModelRhythmService(computeUnits: .cpuOnly)
+        let shortAnalysis = try await service.analyzeRhythm(audioURL: shortURL)
+        XCTAssertFalse(shortAnalysis.beats.isEmpty)
+        XCTAssertEqual(shortAnalysis.beats, [0.5])
+
+        let multiPCM = try SlaneyMelSpectrogram.loadAudioSamples(from: multiURL)
+        XCTAssertEqual(multiPCM.count, 780129)
+        let multiAnalysis = try await service.analyzeRhythm(audioURL: multiURL)
+        XCTAssertFalse(multiAnalysis.beats.isEmpty)
+        XCTAssertEqual(multiAnalysis.beats.count, 71)
+        XCTAssertEqual(multiAnalysis.downbeats.count, 54)
     }
 
     func testModelRhythmServiceEndToEnd() async throws {

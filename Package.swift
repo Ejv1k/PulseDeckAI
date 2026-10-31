@@ -36,6 +36,10 @@ let package = Package(
             name: "PulseDeckCore",
             dependencies: ["PulseDeckAtomics"],
             path: "Sources/PulseDeckCore",
+            resources: [
+                .copy("Resources/BeatThis_small0_fp32.mlmodelc"),
+                .copy("Resources/mel_filterbank_513x128_fp32.bin")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

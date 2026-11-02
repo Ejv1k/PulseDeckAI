@@ -62,6 +62,9 @@ let package = Package(
                 "PulseDeckAI"
             ],
             path: "Tests/PulseDeckCoreTests",
+            resources: [
+                .copy("Resources/short_nonzero.wav")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

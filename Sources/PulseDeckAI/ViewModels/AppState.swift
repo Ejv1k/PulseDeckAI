@@ -74,7 +74,8 @@ public final class AppState: ObservableObject {
     @Published private(set) var isAnalyzingLibraryTrack = false
     @Published public var selectedAnalysisMethod: TrackAnalysisMethod = .dsp
     @Published public private(set) var activeAnalysisMethod: [String: TrackAnalysisMethod] = [:]
-    private var analysisRequestGenerations: [String: UInt64] = [:]
+    /// Unique identity token of the currently active in-flight analysis request across all tracks and methods.
+    private var activeAnalysisToken: UUID? = nil
     private var analysisTask: Task<Void, Never>?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
@@ -820,8 +821,8 @@ public final class AppState: ObservableObject {
         }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
-        let generation = (analysisRequestGenerations[relativePath] ?? 0) &+ 1
-        analysisRequestGenerations[relativePath] = generation
+        let token = UUID()
+        activeAnalysisToken = token
         activeAnalysisMethod[relativePath] = methodToUse
         isAnalyzingLibraryTrack = true
         analysisStatuses[relativePath] = .running
@@ -837,7 +838,8 @@ public final class AppState: ObservableObject {
 
         let task = Task { [weak self] in
             defer {
-                if let self, self.analysisRequestGenerations[relativePath] == generation {
+                if let self, self.activeAnalysisToken == token {
+                    self.activeAnalysisToken = nil
                     self.analysisTask = nil
                     self.isAnalyzingLibraryTrack = false
                 }
@@ -858,15 +860,13 @@ public final class AppState: ObservableObject {
                 }
                 try Task.checkCancellation()
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
-                guard self.analysisRequestGenerations[relativePath] == generation else {
-                    return
-                }
+                guard self.activeAnalysisToken == token else { return }
                 guard entry.fileFingerprint == fingerprint, try LibraryTrackSource.fingerprint(at: url) == fingerprint else {
                     throw LibraryTrackSource.Failure("The file changed during analysis. Analyze it again after the copy completes.")
                 }
                 try await self.waveformEditorModel.persistAnalyzedTrack(entry, libraryRootURL: root)
                 guard !Task.isCancelled, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
-                guard self.analysisRequestGenerations[relativePath] == generation else { return }
+                guard self.activeAnalysisToken == token else { return }
 
                 self.analysisStatuses[relativePath] = .complete
                 if let current = self.loadedCache?.tracks[relativePath] {
@@ -895,7 +895,7 @@ public final class AppState: ObservableObject {
                 }
             } catch {
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
-                guard self.analysisRequestGenerations[relativePath] == generation else { return }
+                guard self.activeAnalysisToken == token else { return }
                 let reason = error is CancellationError ? "Analysis cancelled." : error.localizedDescription
                 self.analysisStatuses[relativePath] = .failed(reason)
                 self.statusMessage = "\(methodToUse.displayName) analysis failed: \(reason)"

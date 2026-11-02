@@ -228,8 +228,10 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         var mergedFields = disk.manualOverrides.overriddenFields
         switch intent {
         case .cue(let cue, let acceptedPreviousValues):
-            guard acceptedPreviousValues.contains(cueValue(cue, in: disk.cueMarkers)) else {
-                throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "\(cue.displayName)")
+            if disk.manualOverrides.overriddenFields.contains("cueMarkers") {
+                guard acceptedPreviousValues.contains(cueValue(cue, in: disk.cueMarkers)) else {
+                    throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "\(cue.displayName)")
+                }
             }
             let submittedTime = cueValue(cue, in: track.cueMarkers)
             let cues = WaveformCoordinateMapper(
@@ -245,8 +247,10 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             merged.cueMarkers = cues
             if !mergedFields.contains("cueMarkers") { mergedFields.append("cueMarkers") }
         case .aiTrimBypass(let acceptedPreviousValues):
-            guard acceptedPreviousValues.contains(disk.aiTrimBypass) else {
-                throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "AI trim bypass")
+            if disk.manualOverrides.overriddenFields.contains("aiTrimBypass") {
+                guard acceptedPreviousValues.contains(disk.aiTrimBypass) else {
+                    throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "AI trim bypass")
+                }
             }
             merged.aiTrimBypass = track.aiTrimBypass
             if !mergedFields.contains("aiTrimBypass") { mergedFields.append("aiTrimBypass") }

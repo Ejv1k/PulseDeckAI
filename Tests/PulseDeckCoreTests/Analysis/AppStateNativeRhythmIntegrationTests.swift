@@ -246,4 +246,77 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         // The second library cache must not be contaminated by fixture1 analysis
         XCTAssertNil(app.loadedCache?.tracks[relPath])
     }
+
+    // MARK: - 7. Cross-Track Busy Ownership
+
+    func testHeldCrossTrackMethodRequestOwnsBusyStateAfterOlderCompletion() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+
+        let trackA = fixture.crate.appendingPathComponent("trackA.wav")
+        let trackB = fixture.crate.appendingPathComponent("trackB.wav")
+        try createSyntheticClickWAV(url: trackA, durationSeconds: 6.0, bpm: 120.0)
+        try createSyntheticClickWAV(url: trackB, durationSeconds: 6.0, bpm: 120.0)
+
+        let relA = "01_House/trackA.wav"
+        let relB = "01_House/trackB.wav"
+
+        // Start track A (Native Model)
+        let taskA = app.analyzeTrack(relativePath: relA, method: .nativeModel)
+
+        // Immediately start track B (DSP)
+        let taskB = app.analyzeTrack(relativePath: relB, method: .dsp)
+
+        // Wait for task A to complete or cancel
+        _ = await taskA.value
+
+        // Busy state must remain true because track B is still active / winning
+        // Older track A's defer must not clear the global busy flag of newer track B!
+        XCTAssertEqual(app.activeAnalysisMethod[relB], .dsp)
+
+        _ = await taskB.value
+
+        XCTAssertFalse(app.isAnalyzingLibraryTrack)
+        XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, "local-dsp-1")
+    }
+
+    // MARK: - 8. Manual Cue Merge Across Analysis Baseline
+
+    func testManualCueSaveWhileAnalysisHeldOnDiskMergesAndRemainsLatest() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+
+        let trackURL = fixture.crate.appendingPathComponent("trackM.wav")
+        try createSyntheticClickWAV(url: trackURL, durationSeconds: 10.0, bpm: 120.0)
+        let relPath = "01_House/trackM.wav"
+
+        // 1. Seed baseline analysis
+        _ = await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        _ = await app.selectTrack(relativePath: relPath).value
+
+        // 2. Perform Native Model analysis
+        let modelTask = app.analyzeTrack(relativePath: relPath, method: .nativeModel)
+
+        // 3. User makes manual edits in editor
+        editor.setCue(.mixOut, toTime: 7.25)
+        editor.toggleAITrimBypass()
+
+        // 4. Await both analysis and editor saves
+        _ = await modelTask.value
+        await editor.waitForPendingSaves()
+
+        // 5. Inspect saved disk entry
+        let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let saved = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
+
+        XCTAssertEqual(saved.analyzerVersion, NativeRhythmTrackAnalyzer.analyzerVersion)
+        XCTAssertEqual(saved.cueMarkers.mixOutCue, 7.25, accuracy: 0.001)
+        XCTAssertTrue(saved.aiTrimBypass)
+        XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("cueMarkers"))
+        XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("aiTrimBypass"))
+        XCTAssertEqual(app.loadedCache?.tracks[relPath], saved)
+        XCTAssertEqual(editor.cues.mixOutCue, 7.25, accuracy: 0.001)
+    }
 }

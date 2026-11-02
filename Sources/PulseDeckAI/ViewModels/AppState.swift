@@ -72,6 +72,9 @@ public final class AppState: ObservableObject {
     @Published private var deckLoadMessages: [DeckIdentifier: String] = [:]
     @Published private var analysisStatuses: [String: LibraryTrackAnalysisStatus] = [:]
     @Published private(set) var isAnalyzingLibraryTrack = false
+    @Published public var selectedAnalysisMethod: TrackAnalysisMethod = .dsp
+    @Published public private(set) var activeAnalysisMethod: [String: TrackAnalysisMethod] = [:]
+    private var analysisRequestGenerations: [String: UInt64] = [:]
     private var analysisTask: Task<Void, Never>?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
@@ -803,15 +806,34 @@ public final class AppState: ObservableObject {
     func analysisStatus(for path: String) -> LibraryTrackAnalysisStatus? { analysisStatuses[path] }
 
     /// One bounded local analysis at a time; cache writes share the editor's persistence queue.
+    /// Captures the requested analysis method (or selectedAnalysisMethod default) into the request identity.
     @discardableResult
-    func analyzeTrack(relativePath: String) -> Task<Void, Never> {
+    func analyzeTrack(relativePath: String, method: TrackAnalysisMethod? = nil) -> Task<Void, Never> {
         guard resolvedLibraryRootURL != nil else { return Task {} }
-        if let analysisTask { return analysisTask }
+        let methodToUse = method ?? selectedAnalysisMethod
+        if let analysisTask {
+            if isAnalyzingLibraryTrack && activeAnalysisMethod[relativePath] == methodToUse {
+                return analysisTask
+            }
+            return analysisTask
+        }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
+        let generation = (analysisRequestGenerations[relativePath] ?? 0) &+ 1
+        analysisRequestGenerations[relativePath] = generation
+        activeAnalysisMethod[relativePath] = methodToUse
         isAnalyzingLibraryTrack = true
         analysisStatuses[relativePath] = .running
-        statusMessage = "Analyzing locally: \(relativePath). Playback remains available."
+
+        let startMessage: String
+        switch methodToUse {
+        case .dsp:
+            startMessage = "Analyzing locally with DSP: \(relativePath). Playback remains available."
+        case .nativeModel:
+            startMessage = "Analyzing with Native CoreML rhythm: \(relativePath). Playback remains available."
+        }
+        statusMessage = startMessage
+
         let task = Task { [weak self] in
             defer {
                 self?.analysisTask = nil
@@ -820,16 +842,29 @@ public final class AppState: ObservableObject {
             do {
                 let url = try LibraryTrackSource.url(relativePath: relativePath, root: root)
                 let fingerprint = try LibraryTrackSource.fingerprint(at: url)
-                let entry = try await Task.detached(priority: .utility) {
-                    try LocalTrackAnalyzer().analyze(url: url, libraryRoot: root)
-                }.value
+                let entry: TrackCacheEntry
+                switch methodToUse {
+                case .dsp:
+                    entry = try await Task.detached(priority: .utility) {
+                        try LocalTrackAnalyzer().analyze(url: url, libraryRoot: root)
+                    }.value
+                case .nativeModel:
+                    entry = try await Task.detached(priority: .utility) {
+                        try await NativeRhythmTrackAnalyzer().analyze(url: url, libraryRoot: root)
+                    }.value
+                }
                 try Task.checkCancellation()
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
+                guard self.analysisRequestGenerations[relativePath] == generation else {
+                    return
+                }
                 guard entry.fileFingerprint == fingerprint, try LibraryTrackSource.fingerprint(at: url) == fingerprint else {
                     throw LibraryTrackSource.Failure("The file changed during analysis. Analyze it again after the copy completes.")
                 }
                 try await self.waveformEditorModel.persistAnalyzedTrack(entry, libraryRootURL: root)
                 guard !Task.isCancelled, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
+                guard self.analysisRequestGenerations[relativePath] == generation else { return }
+
                 self.analysisStatuses[relativePath] = .complete
                 if let current = self.loadedCache?.tracks[relativePath] {
                     let currentIdentity = try LibraryTrackSource.identity(at: url)
@@ -841,7 +876,7 @@ public final class AppState: ObservableObject {
                         self.deckAnalysisValidationTasks[deck] = nil
                         self.deckAnalysisValidationIDs[deck] = nil
                         if deck == .deckA { self.deckATrack = current } else { self.deckBTrack = current }
-                        self.deckLoadMessages[deck] = "Loaded \(relativePath) · Local analysis ready."
+                        self.deckLoadMessages[deck] = "Loaded \(relativePath) · \(methodToUse.displayName) analysis ready."
                     }
                 }
                 if self.selectedTrackPath == relativePath,
@@ -849,12 +884,18 @@ public final class AppState: ObservableObject {
                    let fresh = self.loadedCache?.tracks[relativePath] {
                     self.waveformEditorModel.updateLoadedTrack(fresh)
                 }
-                self.statusMessage = "Local analysis ready: \(relativePath). Tempo is heuristic; key remains unknown."
+                switch methodToUse {
+                case .dsp:
+                    self.statusMessage = "Local analysis ready: \(relativePath). Tempo is heuristic; key remains unknown."
+                case .nativeModel:
+                    self.statusMessage = "Native rhythm analysis ready: \(relativePath). Tempo derived from Beat This! small0 beats (fixed-1500 adapted); key remains unknown."
+                }
             } catch {
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }
+                guard self.analysisRequestGenerations[relativePath] == generation else { return }
                 let reason = error is CancellationError ? "Analysis cancelled." : error.localizedDescription
                 self.analysisStatuses[relativePath] = .failed(reason)
-                self.statusMessage = "Local analysis failed: \(reason)"
+                self.statusMessage = "\(methodToUse.displayName) analysis failed: \(reason)"
             }
         }
         analysisTask = task

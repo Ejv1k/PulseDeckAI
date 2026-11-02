@@ -807,15 +807,16 @@ public final class AppState: ObservableObject {
 
     /// One bounded local analysis at a time; cache writes share the editor's persistence queue.
     /// Captures the requested analysis method (or selectedAnalysisMethod default) into the request identity.
+    /// Cancels any existing in-flight task when a different method or re-analysis is requested.
     @discardableResult
     func analyzeTrack(relativePath: String, method: TrackAnalysisMethod? = nil) -> Task<Void, Never> {
         guard resolvedLibraryRootURL != nil else { return Task {} }
         let methodToUse = method ?? selectedAnalysisMethod
-        if let analysisTask {
+        if let existing = analysisTask {
             if isAnalyzingLibraryTrack && activeAnalysisMethod[relativePath] == methodToUse {
-                return analysisTask
+                return existing
             }
-            return analysisTask
+            existing.cancel()
         }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
@@ -836,8 +837,10 @@ public final class AppState: ObservableObject {
 
         let task = Task { [weak self] in
             defer {
-                self?.analysisTask = nil
-                self?.isAnalyzingLibraryTrack = false
+                if let self, self.analysisRequestGenerations[relativePath] == generation {
+                    self.analysisTask = nil
+                    self.isAnalyzingLibraryTrack = false
+                }
             }
             do {
                 let url = try LibraryTrackSource.url(relativePath: relativePath, root: root)

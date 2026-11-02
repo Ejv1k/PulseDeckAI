@@ -52,6 +52,67 @@ final class ModelRhythmServiceTests: XCTestCase {
         return fileURL
     }
 
+    /// Synthesizes the exact hermetic multi-chunk stereo WAV fixture matching upstream validation generator.
+    private func createDeterministicMultiChunkStereoWAV() throws -> URL {
+        let fileURL = tempDir.appendingPathComponent("hermetic_multichunk_stereo.wav")
+        let rate: Double = 44100.0
+        let channels: UInt16 = 2
+        let duration: Double = 35.38
+        let n = Int(round(rate * duration)) // 1560273
+        let halfRate = Int(round(rate * 0.5)) // 22050
+        let twoRate = Int(2.0 * rate) // 88200
+
+        var samples = [Float](repeating: 0, count: n * Int(channels))
+        for i in 0..<n {
+            let time = Double(i) / rate
+            let phase = i % halfRate
+            let freq: Double = (i % twoRate < 200) ? 880.0 : 440.0
+            let decay = max(0.0, 1.0 - Double(phase) / 200.0)
+            let click = sin(2.0 * Double.pi * freq * Double(phase) / rate) * decay * 0.04
+            let sample = Float(click + 0.004 * sin(2.0 * Double.pi * 173.0 * time))
+            let base = i * Int(channels)
+            samples[base] = sample
+            samples[base + 1] = sample
+        }
+
+        let payloadSize = UInt32(samples.count * MemoryLayout<Float>.size)
+        var data = Data()
+        data.reserveCapacity(44 + Int(payloadSize))
+
+        data.append(contentsOf: "RIFF".utf8)
+        var chunkSize = UInt32(36 + payloadSize).littleEndian
+        data.append(Data(bytes: &chunkSize, count: 4))
+        data.append(contentsOf: "WAVE".utf8)
+
+        data.append(contentsOf: "fmt ".utf8)
+        var subchunk1Size = UInt32(16).littleEndian
+        var audioFormat = UInt16(3).littleEndian // IEEE Float
+        var numChannels = channels.littleEndian
+        var sampleRate = UInt32(rate).littleEndian
+        var byteRate = UInt32(UInt32(rate) * UInt32(channels) * 4).littleEndian
+        var blockAlign = UInt16(channels * 4).littleEndian
+        var bitsPerSample = UInt16(32).littleEndian
+
+        data.append(Data(bytes: &subchunk1Size, count: 4))
+        data.append(Data(bytes: &audioFormat, count: 2))
+        data.append(Data(bytes: &numChannels, count: 2))
+        data.append(Data(bytes: &sampleRate, count: 4))
+        data.append(Data(bytes: &byteRate, count: 4))
+        data.append(Data(bytes: &blockAlign, count: 2))
+        data.append(Data(bytes: &bitsPerSample, count: 2))
+
+        data.append(contentsOf: "data".utf8)
+        var dataSize = payloadSize.littleEndian
+        data.append(Data(bytes: &dataSize, count: 4))
+
+        samples.withUnsafeBytes { raw in
+            data.append(contentsOf: raw)
+        }
+
+        try data.write(to: fileURL)
+        return fileURL
+    }
+
     // MARK: - Unit Tests
 
     func testPostprocessingMaxpoolAndDeduplication() {
@@ -144,6 +205,19 @@ final class ModelRhythmServiceTests: XCTestCase {
         XCTAssertFalse(shortAnalysis.beats.isEmpty, "Beat must not be lost to tail frame truncation")
         XCTAssertEqual(shortAnalysis.beats, [0.5], "Must match official reference beat at 0.5s")
         XCTAssertEqual(shortAnalysis.downbeats, [], "Short fixture has zero downbeats")
+    }
+
+    func testMultiChunkStereoHermeticRegressionFixture() async throws {
+        let multiURL = try createDeterministicMultiChunkStereoWAV()
+
+        let multiPCM = try SlaneyMelSpectrogram.loadAudioSamples(from: multiURL)
+        XCTAssertEqual(multiPCM.count, 780129, "Stereo resampled audio loader must read all 780,129 frames without truncation")
+
+        let service = try ModelRhythmService(computeUnits: .cpuOnly)
+        let multiAnalysis = try await service.analyzeRhythm(audioURL: multiURL)
+        XCTAssertFalse(multiAnalysis.beats.isEmpty, "Multi-chunk audio must detect beats")
+        XCTAssertEqual(multiAnalysis.beats.count, 71, "Multi-chunk fixture must detect exactly 71 beats")
+        XCTAssertEqual(multiAnalysis.downbeats.count, 54, "Multi-chunk fixture must detect exactly 54 downbeats")
     }
 
     func testModelRhythmServiceEndToEnd() async throws {

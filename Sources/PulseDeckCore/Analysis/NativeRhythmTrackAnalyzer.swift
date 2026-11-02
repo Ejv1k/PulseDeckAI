@@ -142,6 +142,9 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         try Task.checkCancellation()
 
         // 3. Derive tempo and beat grid from detected beats
+        // The 50.0 to 220.0 BPM tempo range matches the supported native rhythm estimation domain.
+        // Out-of-domain tempi trigger InsufficientBeats without silent octave correction,
+        // preserving any previously stored valid analysis in the application cache.
         let beats = rhythmAnalysis.beats.filter { $0.isFinite && $0 >= 0.0 && $0 <= duration }
         guard beats.count >= 2 else {
             throw NativeRhythmAnalysisError.insufficientBeats("Detected \(beats.count) beats; minimum 2 required for tempo estimation.")
@@ -178,11 +181,14 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             throw NativeRhythmAnalysisError.insufficientBeats("Derived tempo \(bpm) BPM is outside valid 50-220 range.")
         }
 
-        // Regularity score: fraction of intervals within 5% of median
+        // Uncalibrated regularity heuristic: scales regularity by valid interval coverage.
+        // Floor 0.10 is not a minimum probability guarantee. Bounded strictly in [0.10, 0.85].
+        let totalIntervalCount = max(1, beats.count - 1)
+        let coverage = Double(validIntervals.count) / Double(totalIntervalCount)
         let regularCount = validIntervals.filter { abs($0 - medianInterval) <= 0.05 * medianInterval }.count
         let regularity = Double(regularCount) / Double(validIntervals.count)
-        // Explicitly uncalibrated confidence score bounded strictly in [0.10, 0.85]
-        let confidence = min(0.85, max(0.10, regularity * 0.85))
+        let rawScore = regularity * coverage * 0.85
+        let confidence = min(0.85, max(0.10, rawScore))
 
         let firstBeatOffset = beats.first ?? 0.0
         let beatGrid = BeatGrid(

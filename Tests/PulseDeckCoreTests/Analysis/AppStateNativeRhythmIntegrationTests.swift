@@ -366,7 +366,7 @@ extension AppStateNativeRhythmIntegrationTests {
 
         let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
         let saved = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
-        XCTAssertEqual(saved.bpm, (analyzedBPM * 0.5 * 10).rounded() / 10, accuracy: 0.001)
+        XCTAssertEqual(saved.bpm, analyzedBPM * 0.5, accuracy: 1e-9)
         XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("bpm"))
 
         // Re-analysis must keep the DJ's tempo.
@@ -399,5 +399,87 @@ extension AppStateNativeRhythmIntegrationTests {
         XCTAssertNotNil(app.loadedCache?.tracks["01_House/b.wav"])
         XCTAssertNotNil(app.loadedCache?.tracks["01_House/c.wav"])
         XCTAssertEqual(app.loadedCache?.tracks["01_House/a.wav"]?.analysisTimestamp, before)
+    }
+}
+
+extension AppStateNativeRhythmIntegrationTests {
+    func testManualAnalyzeDuringCrateBatchStopsBatchAndKeepsUserRun() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        app.selectedAnalysisMethod = .dsp
+        for name in ["a.wav", "b.wav", "c.wav", "x.wav"] {
+            try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 3, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav", "c.wav"])
+        app.analyzeCrate(crate)
+        await Task.yield()
+        let userTask = app.analyzeTrack(relativePath: "01_House/x.wav", method: .dsp)
+        await app.crateAnalysisTask?.value
+        await userTask.value
+
+        XCTAssertEqual(app.analysisStatus(for: "01_House/x.wav"), .complete)
+        XCTAssertNil(app.crateAnalysisProgress)
+        XCTAssertNil(app.loadedCache?.tracks["01_House/c.wav"])
+    }
+
+    func testCancelCrateAnalysisResetsStateImmediately() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        app.selectedAnalysisMethod = .dsp
+        for name in ["a.wav", "b.wav"] {
+            try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 2, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav"])
+        app.analyzeCrate(crate)
+        app.cancelCrateAnalysis()
+        XCTAssertNil(app.crateAnalysisProgress)
+        XCTAssertNil(app.crateAnalysisTask)
+
+        app.analyzeCrate(crate)
+        XCTAssertNotNil(app.crateAnalysisProgress)
+        await app.crateAnalysisTask?.value
+    }
+
+    func testLibraryRootChangeCancelsCrateBatch() async throws {
+        let fixture1 = try makeLibrary()
+        let fixture2 = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture1.root)
+        let app = AppState(libraryRootURL: fixture1.root, waveformEditorModel: editor)
+        app.selectedAnalysisMethod = .dsp
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            try createSyntheticClickWAV(url: fixture1.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 3, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav", "c.wav"])
+        app.analyzeCrate(crate)
+        app.libraryRootURL = fixture2.root
+        XCTAssertNil(app.crateAnalysisProgress)
+        XCTAssertNil(app.crateAnalysisTask)
+    }
+
+    func testHalveThenDoubleBPMRestoresExactValue() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        let relPath = "01_House/t.wav"
+        try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent("t.wav"), durationSeconds: 6.0, bpm: 120.0)
+
+        await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        await app.selectTrack(relativePath: relPath).value
+        let original = try XCTUnwrap(editor.currentTrack?.bpm)
+        editor.scaleBPM(by: 0.5)
+        editor.scaleBPM(by: 2)
+        await editor.waitForPendingSaves()
+        XCTAssertEqual(editor.currentTrack?.bpm, original)
     }
 }

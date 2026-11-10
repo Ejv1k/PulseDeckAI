@@ -20,6 +20,8 @@ public final class AppState: ObservableObject {
                 scanGeneration &+= 1
                 isScanning = false
                 analysisTask?.cancel()
+                // Relative paths of a running batch would resolve against the new root.
+                cancelCrateAnalysis()
                 for task in deckAnalysisValidationTasks.values { task.cancel() }
                 deckAnalysisValidationTasks.removeAll()
                 deckAnalysisValidationIDs.removeAll()
@@ -83,6 +85,9 @@ public final class AppState: ObservableObject {
     /// "Analyze crate" progress while running, nil when idle.
     @Published private(set) var crateAnalysisProgress: (done: Int, total: Int)?
     private(set) var crateAnalysisTask: Task<Void, Never>?
+    /// Track analysis the batch is currently waiting on, so Stop never cancels a user's own run.
+    private var crateCurrentTrackTask: Task<Void, Never>?
+    private var crateBatchID: UUID?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
     private var deckLoadedSourceIdentities: [DeckIdentifier: LibraryTrackSource.Identity] = [:]
@@ -826,22 +831,40 @@ public final class AppState: ObservableObject {
             statusMessage = "Every track in \(crate.title) is already analyzed."
             return
         }
+        let batchID = UUID()
+        let root = libraryRootURL
+        crateBatchID = batchID
         crateAnalysisProgress = (0, paths.count)
         crateAnalysisTask = Task { [weak self] in
             for (index, path) in paths.enumerated() {
-                guard let self, !Task.isCancelled else { break }
-                await self.analyzeTrack(relativePath: path, method: method).value
+                guard let self, !Task.isCancelled, self.crateBatchID == batchID,
+                      self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { break }
+                let task = self.analyzeTrack(relativePath: path, method: method)
+                self.crateCurrentTrackTask = task
+                await task.value
+                // A manual Analyze on another row replaced our run: stop the batch instead of cancelling it.
+                if let active = self.analysisTask, active != task { break }
+                guard self.crateBatchID == batchID else { break }
                 self.crateAnalysisProgress = (index + 1, paths.count)
             }
-            self?.crateAnalysisProgress = nil
-            self?.crateAnalysisTask = nil
+            guard let self, self.crateBatchID == batchID else { return }
+            self.finishCrateAnalysis()
         }
     }
 
-    /// Stops a running crate analysis, including the track in progress.
+    /// Stops a running crate analysis and the track it is analyzing; a separate user run is left alone.
     func cancelCrateAnalysis() {
+        guard crateAnalysisTask != nil else { return }
         crateAnalysisTask?.cancel()
-        analysisTask?.cancel()
+        if let current = crateCurrentTrackTask, current == analysisTask { current.cancel() }
+        finishCrateAnalysis()
+    }
+
+    private func finishCrateAnalysis() {
+        crateBatchID = nil
+        crateAnalysisTask = nil
+        crateCurrentTrackTask = nil
+        crateAnalysisProgress = nil
     }
 
     /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.

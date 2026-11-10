@@ -20,6 +20,8 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     private var _scheduleStartSeconds: Double = 0.0
     private var _segmentQueued: Bool = false
     private var _scheduleGeneration: UInt64 = 0
+    // Last playhead from a valid render time; survives the node reset of a system engine stop.
+    private var _lastPlayhead: (generation: UInt64, seconds: Double)?
     private var _loadGeneration: UInt64 = 0
     private var _isPlaying: Bool = false
     private var _volume: Float = 1.0
@@ -166,6 +168,22 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         }
     }
 
+    /// Re-queues a playing preview after recovery restarted the cue engine (the stop reset the node).
+    public func resumeAfterEngineRestart() {
+        executeOnControlQueue {
+            self.stateLock.lock()
+            let playhead = self.currentPlayheadSecondsLocked()
+            let file = self._currentAudioFile
+            let shouldResume = self._isPlaying && playhead < self._trackDurationSeconds
+            self.stateLock.unlock()
+            guard shouldResume, let file else { return }
+            self.invalidateSchedule()
+            self.playerNode.stop()
+            self.scheduleSegment(file: file, startSeconds: playhead)
+            self.playerNode.play()
+        }
+    }
+
     public func pause() {
         executeOnControlQueue {
             self.stateLock.lock()
@@ -240,9 +258,12 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             if sampleRate.isFinite && sampleRate > 0.0 {
                 let elapsed = Double(playerTime.sampleTime) / sampleRate
                 let current = scheduledStart + elapsed
-                return min(max(current, scheduledStart), duration)
+                let clamped = min(max(current, scheduledStart), duration)
+                _lastPlayhead = (_scheduleGeneration, clamped)
+                return clamped
             }
         }
+        if let cached = _lastPlayhead, cached.generation == _scheduleGeneration { return cached.seconds }
         return scheduledStart
     }
 

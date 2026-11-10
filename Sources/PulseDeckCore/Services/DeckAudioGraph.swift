@@ -68,6 +68,10 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private var _cueSegmentQueued: Bool = false
     private var _masterScheduleGeneration: UInt64 = 0
     private var _cueScheduleGeneration: UInt64 = 0
+    // Last playhead read from a valid render time, per schedule. After the system stops the engine the
+    // node has no render time, and the schedule origin alone would rewind the track.
+    private var _lastMasterPlayhead: (generation: UInt64, seconds: Double)?
+    private var _lastCuePlayhead: (generation: UInt64, seconds: Double)?
 
     private var _isMasterPlaying: Bool = false
     private var _isCuePlaying: Bool = false
@@ -610,6 +614,42 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
+    /// Re-queues audio after recovery restarted an engine the system had stopped. The stop reset the
+    /// player node, so a deck that should be playing would otherwise stay silent at a frozen playhead.
+    public func resumeAfterEngineRestart(role: AudioEngineRole) {
+        executeOnControlQueue {
+            self.stateLock.lock()
+            let masterFile = self._masterAudioFile
+            let cueFile = self._cueAudioFile
+            let masterPlaying = self._isMasterPlaying
+            let cuePlaying = self._isCuePlaying || (self._isMasterPlaying && self._isCueActive)
+            // A paused or pre-rolled deck still believes a segment is queued; the reset node has none.
+            let masterQueued = self._masterSegmentQueued
+            let cueQueued = self._cueSegmentQueued
+            let duration = self._trackDurationSeconds
+            self.stateLock.unlock()
+
+            switch role {
+            case .master:
+                guard masterPlaying || masterQueued, let masterFile else { return }
+                let playhead = self.currentMasterPlayheadSeconds()
+                self.invalidateSchedule(for: .master)
+                self.masterPlayerNode.stop()
+                guard playhead < duration else { return }
+                self.scheduleMasterSegment(file: masterFile, startSeconds: playhead)
+                if masterPlaying { self.masterPlayerNode.play() }
+            case .cue:
+                guard cuePlaying || cueQueued, let cueFile else { return }
+                let playhead = self.currentCuePlayheadSeconds()
+                self.invalidateSchedule(for: .cue)
+                self.cuePlayerNode.stop()
+                guard playhead < duration else { return }
+                self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
+                if cuePlaying { self.cuePlayerNode.play() }
+            }
+        }
+    }
+
     // MARK: - Independent Cue Scrubbing (Zero Master FOH Effect)
 
     /// Scrubs the cue headphone preview independently without affecting master playback.
@@ -715,6 +755,8 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         stateLock.lock()
         let scheduledStart = _masterScheduleStartSeconds
         let duration = _trackDurationSeconds
+        let generation = _masterScheduleGeneration
+        let cached = _lastMasterPlayhead
         stateLock.unlock()
 
         if let nodeTime = masterPlayerNode.lastRenderTime,
@@ -724,9 +766,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             if sampleRate > 0.0 {
                 let elapsed = Double(playerTime.sampleTime) / sampleRate
                 let current = scheduledStart + elapsed
-                return duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+                let clamped = duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+                stateLock.lock()
+                if _masterScheduleGeneration == generation { _lastMasterPlayhead = (generation, clamped) }
+                stateLock.unlock()
+                return clamped
             }
         }
+        if let cached, cached.generation == generation { return cached.seconds }
         return scheduledStart
     }
 
@@ -734,6 +781,8 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         stateLock.lock()
         let scheduledStart = _cueScheduleStartSeconds
         let duration = _trackDurationSeconds
+        let generation = _cueScheduleGeneration
+        let cached = _lastCuePlayhead
         stateLock.unlock()
 
         if let nodeTime = cuePlayerNode.lastRenderTime,
@@ -743,9 +792,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             if sampleRate > 0.0 {
                 let elapsed = Double(playerTime.sampleTime) / sampleRate
                 let current = scheduledStart + elapsed
-                return duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+                let clamped = duration > 0.0 ? min(max(current, 0.0), duration) : max(current, 0.0)
+                stateLock.lock()
+                if _cueScheduleGeneration == generation { _lastCuePlayhead = (generation, clamped) }
+                stateLock.unlock()
+                return clamped
             }
         }
+        if let cached, cached.generation == generation { return cached.seconds }
         return scheduledStart
     }
 

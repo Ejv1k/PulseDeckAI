@@ -212,6 +212,55 @@ public struct LibraryBrowserView: View {
                                     .font(.system(size: 9.5))
                                     .foregroundColor(DJTheme.textMuted)
                             }
+
+                            Divider()
+                                .frame(height: 12)
+                                .background(DJTheme.border)
+
+                            HStack(spacing: 4) {
+                                Text("Engine:")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                    .foregroundColor(DJTheme.textSecondary)
+
+                                Button(action: {
+                                    appState.selectedAnalysisMethod = .dsp
+                                }) {
+                                    Text("DSP")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(appState.selectedAnalysisMethod == .dsp ? DJTheme.deckA.opacity(0.2) : DJTheme.cardHeader)
+                                        .foregroundColor(appState.selectedAnalysisMethod == .dsp ? DJTheme.deckA : DJTheme.textMuted)
+                                        .cornerRadius(DJTheme.chipRadius)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                                .stroke(appState.selectedAnalysisMethod == .dsp ? DJTheme.deckA.opacity(0.8) : DJTheme.border.opacity(0.6), lineWidth: 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .help("Default DSP analyzer (heuristic onset autocorrelation)")
+                                .accessibilityLabel("Select DSP analysis engine")
+
+                                Button(action: {
+                                    appState.selectedAnalysisMethod = .nativeModel
+                                }) {
+                                    Text("Model")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(appState.selectedAnalysisMethod == .nativeModel ? DJTheme.cue.opacity(0.2) : DJTheme.cardHeader)
+                                        .foregroundColor(appState.selectedAnalysisMethod == .nativeModel ? DJTheme.cue : DJTheme.textMuted)
+                                        .cornerRadius(DJTheme.chipRadius)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: DJTheme.chipRadius)
+                                                .stroke(appState.selectedAnalysisMethod == .nativeModel ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.6), lineWidth: 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .help("Native CoreML rhythm tracking via Beat This! small0 (fixed-1500 adapted). Key remains unknown.")
+                                .accessibilityLabel("Select Native CoreML Model analysis engine")
+                            }
+                            .frame(minHeight: 28)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -755,14 +804,17 @@ struct LibraryTrackAnalysisButton: View {
                     switch state {
                     case .running:
                         ProgressView().controlSize(.mini)
-                        Text("Running")
+                        Text(appState.activeAnalysisMethod[relativePath]?.displayName ?? "Running")
                     case .complete:
                         Image(systemName: "checkmark")
-                        Text("Analyze")
+                        Text(engineLabel)
                     case .failed:
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Retry")
                     }
+                } else if let entry = appState.loadedCache?.tracks[relativePath] {
+                    Image(systemName: "checkmark")
+                    Text(entry.analyzerVersion.contains("model") ? "Model" : "DSP")
                 } else {
                     Image(systemName: "waveform.path")
                     Text("Analyze")
@@ -780,22 +832,43 @@ struct LibraryTrackAnalysisButton: View {
             )
             .contentShape(Rectangle())
         }
+        .contextMenu {
+            Button("Analyze with DSP (Baseline)") {
+                appState.analyzeTrack(relativePath: relativePath, method: .dsp)
+            }
+            Button("Analyze with Native CoreML (Experimental)") {
+                appState.analyzeTrack(relativePath: relativePath, method: .nativeModel)
+            }
+        }
         .disabled(appState.isAnalyzingLibraryTrack)
         .help(buttonHelp)
-        .accessibilityLabel("Analyze \(relativePath) locally")
+        .accessibilityLabel("Analyze \(relativePath) using \(engineLabel)")
         .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
+    }
+
+    private var engineLabel: String {
+        if let entry = appState.loadedCache?.tracks[relativePath] {
+            if entry.analyzerVersion.contains("model") {
+                return "Model"
+            } else if entry.analyzerVersion.contains("dsp") {
+                return "DSP"
+            }
+        }
+        return "Analyze"
     }
 
     private var buttonForegroundColor: Color {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return DJTheme.deckA
+                return appState.activeAnalysisMethod[relativePath] == .nativeModel ? DJTheme.cue : DJTheme.deckA
             case .complete:
                 return DJTheme.textSecondary
             case .failed:
                 return .orange
             }
+        } else if let entry = appState.loadedCache?.tracks[relativePath] {
+            return entry.analyzerVersion.contains("model") ? DJTheme.cue : DJTheme.textSecondary
         }
         return appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA
     }
@@ -804,12 +877,14 @@ struct LibraryTrackAnalysisButton: View {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return DJTheme.deckA.opacity(0.2)
+                return (appState.activeAnalysisMethod[relativePath] == .nativeModel ? DJTheme.cue : DJTheme.deckA).opacity(0.2)
             case .complete:
                 return DJTheme.cardHeader
             case .failed:
                 return Color.orange.opacity(0.15)
             }
+        } else if let entry = appState.loadedCache?.tracks[relativePath] {
+            return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.12) : DJTheme.cardHeader
         }
         return DJTheme.deckA.opacity(0.15)
     }
@@ -818,12 +893,14 @@ struct LibraryTrackAnalysisButton: View {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return DJTheme.deckA
+                return appState.activeAnalysisMethod[relativePath] == .nativeModel ? DJTheme.cue : DJTheme.deckA
             case .complete:
                 return DJTheme.border
             case .failed:
                 return Color.orange
             }
+        } else if let entry = appState.loadedCache?.tracks[relativePath] {
+            return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.5) : DJTheme.border
         }
         return DJTheme.deckA.opacity(0.5)
     }
@@ -832,16 +909,19 @@ struct LibraryTrackAnalysisButton: View {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return "Analysis in progress for this track. Playback remains available."
+                return "Analysis in progress with \(appState.activeAnalysisMethod[relativePath]?.displayName ?? "local engine"). Playback remains available."
             case .complete:
-                return "Analysis complete. Click to re-run local analysis."
+                return "Analysis complete with \(engineLabel). Right-click to switch engine. Key remains unknown."
             case .failed(let reason):
                 return "Analysis failed: \(reason). Click to retry."
             }
+        } else if let entry = appState.loadedCache?.tracks[relativePath] {
+            let engine = entry.analyzerVersion.contains("model") ? "Beat This! small0 CoreML" : "DSP baseline"
+            return "Analyzed with \(engine). Click or right-click to re-analyze. Key remains unknown."
         }
         return appState.isAnalyzingLibraryTrack
             ? "One local analysis is running. Playback and library selection remain available."
-            : "Analyze this file locally for waveform, trim estimates and heuristic tempo. No cloud credentials; key remains unknown."
+            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose method. Key remains unknown."
     }
 
     var body: some View {

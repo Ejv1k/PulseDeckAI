@@ -162,7 +162,16 @@ extension WaveformTrackPersisting {
 /// validation, encoding, and disk flush operations run completely off MainActor while preserving
 /// save request ordering.
 public actor WaveformPersistenceActor: WaveformTrackPersisting {
+    /// Remembers the baseline cue markers written by authorized analysis in this persistence chain,
+    /// distinguishing authorized analysis updates from arbitrary external mutations.
+    private var authorizedAnalysisCues: [String: CueMarkers] = [:]
+    private var authorizedAnalysisBypass: [String: Bool] = [:]
+
     public init() {}
+
+    private func trackKey(root: URL, relativePath: String) -> String {
+        return "\(root.standardizedFileURL.path)::\(relativePath)"
+    }
 
     public func persistTrack(
         _ track: TrackCacheEntry,
@@ -182,7 +191,7 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
 
         let entryToSave: TrackCacheEntry
         if let diskEntry = cache.tracks[track.relativePath] {
-            entryToSave = try mergeManualIntent(track: track, intoDiskEntry: diskEntry, intent: intent)
+            entryToSave = try mergeManualIntent(track: track, root: libraryRootURL, intoDiskEntry: diskEntry, intent: intent)
         } else {
             entryToSave = track
         }
@@ -213,6 +222,9 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         }
         CachePersistence.upsertTrack(track, in: &cache)
         cache.generatedAt = ISO8601DateFormatter().string(from: Date())
+        let key = trackKey(root: libraryRootURL, relativePath: track.relativePath)
+        authorizedAnalysisCues[key] = track.cueMarkers
+        authorizedAnalysisBypass[key] = track.aiTrimBypass
         try Task.checkCancellation()
         try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
         return cache
@@ -220,15 +232,20 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
 
     private func mergeManualIntent(
         track: TrackCacheEntry,
+        root: URL,
         intoDiskEntry disk: TrackCacheEntry,
         intent: WaveformEditIntent
     ) throws -> TrackCacheEntry {
         var merged = disk
+        let key = trackKey(root: root, relativePath: track.relativePath)
 
         var mergedFields = disk.manualOverrides.overriddenFields
         switch intent {
         case .cue(let cue, let acceptedPreviousValues):
-            guard acceptedPreviousValues.contains(cueValue(cue, in: disk.cueMarkers)) else {
+            let diskVal = cueValue(cue, in: disk.cueMarkers)
+            let isAccepted = acceptedPreviousValues.contains(diskVal)
+                || (authorizedAnalysisCues[key].map { cueValue(cue, in: $0) == diskVal } ?? false)
+            guard isAccepted else {
                 throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "\(cue.displayName)")
             }
             let submittedTime = cueValue(cue, in: track.cueMarkers)
@@ -245,7 +262,9 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             merged.cueMarkers = cues
             if !mergedFields.contains("cueMarkers") { mergedFields.append("cueMarkers") }
         case .aiTrimBypass(let acceptedPreviousValues):
-            guard acceptedPreviousValues.contains(disk.aiTrimBypass) else {
+            let isAccepted = acceptedPreviousValues.contains(disk.aiTrimBypass)
+                || (authorizedAnalysisBypass[key] == disk.aiTrimBypass)
+            guard isAccepted else {
                 throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "AI trim bypass")
             }
             merged.aiTrimBypass = track.aiTrimBypass

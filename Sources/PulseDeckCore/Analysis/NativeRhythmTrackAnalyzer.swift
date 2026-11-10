@@ -8,7 +8,7 @@ import Foundation
 public struct NativeRhythmTrackAnalyzer: Sendable {
     /// Distinct version identifier explicitly documenting the model, checkpoint,
     /// fixed 1500-frame context padding adaptation, and FP32 precision.
-    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1"
+    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2"
 
     private let waveformBinLimit = 4_096
     // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
@@ -205,7 +205,8 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let beatGrid = BeatGrid(
             firstBeatOffsetSeconds: gridBeats.first ?? 0.0,
             beatIntervalSeconds: beatInterval,
-            beatTimestamps: gridBeats
+            beatTimestamps: gridBeats,
+            downbeatTimestamps: downbeats.isEmpty ? nil : downbeats
         )
 
         // 4. Estimate cues from active envelope bounds (fallback to duration bounds)

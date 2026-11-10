@@ -36,7 +36,7 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
-                    Text("Shared Output: Master and Cue route to same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)). Audition is audible on Master.")
+                    Text("Master and Cue use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone audition is heard on Master.")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.orange)
                         .lineLimit(1)
@@ -74,6 +74,9 @@ public struct OutputRoutingView: View {
                     warning: appState.cueWarning,
                     error: appState.cueRoutingError
                 )
+
+                // Levels sit next to the outputs they measure instead of on their own row.
+                AudioMeterStatusView(appState: appState)
 
                 Button(action: {
                     appState.refreshOutputDevices()
@@ -129,7 +132,7 @@ public struct OutputRoutingView: View {
                     Text("No Output Devices Found").tag("")
                 } else {
                     ForEach(appState.availableOutputDevices) { device in
-                        Text("\(device.name) (\(device.outputChannelCount)ch, \(Int(device.sampleRate / 1000))kHz)")
+                        Text(device.name)
                             .tag(device.id)
                     }
                 }
@@ -175,12 +178,6 @@ public struct OutputRoutingView: View {
                 Text(warning)
                     .font(.system(size: 8.5, weight: .regular))
                     .foregroundColor(DJTheme.textAccent)
-                    .lineLimit(1)
-            } else if let desc = descriptor {
-                Text("\(desc.outputChannelCount)ch · \(Int(desc.sampleRate))Hz")
-                    .font(.system(size: 8.5, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundColor(DJTheme.textSecondary)
                     .lineLimit(1)
             }
         }

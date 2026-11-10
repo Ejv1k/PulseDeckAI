@@ -47,7 +47,7 @@ public struct AudioMeterStatusView: View {
                         .frame(width: proxy.size.width * CGFloat(min(max(snapshot?.peak ?? 0, 0), 1)))
                 }
             }
-            .frame(width: 140, height: 6)
+            .frame(width: 80, height: 6)
             .clipShape(Capsule())
         }
     }

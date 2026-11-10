@@ -78,12 +78,12 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         _ = await task.value
 
         let analyzed = app.loadedCache?.tracks["01_House/track1.wav"]
-        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
 
         // Changing header selection back to .dsp does NOT relabel or mutate existing track entry
         app.selectedAnalysisMethod = .dsp
         let unmodifiedEntry = app.loadedCache?.tracks["01_House/track1.wav"]
-        XCTAssertEqual(unmodifiedEntry?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(unmodifiedEntry?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
     }
 
     // MARK: - 2. Same Source DSP -> Native -> DSP Cache Identity
@@ -108,7 +108,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let modelTask = app.analyzeTrack(relativePath: relPath, method: .nativeModel)
         _ = await modelTask.value
         let modelEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(modelEntry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(modelEntry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
         XCTAssertEqual(modelEntry.bpm, 120.0, accuracy: 2.0)
         XCTAssertFalse(modelEntry.beatGrid.beatTimestamps.isEmpty)
 
@@ -176,7 +176,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Verified preserved manual cues
         let updated = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(updated.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(updated.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
         XCTAssertEqual(updated.cueMarkers.startTrimCue, 1.25)
         XCTAssertEqual(updated.cueMarkers.vocalEntryCue, 2.50)
         XCTAssertEqual(updated.cueMarkers.mixOutCue, 6.75)
@@ -345,5 +345,33 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("aiTrimBypass"))
         XCTAssertEqual(app.loadedCache?.tracks[relPath], saved)
         XCTAssertEqual(editor.cues.mixOutCue, 7.25, accuracy: 0.001)
+    }
+}
+
+extension AppStateNativeRhythmIntegrationTests {
+    func testManualBPMHalvingPersistsAndSurvivesReanalysis() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent("trackT.wav"), durationSeconds: 10.0, bpm: 120.0)
+        let relPath = "01_House/trackT.wav"
+
+        _ = await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        _ = await app.selectTrack(relativePath: relPath).value
+        let analyzedBPM = try XCTUnwrap(editor.currentTrack?.bpm)
+        XCTAssertGreaterThan(analyzedBPM, 0)
+
+        editor.scaleBPM(by: 0.5)
+        await editor.waitForPendingSaves()
+
+        let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let saved = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
+        XCTAssertEqual(saved.bpm, (analyzedBPM * 0.5 * 10).rounded() / 10, accuracy: 0.001)
+        XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("bpm"))
+
+        // Re-analysis must keep the DJ's tempo.
+        _ = await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        let reanalyzed = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
+        XCTAssertEqual(reanalyzed.bpm, saved.bpm, accuracy: 0.001)
     }
 }

@@ -745,9 +745,17 @@ public final class AppState: ObservableObject {
         return nil
     }
 
+    /// Any newer load request, even a refused one, supersedes a load still preparing.
+    private func cancelPendingDeckLoad(deck: DeckIdentifier) {
+        deckLoadTasks[deck]?.cancel()
+        deckLoadTasks[deck] = nil
+        deckLoadRequestIDs[deck] = nil
+    }
+
     /// Synchronous load, kept for scripted callers and tests. UI controls use `startTrackLoad`.
     @discardableResult
     public func loadTrack(relativePath: String, deck: DeckIdentifier) -> Bool {
+        cancelPendingDeckLoad(deck: deck)
         if let reason = deckLoadRefusal(deck: deck) {
             reportDeckLoadFailure(reason, deck: deck)
             return false
@@ -765,6 +773,7 @@ public final class AppState: ObservableObject {
     /// Returns false only for immediate refusals; disk failures arrive later as the deck message.
     @discardableResult
     func startTrackLoad(relativePath: String, deck: DeckIdentifier, focusOnSuccess: Bool = false) -> Bool {
+        cancelPendingDeckLoad(deck: deck)
         if let reason = deckLoadRefusal(deck: deck) {
             reportDeckLoadFailure(reason, deck: deck)
             return false
@@ -774,7 +783,6 @@ public final class AppState: ObservableObject {
             reportDeckLoadFailure(masterSafetyLockMessage ?? "", deck: deck)
             return false
         }
-        deckLoadTasks[deck]?.cancel()
         let request = UUID()
         let root = libraryRootURL.standardizedFileURL
         deckLoadRequestIDs[deck] = request

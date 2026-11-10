@@ -133,7 +133,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         for path in ["../escape.wav", outside.path, "00_Private/missing.wav", "00_Private/link.wav", "00_Private/file.txt"] {
             f.app.loadDroppedTracks([LibraryTrackTransfer(libraryRoot: f.root, relativePath: path)], deck: .deckA)
             await f.app.waitForPendingDeckLoad(deck: .deckA)
-            XCTAssertNotNil(f.app.deckLoadMessage(for: .deckA))
+            XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Unable to load") == true, path)
         }
         try Data("not audio".utf8).write(to: f.root.appendingPathComponent("00_Private/corrupt.wav"))
         XCTAssertFalse(f.app.loadTrack(relativePath: "00_Private/corrupt.wav", deck: .deckA))
@@ -332,16 +332,20 @@ final class LibraryDeckWorkflowTests: XCTestCase {
     private actor PreparationGate {
         private var waiters: [CheckedContinuation<Void, Never>] = []
         private var started: [String] = []
+        private var released = false
         func enter(_ path: String) async {
             started.append(path)
+            guard !released else { return } // A late entrant must not hang the test.
             await withCheckedContinuation { waiters.append($0) }
         }
         func startedPaths() -> [String] { started }
-        func releaseAll() { waiters.forEach { $0.resume() }; waiters.removeAll() }
+        func releaseAll() { released = true; waiters.forEach { $0.resume() }; waiters.removeAll() }
     }
 
     private func waitUntilStarted(_ gate: PreparationGate, count: Int) async {
-        for _ in 0..<200 where await gate.startedPaths().count < count { try? await Task.sleep(nanoseconds: 5_000_000) }
+        for _ in 0..<400 where await gate.startedPaths().count < count { try? await Task.sleep(nanoseconds: 5_000_000) }
+        let started = await gate.startedPaths().count
+        XCTAssertEqual(started, count, "Background preparation never started")
     }
 
     func testDeckLoadPreparesOffMainAndDropsResultAfterRootChange() async throws {
@@ -356,10 +360,12 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let other = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryWorkflow-other-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: other) }
+        // Captures the in-flight task now; the root change below drops it from AppState.
+        let stale = Task { await f.app.waitForPendingDeckLoad(deck: .deckA) }
+        await Task.yield()
         f.app.libraryRootURL = other
         await gate.releaseAll()
-        await f.app.waitForPendingDeckLoad(deck: .deckA)
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await stale.value
         XCTAssertNil(f.audio.deckAGraph.loadedTrackURL, "A load from the old root must not reach the deck")
         XCTAssertNil(f.app.deckATrack)
     }
@@ -376,7 +382,6 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         await waitUntilStarted(gate, count: 2)
         await gate.releaseAll()
         await f.app.waitForPendingDeckLoad(deck: .deckA)
-        try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent(second))
         XCTAssertEqual(f.app.deckATrack?.relativePath, second)
     }

@@ -694,7 +694,7 @@ final class OutputRoutingStudioTests: XCTestCase {
     }
 
     @MainActor
-    func testDualDeckLoadSelectedTrackIntoDeck() throws {
+    func testDualDeckLoadSelectedTrackIntoDeck() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -763,12 +763,14 @@ final class OutputRoutingStudioTests: XCTestCase {
 
         // Load into Deck A
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertNotNil(appState.deckATrack)
         XCTAssertEqual(appState.deckATrack?.relativePath, "test_track.wav")
         XCTAssertEqual(coordinator.deckAGraph.loadedTrackURL?.lastPathComponent, "test_track.wav")
 
         // Load into Deck B
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         XCTAssertNotNil(appState.deckBTrack)
         XCTAssertEqual(appState.deckBTrack?.relativePath, "test_track.wav")
         XCTAssertEqual(coordinator.deckBGraph.loadedTrackURL?.lastPathComponent, "test_track.wav")

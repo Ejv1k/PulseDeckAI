@@ -77,8 +77,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         XCTAssertEqual(appState.transitionReadinessMessage, "Play exactly one outgoing deck")
 
         appState.transitionPhraseBars = 8
@@ -97,6 +99,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.toggleDeckPlay(deck: .deckB)
         XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
         XCTAssertEqual(coordinator.deckBGraph.volume, 0, "Manual controls must not override automation")
@@ -128,8 +131,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         try prepareStudio()
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.toggleDeckPlay(deck: .deckA)
 
         XCTAssertNotNil(appState.autoPilotReadinessMessage)
@@ -145,6 +150,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         let incomingGeneration = coordinator.deckBGraph.scheduleGeneration
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.toggleDeckPlay(deck: .deckB)
         XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingGeneration)
         XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
@@ -163,8 +169,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertEqual(appState.autoPilotReadinessMessage, "Load a track on both decks")
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.transitionMacroStyle = .filterEchoWash
         appState.transitionPhraseBars = 8
         appState.toggleDeckPlay(deck: .deckA)
@@ -210,8 +218,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         try prepareStudio()
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.transitionMacroStyle = .filterEchoWash
         appState.transitionPhraseBars = 8
         appState.toggleDeckPlay(deck: .deckA)
@@ -276,8 +286,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.transitionMacroStyle = .filterEchoWash
         appState.transitionPhraseBars = 8
         appState.toggleDeckPlay(deck: .deckA)
@@ -330,8 +342,10 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         try prepareStudio()
         appState.selectedTrackPath = "deck-a.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.transitionMacroStyle = .hardCutOnDrop
         appState.transitionPhraseBars = 8
         appState.toggleDeckPlay(deck: .deckA)
@@ -351,6 +365,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.deckAGraph.volume, 0.0, accuracy: 0.001)
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(coordinator.deckAGraph.volume, 1.0, accuracy: 0.001)
         XCTAssertEqual(coordinator.crossfaderPosition, 1.0, accuracy: 0.001)
         XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 0.0, accuracy: 0.001)

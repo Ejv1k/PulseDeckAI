@@ -462,10 +462,17 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     // MARK: - Playback Operations
 
     public func loadTrack(url: URL) throws {
-        try executeOnControlQueue {
-            // Open two distinct AVAudioFile handles from the URL to prevent cross-engine thread races.
-            let masterFile = try AVAudioFile(forReading: url)
-            let cueFile = try AVAudioFile(forReading: url)
+        // Open two distinct AVAudioFile handles from the URL to prevent cross-engine thread races.
+        try loadTrack(masterFile: AVAudioFile(forReading: url), cueFile: AVAudioFile(forReading: url), url: url)
+    }
+
+    /// Installs handles opened elsewhere, so slow volumes never block the control queue.
+    /// Master and cue must be distinct handles of the same file.
+    public func loadTrack(masterFile: sending AVAudioFile, cueFile: sending AVAudioFile, url: URL) {
+        // `sending` hands this graph sole ownership; the control queue becomes the only user.
+        nonisolated(unsafe) let masterFile = masterFile
+        nonisolated(unsafe) let cueFile = cueFile
+        executeOnControlQueue {
             let sampleRate = masterFile.processingFormat.sampleRate
             let lengthFrames = masterFile.length
             let duration = sampleRate > 0.0 ? Double(lengthFrames) / sampleRate : 0.0

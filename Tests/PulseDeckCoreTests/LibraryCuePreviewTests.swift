@@ -304,10 +304,12 @@ final class LibraryCuePreviewTests: XCTestCase {
         // Load Deck A
         app.selectTrack(relativePath: "deckA.wav")
         app.loadSelectedTrackIntoDeck(deck: .deckA)
+        await app.waitForPendingDeckLoad(deck: .deckA)
 
         // Load Deck B
         app.selectTrack(relativePath: "deckB.wav")
         app.loadSelectedTrackIntoDeck(deck: .deckB)
+        await app.waitForPendingDeckLoad(deck: .deckB)
 
         // Reference set to Deck A (120 BPM, 8A)
         app.setCompatibilityReferenceDeck(.deckA)

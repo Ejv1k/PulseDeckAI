@@ -82,12 +82,13 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         try XCTUnwrap(action)()
     }
 
-    func testUnanalyzedLibrarySelectionAndActualLoadButtonDecodeIntoEmptyDeck() throws {
+    func testUnanalyzedLibrarySelectionAndActualLoadButtonDecodeIntoEmptyDeck() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryTrackSelectionButton(appState: f.app, relativePath: f.path) { Text("fresh.wav") }.button)
         XCTAssertEqual(f.app.selectedTrackPath, f.path)
         XCTAssertNil(f.app.loadedCache)
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent(f.path))
         XCTAssertEqual(f.app.deckATrack?.relativePath, f.path)
         XCTAssertEqual(f.app.deckATrack?.duration ?? 0, 1, accuracy: 0.001)
@@ -95,12 +96,13 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         f.app.toggleDeckPlay(deck: .deckA)
         XCTAssertGreaterThan(try f.peak(), 0.1, "The real graph must schedule audible offline PCM")
     }
-    func testTypedDropProtectsOnAirDeckAndPreservesSelection() throws {
+    func testTypedDropProtectsOnAirDeckAndPreservesSelection() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.app.selectedTrackPath = "another-selection.wav"
         let original = LibraryTrackTransfer(libraryRoot: f.root, relativePath: f.path)
         let payload = try JSONDecoder().decode(LibraryTrackTransfer.self, from: JSONEncoder().encode(original))
         XCTAssertTrue(f.app.loadDroppedTracks([payload], deck: .deckA))
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(f.app.selectedTrackPath, "another-selection.wav")
         XCTAssertEqual(f.app.focusedMasterDeck, .deckA)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent(f.path))
@@ -108,17 +110,20 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         f.app.toggleDeckPlay(deck: .deckA)
         let generation = f.audio.deckAGraph.scheduleGeneration
         XCTAssertFalse(f.app.loadDroppedTracks([payload], deck: .deckA))
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Safety Lock") == true)
         XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
         XCTAssertGreaterThan(try f.peak(), 0.1)
         XCTAssertTrue(f.app.loadDroppedTracks([payload], deck: .deckB))
+        await f.app.waitForPendingDeckLoad(deck: .deckB)
         XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
     }
 
-    func testInvalidStaleMultipleAndCorruptDropsLeaveGraphUnchangedWithFeedback() throws {
+    func testInvalidStaleMultipleAndCorruptDropsLeaveGraphUnchangedWithFeedback() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         let good = LibraryTrackTransfer(libraryRoot: f.root, relativePath: f.path)
         XCTAssertTrue(f.app.loadDroppedTracks([good], deck: .deckA))
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         let url = f.audio.deckAGraph.loadedTrackURL
         let generation = f.audio.deckAGraph.scheduleGeneration
         let outside = f.root.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".wav")
@@ -126,21 +131,25 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         try Data("not audio".utf8).write(to: outside)
         try FileManager.default.createSymbolicLink(at: f.root.appendingPathComponent("00_Private/link.wav"), withDestinationURL: outside)
         for path in ["../escape.wav", outside.path, "00_Private/missing.wav", "00_Private/link.wav", "00_Private/file.txt"] {
-            XCTAssertFalse(f.app.loadDroppedTracks([LibraryTrackTransfer(libraryRoot: f.root, relativePath: path)], deck: .deckA))
-            XCTAssertNotNil(f.app.deckLoadMessage(for: .deckA))
+            f.app.loadDroppedTracks([LibraryTrackTransfer(libraryRoot: f.root, relativePath: path)], deck: .deckA)
+            await f.app.waitForPendingDeckLoad(deck: .deckA)
+            XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Unable to load") == true, path)
         }
         try Data("not audio".utf8).write(to: f.root.appendingPathComponent("00_Private/corrupt.wav"))
         XCTAssertFalse(f.app.loadTrack(relativePath: "00_Private/corrupt.wav", deck: .deckA))
         XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Unable to load") == true)
         XCTAssertFalse(f.app.loadDroppedTracks([good, good], deck: .deckA))
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertFalse(f.app.loadDroppedTracks([LibraryTrackTransfer(libraryRoot: outside.deletingLastPathComponent(), relativePath: f.path)], deck: .deckA))
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, url)
         XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
     }
 
-    func testActualLoadButtonWithoutSelectionShowsReason() throws {
+    func testActualLoadButtonWithoutSelectionShowsReason() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertTrue(f.app.deckLoadMessage(for: .deckA)?.contains("Select a library track") == true)
         XCTAssertNil(f.audio.deckAGraph.loadedTrackURL)
     }
@@ -254,7 +263,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName).path))
     }
 
-    func testUnanalyzedMP3LoadsThroughActualDeckBButtonAndRenders() throws {
+    func testUnanalyzedMP3LoadsThroughActualDeckBButtonAndRenders() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         let path = "00_Private/fresh.mp3"
         let encoded = "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"
@@ -262,6 +271,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         try XCTUnwrap(Data(base64Encoded: encoded)).write(to: f.root.appendingPathComponent(path))
         try press(LibraryTrackSelectionButton(appState: f.app, relativePath: path) { Text("fresh.mp3") }.button)
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckB, title: "DECK B", color: .red).button)
+        await f.app.waitForPendingDeckLoad(deck: .deckB)
         XCTAssertEqual(f.audio.deckBGraph.loadedTrackURL, f.root.appendingPathComponent(path))
         XCTAssertGreaterThan(f.app.deckBTrack?.duration ?? 0, 0.4)
         XCTAssertNil(f.app.loadedCache)
@@ -318,12 +328,71 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent(f.path))
     }
 
-    func testProgrammaticLoadPreservesKeyboardFocusWhileDropFocusesItsTarget() throws {
+    /// Holds background preparation until the test releases it.
+    private actor PreparationGate {
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var started: [String] = []
+        private var released = false
+        func enter(_ path: String) async {
+            started.append(path)
+            guard !released else { return } // A late entrant must not hang the test.
+            await withCheckedContinuation { waiters.append($0) }
+        }
+        func startedPaths() -> [String] { started }
+        func releaseAll() { released = true; waiters.forEach { $0.resume() }; waiters.removeAll() }
+    }
+
+    private func waitUntilStarted(_ gate: PreparationGate, count: Int) async {
+        for _ in 0..<400 where await gate.startedPaths().count < count { try? await Task.sleep(nanoseconds: 5_000_000) }
+        let started = await gate.startedPaths().count
+        XCTAssertEqual(started, count, "Background preparation never started")
+    }
+
+    func testDeckLoadPreparesOffMainAndDropsResultAfterRootChange() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let gate = PreparationGate()
+        f.app.beforeDeckLoadPreparationForTesting = { await gate.enter($0) }
+        f.app.selectedTrackPath = f.path
+        f.app.loadSelectedTrackIntoDeck(deck: .deckA)
+        await waitUntilStarted(gate, count: 1)
+        XCTAssertEqual(f.app.deckLoadMessage(for: .deckA), "Loading \(f.path)…", "UI stays responsive while the file opens")
+        XCTAssertNil(f.audio.deckAGraph.loadedTrackURL)
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryWorkflow-other-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: other) }
+        // Captures the in-flight task now; the root change below drops it from AppState.
+        let stale = Task { await f.app.waitForPendingDeckLoad(deck: .deckA) }
+        await Task.yield()
+        f.app.libraryRootURL = other
+        await gate.releaseAll()
+        await stale.value
+        XCTAssertNil(f.audio.deckAGraph.loadedTrackURL, "A load from the old root must not reach the deck")
+        XCTAssertNil(f.app.deckATrack)
+    }
+
+    func testNewerDeckLoadWinsOverSlowerEarlierOne() async throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        let second = "00_Private/second.wav"
+        try FileManager.default.copyItem(at: f.root.appendingPathComponent(f.path), to: f.root.appendingPathComponent(second))
+        let gate = PreparationGate()
+        f.app.beforeDeckLoadPreparationForTesting = { await gate.enter($0) }
+        XCTAssertTrue(f.app.startTrackLoad(relativePath: f.path, deck: .deckA))
+        await waitUntilStarted(gate, count: 1)
+        XCTAssertTrue(f.app.startTrackLoad(relativePath: second, deck: .deckA))
+        await waitUntilStarted(gate, count: 2)
+        await gate.releaseAll()
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
+        XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent(second))
+        XCTAssertEqual(f.app.deckATrack?.relativePath, second)
+    }
+
+    func testProgrammaticLoadPreservesKeyboardFocusWhileDropFocusesItsTarget() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.app.focusMasterDeck(.deckA)
         XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckB))
         XCTAssertEqual(f.app.focusedMasterDeck, .deckA)
         XCTAssertTrue(f.app.loadDroppedTracks([LibraryTrackTransfer(libraryRoot: f.root, relativePath: f.path)], deck: .deckB))
+        await f.app.waitForPendingDeckLoad(deck: .deckB)
         XCTAssertEqual(f.app.focusedMasterDeck, .deckB)
     }
 
@@ -411,6 +480,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
             XCTAssertNotEqual(try LibraryTrackSource.fingerprint(at: url), old.fileFingerprint)
             await f.app.selectTrack(relativePath: f.path).value
             try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)
+            await f.app.waitForPendingDeckLoad(deck: .deckA)
             await f.app.waitForPendingDeckAnalysisValidation(deck: .deckA)
             XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, url)
             XCTAssertEqual(f.app.deckATrack?.duration ?? 0, old.duration, accuracy: 0.001)

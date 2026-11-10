@@ -161,6 +161,10 @@ public actor TransitionExecutionService {
     private var state: TransitionExecutionState = .idle
     private var stateMachine: TransitionStateMachine?
     private var activePlan: TransitionPlan?
+    /// The outgoing deck's EQ when the transition started. Automation may cut further but never lifts a
+    /// band above it, so a bass the DJ had killed does not slam back in when the mix begins.
+    /// Kept past `activePlan` so cancel recovery is clamped too; re-captured at every start.
+    private var outgoingEQCeiling: (deck: DeckIdentifier, eq: EQ3BandParameters)?
 
     private var armedRequest: TransitionRequest?
     private var armedTriggerPosition: Double?
@@ -319,6 +323,7 @@ public actor TransitionExecutionService {
         }
 
         activePlan = plan
+        outgoingEQCeiling = (plan.outgoingDeck, deckGraph(for: plan.outgoingDeck).eqParameters)
         state = .inProgress(style: plan.style, progress: 0.0)
         self.stateMachine = sm
 
@@ -609,7 +614,14 @@ public actor TransitionExecutionService {
             deckGraph(for: deck).volume = volume
 
         case .setEQ(let deck, let eq):
-            deckGraph(for: deck).eqParameters = eq
+            if let (ceilingDeck, ceiling) = outgoingEQCeiling, deck == ceilingDeck {
+                deckGraph(for: deck).eqParameters = EQ3BandParameters(
+                    lowGainDB: min(eq.lowGainDB, ceiling.lowGainDB),
+                    midGainDB: min(eq.midGainDB, ceiling.midGainDB),
+                    highGainDB: min(eq.highGainDB, ceiling.highGainDB))
+            } else {
+                deckGraph(for: deck).eqParameters = eq
+            }
 
         case .setFilter(let deck, let filter):
             deckGraph(for: deck).filterParameters = filter

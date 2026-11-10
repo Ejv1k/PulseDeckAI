@@ -124,6 +124,9 @@ public final class AppState: ObservableObject {
     @Published public var transitionPhraseBars: Int = 16
     @Published public private(set) var transitionProgress: Double = 0.0
     @Published public private(set) var activeTransitionState: TransitionExecutionState = .idle
+    /// Channel EQ per deck as the DJ set it (or as automation left it after a transition).
+    @Published public private(set) var deckAEQ = EQ3BandParameters()
+    @Published public private(set) var deckBEQ = EQ3BandParameters()
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
 
@@ -1139,6 +1142,31 @@ public final class AppState: ObservableObject {
         }
     }
 
+    public func deckEQ(_ deck: DeckIdentifier) -> EQ3BandParameters { deck == .deckA ? deckAEQ : deckBEQ }
+
+    /// True while transition automation drives the EQ. An armed AutoPilot leaves the knobs to the DJ.
+    public var isEQAutomated: Bool {
+        if case .inProgress = activeTransitionState { return true }
+        return false
+    }
+
+    /// Manual channel EQ (HI / MID / LOW). Refused while a transition runs: its automation owns the EQ.
+    @discardableResult
+    public func setDeckEQ(deck: DeckIdentifier, eq: EQ3BandParameters) -> Bool {
+        guard !isEQAutomated else { return false }
+        guard eq != deckEQ(deck) else { return true }
+        var applied = eq
+        if let coordinator = audioCoordinator {
+            applied = coordinator.monitor.performOnControlQueue { () -> EQ3BandParameters in
+                let graph = deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
+                graph.eqParameters = eq
+                return graph.eqParameters // clamped
+            }
+        }
+        if deck == .deckA { deckAEQ = applied } else { deckBEQ = applied }
+        return true
+    }
+
     /// Sets the pre-fader listen (PFL) cue routing for the specified deck.
     public func setDeckCueActive(deck: DeckIdentifier, active: Bool) {
         guard let coordinator = self.audioCoordinator else {
@@ -1467,6 +1495,10 @@ public final class AppState: ObservableObject {
         if let coordinator = audioCoordinator {
             isDeckAPlaying = coordinator.deckAGraph.isMasterPlaying
             isDeckBPlaying = coordinator.deckBGraph.isMasterPlaying
+            // Transition automation moves the EQ; the knobs must show where it left them.
+            let eqA = coordinator.deckAGraph.eqParameters, eqB = coordinator.deckBGraph.eqParameters
+            if eqA != deckAEQ { deckAEQ = eqA }
+            if eqB != deckBEQ { deckBEQ = eqB }
             crossfaderPosition = coordinator.crossfaderPosition
         }
     }

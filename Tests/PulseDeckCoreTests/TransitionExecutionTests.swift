@@ -127,6 +127,36 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(coordinator.deckBGraph.volume, 1.0)
     }
 
+    func testAutomationNeverLiftsAnEQBandTheDJHadCut() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let urlA = try createTestWavFile(durationSeconds: 30.0)
+        let urlB = try createTestWavFile(durationSeconds: 30.0)
+        defer {
+            try? FileManager.default.removeItem(at: urlA)
+            try? FileManager.default.removeItem(at: urlB)
+        }
+        try coordinator.deckAGraph.loadTrack(url: urlA)
+        try coordinator.deckBGraph.loadTrack(url: urlB)
+        coordinator.deckAGraph.play()
+        // The DJ has the outgoing bass killed and the mids slightly cut.
+        coordinator.deckAGraph.eqParameters = EQ3BandParameters(lowGainDB: -24, midGainDB: -3, highGainDB: 0)
+        let request = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 30.0, bpm: 120.0, mixOutCue: 10.0),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 30.0, bpm: 120.0, mixOutCue: 25.0),
+            style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false),
+            triggerPositionSeconds: 10.0)
+        let plan = try await service.startTransition(request: request)
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24, "No bass slam when the mix starts")
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters.midGainDB, -3)
+        _ = try await service.advance(to: plan.startTimestampSeconds + 2.0) // bar 1, pre-swap
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24)
+        XCTAssertLessThanOrEqual(coordinator.deckAGraph.eqParameters.midGainDB, -3)
+        XCTAssertEqual(coordinator.deckBGraph.eqParameters.lowGainDB, -24, "The incoming deck still follows the plan")
+        _ = await service.cancelTransition()
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24, "Cancel (the panic path) must not slam the bass back")
+    }
+
     // MARK: - 2. Filter Echo Wash & Initial Gains
 
     func testFilterEchoWashAppliesInitialMuteBeforePlayAndEchoEffect() async throws {

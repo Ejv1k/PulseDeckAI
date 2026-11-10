@@ -278,6 +278,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         syncControl {
             if let registration = self.registeredEngines.first(where: { $0.engine === engine }) {
                 registration.intendedRunningState = running
+                // The app now owns this engine's state; a stale monitor pause must not mask a later system stop.
+                registration.pausedByMonitor = false
             }
         }
     }
@@ -290,6 +292,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
                 return []
             }
+            registration.pausedByMonitor = false
             if let desiredUID {
                 registration.desiredDeviceUID = desiredUID
             }
@@ -323,6 +326,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
                 return []
             }
+            registration.pausedByMonitor = false
             if let desiredUID {
                 registration.desiredDeviceUID = desiredUID
             }
@@ -808,6 +812,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             return
         }
         if engine.isRunning {
+            // Something else restarted it (the app); the monitor's earlier pause no longer applies.
+            registration.pausedByMonitor = false
             noteRecoverySuccess(registration)
             return
         }
@@ -844,6 +850,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         registration.boundDeviceUID = uid
 
         guard registration.intendedRunningState else {
+            registration.pausedByMonitor = false
             noteRecoverySuccess(registration)
             return
         }

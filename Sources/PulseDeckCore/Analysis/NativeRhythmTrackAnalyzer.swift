@@ -8,7 +8,7 @@ import Foundation
 public struct NativeRhythmTrackAnalyzer: Sendable {
     /// Distinct version identifier explicitly documenting the model, checkpoint,
     /// fixed 1500-frame context padding adaptation, and FP32 precision.
-    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1"
+    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1"
 
     private let waveformBinLimit = 4_096
     // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
@@ -131,9 +131,13 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             throw NativeRhythmAnalysisError.modelError(error.localizedDescription)
         }
 
+        // Decode once at 22.05 kHz mono and share the samples between rhythm and key detection.
         let rhythmAnalysis: ModelRhythmAnalysis
+        let musicalKey: String
         do {
-            rhythmAnalysis = try await rhythmService.analyzeRhythm(audioURL: fileURL)
+            let samples = try SlaneyMelSpectrogram.loadAudioSamples(from: fileURL)
+            rhythmAnalysis = try await rhythmService.analyzeRhythm(samples: samples)
+            musicalKey = try KeyDetector.detectKey(samples: samples, sampleRate: SlaneyMelSpectrogram.sampleRate) ?? "Unknown"
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -242,7 +246,7 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             channels: channels,
             bitDepth: bitDepth,
             bpm: bpm,
-            musicalKey: "Unknown",
+            musicalKey: musicalKey,
             confidence: confidence,
             waveformMetadata: WaveformMetadata(
                 sampleCount: Int(frameCount),

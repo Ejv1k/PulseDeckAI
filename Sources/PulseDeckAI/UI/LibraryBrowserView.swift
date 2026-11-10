@@ -206,8 +206,14 @@ public struct LibraryBrowserView: View {
                             }
                             .buttonStyle(.plain)
 
-                            if let ref = appState.referenceTrack {
-                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM —") • \(ref.musicalKey.isEmpty ? "Key —" : ref.musicalKey)")
+                            if let ref = appState.referenceTrack, ref.bpm <= 0,
+                               ref.musicalKey.isEmpty || ref.musicalKey.caseInsensitiveCompare("Unknown") == .orderedSame {
+                                Text("Analyze to match")
+                                    .font(.system(size: 9.5))
+                                    .foregroundColor(DJTheme.textMuted)
+                                    .help("Analyze the reference deck's track to rank tracks by BPM and key")
+                            } else if let ref = appState.referenceTrack {
+                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM —") • \(ref.musicalKey.isEmpty || ref.musicalKey.caseInsensitiveCompare("Unknown") == .orderedSame ? "Key —" : ref.musicalKey)")
                                     .font(.system(size: 9.5, weight: .semibold))
                                     .monospacedDigit()
                                     .foregroundColor(DJTheme.textSecondary)

@@ -126,15 +126,29 @@ public struct BeatGrid: Codable, Sendable, Equatable {
     public let firstBeatOffsetSeconds: Double
     public let beatIntervalSeconds: Double
     public let beatTimestamps: [Double]
+    /// Detected bar starts (downbeats). Optional: older caches and the DSP analyzer omit it.
+    public let downbeatTimestamps: [Double]?
 
     public init(
         firstBeatOffsetSeconds: Double,
         beatIntervalSeconds: Double,
-        beatTimestamps: [Double]
+        beatTimestamps: [Double],
+        downbeatTimestamps: [Double]? = nil
     ) {
         self.firstBeatOffsetSeconds = firstBeatOffsetSeconds
         self.beatIntervalSeconds = beatIntervalSeconds
         self.beatTimestamps = beatTimestamps
+        self.downbeatTimestamps = downbeatTimestamps
+    }
+
+    /// Bar starts: stored downbeats that sit on a beat (sorted, deduplicated), otherwise every
+    /// 4th beat (assumes 4/4 from beat 0). Hand-edited or partial downbeats fall back safely.
+    public var barTimestamps: [Double] {
+        let onBeat = Set(downbeatTimestamps ?? []).filter { downbeat in
+            downbeat.isFinite && beatTimestamps.contains { abs($0 - downbeat) <= 0.02 }
+        }.sorted()
+        if onBeat.count >= 2 { return onBeat }
+        return stride(from: 0, to: beatTimestamps.count, by: 4).map { beatTimestamps[$0] }
     }
 }
 

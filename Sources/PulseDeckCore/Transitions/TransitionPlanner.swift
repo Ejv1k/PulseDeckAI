@@ -184,9 +184,10 @@ public struct TransitionPlanner: Sendable {
     }
 
     /// Finds the first existing downbeat (beat 0 of a 4-beat bar) on or after the requested position.
-    public func findQuantizedOutgoingDownbeat(timestamps: [Double], onOrAfter targetPosition: Double) -> Double? {
-        guard targetPosition.isFinite else { return nil }
-        for index in stride(from: 0, to: timestamps.count, by: 4) {
+    /// `step` 4 walks raw beats; pass `BeatGrid.barTimestamps` with `step: 1`.
+    public func findQuantizedOutgoingDownbeat(timestamps: [Double], onOrAfter targetPosition: Double, step: Int = 4) -> Double? {
+        guard targetPosition.isFinite, step > 0 else { return nil }
+        for index in stride(from: 0, to: timestamps.count, by: step) {
             let timestamp = timestamps[index]
             if timestamp.isFinite && timestamp >= targetPosition { return timestamp }
         }
@@ -195,9 +196,9 @@ public struct TransitionPlanner: Sendable {
 
     /// Finds an existing incoming downbeat at or after the trim cue and strictly before the playable end.
     /// Returns nil instead of seeking backwards or fabricating a downbeat when none fits.
-    public func findAlignedIncomingDownbeat(timestamps: [Double], near targetTrimCue: Double, duration: Double) -> Double? {
-        guard targetTrimCue.isFinite, targetTrimCue >= 0, duration.isFinite else { return nil }
-        for index in stride(from: 0, to: timestamps.count, by: 4) {
+    public func findAlignedIncomingDownbeat(timestamps: [Double], near targetTrimCue: Double, duration: Double, step: Int = 4) -> Double? {
+        guard targetTrimCue.isFinite, targetTrimCue >= 0, duration.isFinite, step > 0 else { return nil }
+        for index in stride(from: 0, to: timestamps.count, by: step) {
             let timestamp = timestamps[index]
             if timestamp.isFinite && timestamp >= targetTrimCue && timestamp < duration { return timestamp }
         }
@@ -262,7 +263,7 @@ public struct TransitionPlanner: Sendable {
         }
 
         // 3. Quantize transition start to outgoing downbeat (beat 0 of a 4-beat bar)
-        guard let quantizedStart = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.beatTimestamps, onOrAfter: triggerPosition) else {
+        guard let quantizedStart = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.barTimestamps, onOrAfter: triggerPosition, step: 1) else {
             if allowFallback {
                 return try planFilterEchoWash(
                     outgoing: outgoing,
@@ -282,9 +283,10 @@ public struct TransitionPlanner: Sendable {
 
         // 4. Choose an actual incoming downbeat without replaying manually trimmed audio.
         guard let incomingSeekPos = findAlignedIncomingDownbeat(
-            timestamps: incoming.beatGrid.beatTimestamps,
+            timestamps: incoming.beatGrid.barTimestamps,
             near: incoming.cueMarkers.startTrimCue,
-            duration: incoming.cueMarkers.endTrimCue
+            duration: incoming.cueMarkers.endTrimCue,
+            step: 1
         ) else {
             if allowFallback {
                 return try planFilterEchoWash(
@@ -630,7 +632,7 @@ public struct TransitionPlanner: Sendable {
         }
 
         // Find the quantized downbeat (beat 0 of a 4-beat bar) at or after trigger position
-        guard let cutTime = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.beatTimestamps, onOrAfter: triggerPosition) else {
+        guard let cutTime = findQuantizedOutgoingDownbeat(timestamps: outgoing.beatGrid.barTimestamps, onOrAfter: triggerPosition, step: 1) else {
             if allowFallback {
                 return try planFilterEchoWash(
                     outgoing: outgoing,
@@ -651,9 +653,10 @@ public struct TransitionPlanner: Sendable {
         let incomingSeekPos: Double
         if isUsableBeatGrid(descriptor: incoming) {
             guard let downbeat = findAlignedIncomingDownbeat(
-                timestamps: incoming.beatGrid.beatTimestamps,
+                timestamps: incoming.beatGrid.barTimestamps,
                 near: incoming.cueMarkers.startTrimCue,
-                duration: incoming.cueMarkers.endTrimCue
+                duration: incoming.cueMarkers.endTrimCue,
+                step: 1
             ) else {
                 if allowFallback {
                     return try planFilterEchoWash(

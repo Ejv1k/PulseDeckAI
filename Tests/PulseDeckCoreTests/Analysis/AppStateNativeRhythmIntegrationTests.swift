@@ -78,12 +78,12 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         _ = await task.value
 
         let analyzed = app.loadedCache?.tracks["01_House/track1.wav"]
-        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
+        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2")
 
         // Changing header selection back to .dsp does NOT relabel or mutate existing track entry
         app.selectedAnalysisMethod = .dsp
         let unmodifiedEntry = app.loadedCache?.tracks["01_House/track1.wav"]
-        XCTAssertEqual(unmodifiedEntry?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
+        XCTAssertEqual(unmodifiedEntry?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2")
     }
 
     // MARK: - 2. Same Source DSP -> Native -> DSP Cache Identity
@@ -108,7 +108,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let modelTask = app.analyzeTrack(relativePath: relPath, method: .nativeModel)
         _ = await modelTask.value
         let modelEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(modelEntry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
+        XCTAssertEqual(modelEntry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2")
         XCTAssertEqual(modelEntry.bpm, 120.0, accuracy: 2.0)
         XCTAssertFalse(modelEntry.beatGrid.beatTimestamps.isEmpty)
 
@@ -176,7 +176,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Verified preserved manual cues
         let updated = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(updated.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
+        XCTAssertEqual(updated.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2")
         XCTAssertEqual(updated.cueMarkers.startTrimCue, 1.25)
         XCTAssertEqual(updated.cueMarkers.vocalEntryCue, 2.50)
         XCTAssertEqual(updated.cueMarkers.mixOutCue, 6.75)

@@ -162,7 +162,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             let shouldPlay = self._isPlaying
             self.stateLock.unlock()
             guard shouldPlay else { return }
-            self.playerNode.playIfEngineRunning()
+            self.playerNode.play()
         }
     }
 
@@ -214,7 +214,7 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             let shouldPlay = self._isPlaying
             self.stateLock.unlock()
             if shouldPlay {
-                self.playerNode.playIfEngineRunning()
+                self.playerNode.play()
             }
         }
     }

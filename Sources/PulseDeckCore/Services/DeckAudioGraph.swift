@@ -389,7 +389,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
                         self.scheduleCueSegment(file: cueFile, startSeconds: tapSeconds)
                     }
                     if isMasterPlaying {
-                        self.cuePlayerNode.playIfEngineRunning()
+                        self.cuePlayerNode.play()
                     }
                 } else {
                     self.cuePlayerNode.pause()
@@ -516,13 +516,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
                 }
                 self.scheduleMasterSegment(file: masterFile, startSeconds: playhead)
             }
-            // A pulled or stopped output must leave the deck stopped, never crash the app.
-            guard self.masterPlayerNode.playIfEngineRunning() else {
-                self.stateLock.lock()
-                self._isMasterPlaying = false
-                self.stateLock.unlock()
-                return
-            }
+            self.masterPlayerNode.play()
 
             if cueActive {
                 if !cueQueued, let cueFile {
@@ -532,7 +526,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
                     }
                     self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
                 }
-                self.cuePlayerNode.playIfEngineRunning()
+                self.cuePlayerNode.play()
             }
         }
     }
@@ -597,14 +591,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             self.masterPlayerNode.stop()
             self.scheduleMasterSegment(file: masterFile, startSeconds: clampedSeconds)
             if wasMasterPlaying {
-                self.masterPlayerNode.playIfEngineRunning()
+                self.masterPlayerNode.play()
             }
 
             self.invalidateSchedule(for: .cue)
             self.cuePlayerNode.stop()
             self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
             if wasMasterPlaying && cueActive {
-                self.cuePlayerNode.playIfEngineRunning()
+                self.cuePlayerNode.play()
             }
         }
     }
@@ -630,7 +624,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             self.cuePlayerNode.stop()
             self.scheduleCueSegment(file: cueFile, startSeconds: clampedSeconds)
             if wasCuePlaying {
-                self.cuePlayerNode.playIfEngineRunning()
+                self.cuePlayerNode.play()
             }
         }
     }
@@ -652,7 +646,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
                 }
                 self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
             }
-            self.cuePlayerNode.playIfEngineRunning()
+            self.cuePlayerNode.play()
         }
     }
 
@@ -894,16 +888,5 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             }
             return try fallbackQueue.sync(execute: block)
         }
-    }
-}
-
-extension AVAudioPlayerNode {
-    /// `play()` on a node whose engine is stopped raises an uncatchable Objective-C exception
-    /// (e.g. right after an output device was unplugged). Returns false instead of crashing.
-    @discardableResult
-    func playIfEngineRunning() -> Bool {
-        guard engine?.isRunning == true else { return false }
-        play()
-        return true
     }
 }

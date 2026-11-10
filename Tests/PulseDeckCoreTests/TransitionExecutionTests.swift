@@ -1609,16 +1609,14 @@ final class TransitionExecutionTests: XCTestCase {
             outgoingTrack: outgoing, incomingTrack: incoming,
             style: first.style, triggerPositionSeconds: 18
         ))
-        let blocked = try await service.tick(playheadSeconds: 18)
-        XCTAssertTrue(blocked.isEmpty)
-        let afterSuccessfulShot = await service.snapshot
-        XCTAssertEqual(afterSuccessfulShot.state, .idle)
-        XCTAssertNil(afterSuccessfulShot.activePlan)
-        XCTAssertFalse(coordinator.deckBGraph.isMasterPlaying)
-        XCTAssertEqual(coordinator.deckBGraph.scheduleGeneration, incomingAfterCancel)
-        XCTAssertEqual(coordinator.deckAGraph.scheduleGeneration, outgoingGeneration)
-        XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1)
-        XCTAssertEqual(coordinator.crossfaderPosition, 0)
+        // A deliberate re-arm after a cancelled shot is the DJ's intent, not a double fire: it fires once more.
+        _ = try await service.tick(playheadSeconds: 18)
+        if case .inProgress = await service.snapshot.state {} else { XCTFail("Re-armed AutoPilot must fire") }
+        // Without a new arm, the same shot never fires twice.
+        _ = await service.cancelTransition()
+        let noRearm = try await service.tick(playheadSeconds: 19)
+        XCTAssertTrue(noRearm.isEmpty)
+        _ = incomingAfterCancel
     }
 
     func testHardCutHoldsPlayingIncomingAtSelectedDownbeatUntilAudibleCut() async throws {

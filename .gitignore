@@ -40,6 +40,7 @@ __pycache__/
 *.MP3
 *.wav
 *.WAV
+!Tests/PulseDeckCoreTests/Resources/*.wav
 *.flac
 *.FLAC
 *.m4a

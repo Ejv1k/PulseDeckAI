@@ -372,6 +372,35 @@ final class TransitionExecutionTests: XCTestCase {
 
     // MARK: - 6. Safe Cancellation & Emergency DSP Recovery
 
+    func testCancellationRestoresIncomingRateAndKeyLock() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let urlA = try createTestWavFile(durationSeconds: 30.0)
+        let urlB = try createTestWavFile(durationSeconds: 30.0)
+        defer {
+            try? FileManager.default.removeItem(at: urlA)
+            try? FileManager.default.removeItem(at: urlB)
+        }
+        try coordinator.deckAGraph.loadTrack(url: urlA)
+        try coordinator.deckBGraph.loadTrack(url: urlB)
+        let original = TimePitchParameters(rate: 1.0, pitchCents: 0, keyLockEnabled: false)
+        coordinator.deckBGraph.timePitchParameters = original
+        coordinator.deckAGraph.play()
+        let request = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 30.0, bpm: 120.0, mixOutCue: 5.0),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 30.0, bpm: 126.0, mixOutCue: 25.0),
+            style: .filterEchoWash(durationSeconds: 8.0, echoSend: 0.8),
+            triggerPositionSeconds: 5.0
+        )
+        _ = try await service.startTransition(request: request)
+        _ = try await service.advance(to: 9.0)
+        XCTAssertNotEqual(coordinator.deckBGraph.timePitchParameters, original, "Plan must retune incoming")
+
+        _ = await service.cancelTransition()
+
+        XCTAssertEqual(coordinator.deckBGraph.timePitchParameters, original)
+    }
+
     func testCancellationRestoresOutgoingUnityVolumeAndClearsFX() async throws {
         let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
         let service = coordinator.transitionExecutionService

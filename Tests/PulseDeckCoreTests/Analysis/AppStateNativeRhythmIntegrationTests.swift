@@ -101,7 +101,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask1 = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask1.value
         let dsp1 = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(dsp1.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(dsp1.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(dsp1.bpm, 120.0, accuracy: 2.0)
 
         // 2. Switch to Native CoreML
@@ -116,7 +116,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask2 = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask2.value
         let dsp2 = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(dsp2.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(dsp2.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
 
     // MARK: - 3. Stale Completion Cancellation Across Method Switch
@@ -141,7 +141,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Final result must be the second request (DSP), not clobbered by stale task1
         let finalEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(finalEntry.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(finalEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(app.activeAnalysisMethod[relPath], .dsp)
     }
 
@@ -200,7 +200,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask.value
         let initialEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(initialEntry.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(initialEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(initialEntry.bpm, 120.0, accuracy: 2.0)
 
         // 2. Overwrite audio file with silent audio (yielding insufficient rhythm)
@@ -219,7 +219,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Cache entry MUST be preserved completely intact, not erased or corrupted
         let preservedEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(preservedEntry.analyzerVersion, "local-dsp-1", "Cache must retain previous valid analysis on failure")
+        XCTAssertEqual(preservedEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion, "Cache must retain previous valid analysis on failure")
         XCTAssertEqual(preservedEntry.bpm, initialEntry.bpm)
     }
 
@@ -278,7 +278,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         _ = await taskB.value
 
         XCTAssertFalse(app.isAnalyzingLibraryTrack)
-        XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
 
     func testSupersededTrackIsMarkedCancelledAndCanBeRequestedAgain() async throws {

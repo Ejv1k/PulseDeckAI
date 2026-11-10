@@ -143,6 +143,8 @@ public struct DeckStudioView: View {
                                 .foregroundColor(DJTheme.cue)
                         }
 
+                        autoGainBadge(deck: deck)
+
                         if isPlaying {
                             // 4 Hz is plenty for a bar count; the playhead is read on demand, not published.
                             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
@@ -256,9 +258,38 @@ public struct DeckStudioView: View {
         })
     }
 
+    @ViewBuilder
+    private func autoGainBadge(deck: DeckIdentifier) -> some View {
+        if appState.isAutoGainEnabled {
+            if appState.isMeasuringLoudness(deck) {
+                Text("Gain…")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundColor(DJTheme.textMuted)
+                    .help("Measuring loudness to level this track")
+            } else if let gain = appState.autoGainDB(deck) {
+                Text(abs(gain) < 0.05 ? "Gain 0 dB" : String(format: "Gain %+.1f dB", gain))
+                    .font(.system(size: 9.5, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundColor(DJTheme.textSecondary)
+                    .help("Auto Gain levels every track to about -14 LUFS without clipping")
+                    .accessibilityIdentifier("deckAutoGain-\(deck.rawValue)")
+            }
+        }
+    }
+
     private func centerMixerStrip() -> some View {
         VStack(spacing: 6) {
             MasterSafetyLockButton(appState: appState)
+
+            Toggle(isOn: $appState.isAutoGainEnabled) {
+                Text("Auto Gain")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(DJTheme.textSecondary)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .help("Level every track to the same loudness (EBU R128), so no song is suddenly louder or quieter")
+            .accessibilityIdentifier("autoGainToggle")
 
             Text("Crossfader")
                 .font(.system(size: 9.5, weight: .semibold))

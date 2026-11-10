@@ -53,6 +53,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private var _talkoverEQGainDB: Float = 0.0
     private var _isCueActive: Bool = false
     private var _eqParameters = EQ3BandParameters()
+    private var _trimGainDB: Float = 0
     private var _filterParameters = ResonantFilterParameters()
     private var _timePitchParameters = TimePitchParameters()
 
@@ -420,6 +421,23 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
 
             applyEQ(clamped, to: masterEQNode)
             applyEQ(clamped, to: cueEQNode)
+        }
+    }
+
+    /// Channel trim (auto gain) in dB, applied on the EQ nodes' global gain so master and cue match.
+    public var trimGainDB: Float {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _trimGainDB
+        }
+        set {
+            let clamped = newValue.isFinite ? min(max(newValue, -24), 12) : 0
+            stateLock.lock()
+            _trimGainDB = clamped
+            stateLock.unlock()
+            masterEQNode.globalGain = clamped
+            cueEQNode.globalGain = clamped
         }
     }
 

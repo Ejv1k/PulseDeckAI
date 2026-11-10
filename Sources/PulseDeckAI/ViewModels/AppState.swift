@@ -72,7 +72,8 @@ public final class AppState: ObservableObject {
     @Published private var deckLoadMessages: [DeckIdentifier: String] = [:]
     @Published private var analysisStatuses: [String: LibraryTrackAnalysisStatus] = [:]
     @Published private(set) var isAnalyzingLibraryTrack = false
-    @Published public var selectedAnalysisMethod: TrackAnalysisMethod = .dsp
+    /// Beat This! is the default: on real tracks it is markedly more accurate than the DSP heuristic.
+    @Published public var selectedAnalysisMethod: TrackAnalysisMethod = .nativeModel
     @Published public private(set) var activeAnalysisMethod: [String: TrackAnalysisMethod] = [:]
     /// Unique identity token of the currently active in-flight analysis request across all tracks and methods.
     private var activeAnalysisToken: UUID? = nil

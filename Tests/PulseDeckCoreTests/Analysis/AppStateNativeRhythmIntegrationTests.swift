@@ -375,3 +375,29 @@ extension AppStateNativeRhythmIntegrationTests {
         XCTAssertEqual(reanalyzed.bpm, saved.bpm, accuracy: 0.001)
     }
 }
+
+extension AppStateNativeRhythmIntegrationTests {
+    func testAnalyzeCrateAnalyzesOnlyMissingTracksInOrder() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        app.selectedAnalysisMethod = .dsp
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+        _ = await app.analyzeTrack(relativePath: "01_House/a.wav", method: .dsp).value
+        let before = try XCTUnwrap(app.loadedCache?.tracks["01_House/a.wav"]?.analysisTimestamp)
+
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 3, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav", "c.wav"])
+        app.analyzeCrate(crate)
+        XCTAssertEqual(app.crateAnalysisProgress?.total, 2, "Only b and c need analysis")
+        await app.crateAnalysisTask?.value
+
+        XCTAssertNil(app.crateAnalysisProgress)
+        XCTAssertNotNil(app.loadedCache?.tracks["01_House/b.wav"])
+        XCTAssertNotNil(app.loadedCache?.tracks["01_House/c.wav"])
+        XCTAssertEqual(app.loadedCache?.tracks["01_House/a.wav"]?.analysisTimestamp, before)
+    }
+}

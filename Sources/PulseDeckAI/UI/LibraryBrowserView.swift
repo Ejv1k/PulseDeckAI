@@ -225,6 +225,31 @@ public struct LibraryBrowserView: View {
                                 .frame(height: 12)
                                 .background(DJTheme.border)
 
+                            if let progress = appState.crateAnalysisProgress {
+                                HStack(spacing: 4) {
+                                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                                        .frame(width: 50)
+                                    Text("\(progress.done)/\(progress.total)")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .monospacedDigit()
+                                        .foregroundColor(DJTheme.textSecondary)
+                                    Button("Stop") { appState.cancelCrateAnalysis() }
+                                        .controlSize(.small)
+                                }
+                            } else {
+                                Button {
+                                    appState.analyzeCrate(selected)
+                                } label: {
+                                    Label("Analyze All", systemImage: "waveform.badge.magnifyingglass")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .foregroundColor(DJTheme.deckA)
+                                }
+                                .buttonStyle(.borderless)
+                                .controlSize(.small)
+                                .disabled(!selected.isReadable || selected.audioFiles.isEmpty || appState.isAnalyzingLibraryTrack)
+                                .help("Analyze every track in this crate that has no current analysis, one at a time")
+                            }
+
                             HStack(spacing: 4) {
                                 Text("Engine:")
                                     .font(.system(size: 9.5, weight: .bold))

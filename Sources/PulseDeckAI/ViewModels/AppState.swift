@@ -28,6 +28,10 @@ public final class AppState: ObservableObject {
                 for task in loudnessTasks.values { task.cancel() }
                 loudnessTasks.removeAll()
                 loudnessRequestIDs.removeAll()
+                for deck in [DeckIdentifier.deckA, .deckB] where isMeasuringLoudness(deck) {
+                    setAutoGain(nil, measuring: false, deck: deck)
+                    applyAutoGain(deck: deck)
+                }
                 for task in deckLoadTasks.values { task.cancel() }
                 deckLoadTasks.removeAll()
                 deckLoadRequestIDs.removeAll()
@@ -848,7 +852,9 @@ public final class AppState: ObservableObject {
         setAutoGain(nil, measuring: true, deck: deck)
         applyAutoGain(deck: deck)
         loudnessTasks[deck] = Task { [weak self] in
-            let measured = await Task.detached(priority: .utility) { try? LoudnessMeter.measure(url: file) }.value
+            let measurement = Task.detached(priority: .utility) { try? LoudnessMeter.measure(url: file) }
+            // A detached task does not inherit cancellation; forward it so a superseded load stops decoding.
+            let measured = await withTaskCancellationHandler { await measurement.value } onCancel: { measurement.cancel() }
             guard let self, !Task.isCancelled, self.loudnessRequestIDs[deck] == request else { return }
             self.loudnessTasks[deck] = nil
             self.loudnessRequestIDs[deck] = nil

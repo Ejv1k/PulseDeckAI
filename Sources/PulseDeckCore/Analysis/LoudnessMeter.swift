@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import Accelerate
 
 /// Integrated loudness per ITU-R BS.1770-4 / EBU R128 (K-weighting, 400 ms blocks with 75 % overlap,
 /// -70 LUFS absolute and -10 LU relative gates), plus the sample peak, for track auto gain.
@@ -19,14 +20,22 @@ public enum LoudnessMeter {
         let format = file.processingFormat
         let rate = format.sampleRate
         let channels = Int(format.channelCount)
-        guard rate.isFinite, rate >= 8_000, (1...32).contains(channels),
+        // shortcut: channels weighted 1.0 (mono/stereo); surround needs BS.1770 weights and LFE exclusion.
+        guard rate.isFinite, rate >= 8_000, (1...2).contains(channels),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { throw Failure.unsupportedFormat }
 
-        var filters = (0..<channels).map { _ in KWeighting(sampleRate: rate) }
+        // Two cascaded biquads (shelf, then RLB high-pass) per channel via Accelerate; state persists across chunks.
+        let k = KWeighting(sampleRate: rate)
+        guard let setup = vDSP_biquad_CreateSetupD(k.vDSPCoefficients, 2) else { throw Failure.unsupportedFormat }
+        defer { vDSP_biquad_DestroySetupD(setup) }
+        var delays = [[Double]](repeating: [Double](repeating: 0, count: 2 * 2 + 2), count: channels)
+        var input = [Double](repeating: 0, count: Int(chunkFrames))
+        var filtered = [[Double]](repeating: [Double](repeating: 0, count: Int(chunkFrames)), count: channels)
+
         let hop = max(1, Int((rate * 0.1).rounded()))      // 100 ms sub-block
-        var subBlockSum = [Double](repeating: 0, count: channels)
+        var subBlockEnergy = 0.0                           // sum over channels of squared samples
         var subBlockFill = 0
-        var recent: [Double] = []                          // last four sub-block energies (sum over channels)
+        var recent: [Double] = []                          // last four sub-block mean squares
         var blocks: [Double] = []                          // 400 ms block mean-square energies
         var peak: Float = 0
 
@@ -36,19 +45,28 @@ public enum LoudnessMeter {
             do { try file.read(into: buffer, frameCount: want) } catch { throw Failure.unreadable(error.localizedDescription) }
             let count = Int(buffer.frameLength)
             guard count > 0, let data = buffer.floatChannelData else { break }
-            for i in 0..<count {
+            for c in 0..<channels {
+                var channelPeak: Float = 0
+                vDSP_maxmgv(data[c], 1, &channelPeak, vDSP_Length(count))
+                peak = max(peak, channelPeak)
+                vDSP_vspdp(data[c], 1, &input, 1, vDSP_Length(count))
+                vDSP_biquadD(setup, &delays[c], input, 1, &filtered[c], 1, vDSP_Length(count))
+            }
+            var index = 0
+            while index < count {
+                let n = min(hop - subBlockFill, count - index)
                 for c in 0..<channels {
-                    let x = data[c][i]
-                    peak = max(peak, abs(x))
-                    let y = filters[c].process(Double(x))
-                    subBlockSum[c] += y * y
+                    var squares = 0.0
+                    filtered[c].withUnsafeBufferPointer { vDSP_svesqD($0.baseAddress! + index, 1, &squares, vDSP_Length(n)) }
+                    subBlockEnergy += squares
                 }
-                subBlockFill += 1
+                subBlockFill += n
+                index += n
                 if subBlockFill == hop {
-                    recent.append(subBlockSum.reduce(0, +) / Double(hop))
+                    recent.append(subBlockEnergy / Double(hop))
                     if recent.count > 4 { recent.removeFirst() }
                     if recent.count == 4 { blocks.append(recent.reduce(0, +) / 4) }
-                    subBlockSum = [Double](repeating: 0, count: channels)
+                    subBlockEnergy = 0
                     subBlockFill = 0
                 }
             }
@@ -96,6 +114,10 @@ public enum LoudnessMeter {
             highPass = Biquad(b0: 1, b1: -2, b2: 1, a1: 2 * (k * k - 1) / a0, a2: (1 - k / q2 + k * k) / a0)
         }
         mutating func process(_ x: Double) -> Double { highPass.process(shelf.process(x)) }
+        /// Both sections as vDSP expects them: [b0, b1, b2, a1, a2] per section.
+        var vDSPCoefficients: [Double] {
+            [shelf.b0, shelf.b1, shelf.b2, shelf.a1, shelf.a2, highPass.b0, highPass.b1, highPass.b2, highPass.a1, highPass.a2]
+        }
     }
 
     struct Biquad {

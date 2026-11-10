@@ -8,6 +8,7 @@ import CoreAudio
 ///   PULSEDECK_HW_PROBE=cue    master on speakers, cue on headphones
 ///   PULSEDECK_HW_PROBE=master master on headphones, cue on speakers
 ///   PULSEDECK_HW_OTHER=<name part> uses that device instead of the Mac speakers
+///   PULSEDECK_HW_PHONES=<name part> uses that device as the headphones (e.g. Bluetooth cans)
 /// Unplug the headphone jack, wait, plug it back in. The probe logs routing for 90 s.
 final class HardwareProbeTests: XCTestCase {
     func testHeadphoneUnplugAndReturn() throws {
@@ -17,7 +18,11 @@ final class HardwareProbeTests: XCTestCase {
         let coordinator = AudioEngineCoordinator()
         let devices = coordinator.enumerateOutputDevices()
         for d in devices { print("PROBE device:", d.name, "|", d.id, "| ch", d.outputChannelCount) }
-        let headphones = try XCTUnwrap(devices.first { $0.name.localizedCaseInsensitiveContains("sluchátka") || $0.name.localizedCaseInsensitiveContains("headphones") })
+        let phonesName = ProcessInfo.processInfo.environment["PULSEDECK_HW_PHONES"]
+        let headphones = try XCTUnwrap(devices.first { d in
+            phonesName.map { d.name.localizedCaseInsensitiveContains($0) }
+                ?? (d.name.localizedCaseInsensitiveContains("sluchátka") || d.name.localizedCaseInsensitiveContains("headphones"))
+        })
         // PULSEDECK_HW_OTHER=<name part> picks the second device (e.g. a Bluetooth speaker); default: Mac speakers.
         let otherName = ProcessInfo.processInfo.environment["PULSEDECK_HW_OTHER"]
         let speakers = try XCTUnwrap(devices.first { d in
@@ -110,5 +115,78 @@ final class HardwareProbeTests: XCTestCase {
         coordinator.stop()
         deck.play()
         print("PROBE play() on stopped engine: no crash")
+    }
+
+    /// Issue #60: does an engine bound to one device follow macOS when the *default* output changes?
+    /// PULSEDECK_HW_PROBE=default switches the default output programmatically (no cable needed) and restores it.
+    func testEngineStaysOnBoundDeviceWhenDefaultOutputChanges() throws {
+        guard ProcessInfo.processInfo.environment["PULSEDECK_HW_PROBE"] == "default" else {
+            throw XCTSkip("Set PULSEDECK_HW_PROBE=default to run on real hardware")
+        }
+        let hal = SystemAudioHardware.shared
+        let coordinator = AudioEngineCoordinator()
+        let devices = coordinator.enumerateOutputDevices()
+        let phonesName = ProcessInfo.processInfo.environment["PULSEDECK_HW_PHONES"]
+        let headphones = try XCTUnwrap(devices.first { d in
+            phonesName.map { d.name.localizedCaseInsensitiveContains($0) }
+                ?? (d.name.localizedCaseInsensitiveContains("sluchátka") || d.name.localizedCaseInsensitiveContains("headphones"))
+        })
+        let speakers = try XCTUnwrap(devices.first { $0.name.localizedCaseInsensitiveContains("reproduktory") || $0.name.localizedCaseInsensitiveContains("speakers") })
+        let headphonesID = try XCTUnwrap(CoreAudioOutputDevices.deviceID(forUID: headphones.id, using: hal))
+        let speakersID = try XCTUnwrap(CoreAudioOutputDevices.deviceID(forUID: speakers.id, using: hal))
+        let originalDefault = try XCTUnwrap(hal.getDefaultOutputDeviceID())
+        func setDefault(_ id: AudioDeviceID) {
+            var value = id
+            var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                     mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            let status = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
+                                                    UInt32(MemoryLayout<AudioDeviceID>.size), &value)
+            print("PROBE set default -> \(id == speakersID ? "speakers" : "headphones") status=\(status)")
+        }
+        defer { setDefault(originalDefault) }
+        func unitDevice(_ engine: AVAudioEngine) -> String {
+            guard let unit = engine.outputNode.audioUnit else { return "?" }
+            var id = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size) == noErr else { return "err" }
+            return id == speakersID ? "speakers" : id == headphonesID ? "headphones" : "id\(id)"
+        }
+
+        let tone = FileManager.default.temporaryDirectory.appendingPathComponent("probe-default-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: tone) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        do {
+            let file = try AVAudioFile(forWriting: tone, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100 * 20))
+            buffer.frameLength = buffer.frameCapacity
+            let data = try XCTUnwrap(buffer.floatChannelData)
+            for i in 0..<Int(buffer.frameLength) {
+                let s: Float = (i / 11025) % 2 == 0 ? Float(sin(Double(i) * 2 * .pi * 440 / 44100) * 0.03) : 0
+                data[0][i] = s; data[1][i] = s
+            }
+            try file.write(from: buffer)
+        }
+
+        setDefault(headphonesID)
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        try coordinator.setOutputDevice(role: .master, uid: speakers.id)
+        try coordinator.setOutputDevice(role: .cue, uid: headphones.id)
+        _ = try coordinator.start(requireCue: false)
+        defer { coordinator.stop() }
+        try coordinator.deckAGraph.loadTrack(url: tone)
+        coordinator.deckAGraph.volume = 1
+        coordinator.setCrossfader(position: 0)
+        coordinator.deckAGraph.play()
+        let master = coordinator.masterAudioEngine.rawEngine, cue = coordinator.cueAudioEngine.rawEngine
+        func log(_ label: String) {
+            print("PROBE \(label): master UNIT=\(unitDevice(master)) bound=\(coordinator.boundDevice(for: .master)?.name ?? "NONE") running=\(master.isRunning) | cue UNIT=\(unitDevice(cue)) running=\(cue.isRunning)")
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5)); log("start")
+        setDefault(speakersID)
+        RunLoop.current.run(until: Date().addingTimeInterval(2)); log("default=speakers")
+        setDefault(headphonesID)
+        RunLoop.current.run(until: Date().addingTimeInterval(2)); log("default=headphones")
+        XCTAssertEqual(unitDevice(master), "speakers", "Master must stay on its bound device when the default output changes")
+        XCTAssertEqual(unitDevice(cue), "headphones")
     }
 }

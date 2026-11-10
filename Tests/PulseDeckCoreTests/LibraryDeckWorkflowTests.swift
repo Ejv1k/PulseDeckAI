@@ -214,6 +214,24 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(Double(f.audio.deckAGraph.trimGainDB), gain, accuracy: 1e-4)
     }
 
+    func testTrimRampsWhileAudibleAndJumpsWhenSilent() async throws {
+        let f = try Fixture(duration: 3); defer { f.cleanup() }
+        let graph = f.audio.deckAGraph
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        await f.app.waitForPendingLoudness(deck: .deckA) // Its result would retarget the trim mid-test.
+        graph.rampTrimGain(to: -6, duration: 0.3)
+        XCTAssertEqual(graph.trimGainDB, -6, "A silent deck takes the new trim at once")
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        graph.rampTrimGain(to: 3, duration: 0.3)
+        XCTAssertEqual(graph.trimGainDB, -6, accuracy: 0.5, "An audible deck must not jump")
+        for _ in 0..<100 where graph.trimGainDB != 3 { try await Task.sleep(nanoseconds: 20_000_000) } // ≤ 2 s
+        XCTAssertEqual(graph.trimGainDB, 3, accuracy: 1e-4)
+        XCTAssertEqual(graph.masterEQNode.globalGain, 3, accuracy: 1e-4)
+        graph.trimGainDB = 0 // A direct set cancels any ramp still in flight.
+        XCTAssertEqual(graph.trimGainDB, 0)
+    }
+
     func testActualLoadButtonWithoutSelectionShowsReason() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)

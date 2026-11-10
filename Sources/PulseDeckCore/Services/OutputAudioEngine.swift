@@ -17,6 +17,9 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
     public let role: AudioEngineRole
     public let rawEngine: AVAudioEngine
     public let subMixer: AVAudioMixerNode
+    /// Apple peak limiter at the end of the chain: EQ boosts, auto gain and two summed decks cannot clip
+    /// the output; signal under full scale passes untouched.
+    public let limiterNode: AVAudioUnitEffect
     public let delayNode: AVAudioUnitDelay
 
     private let hal: AudioHardwareInterface
@@ -50,6 +53,9 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
         self.rawEngine = AVAudioEngine()
         self.subMixer = AVAudioMixerNode()
         self.delayNode = AVAudioUnitDelay()
+        self.limiterNode = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+            componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
 
         setupGraph()
     }
@@ -58,6 +64,7 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
         // Output-only: attach nodes exclusively to the output tree.
         rawEngine.attach(subMixer)
         rawEngine.attach(delayNode)
+        rawEngine.attach(limiterNode)
 
         // Initialize delay node with neutral bypassed settings.
         delayNode.bypass = true
@@ -66,9 +73,10 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
         delayNode.feedback = 0.0
         delayNode.lowPassCutoff = 20000.0
 
-        // Connect subMixer -> delayNode -> mainMixerNode.
+        // Connect subMixer -> delayNode -> limiterNode -> mainMixerNode.
         rawEngine.connect(subMixer, to: delayNode, format: nil)
-        rawEngine.connect(delayNode, to: rawEngine.mainMixerNode, format: nil)
+        rawEngine.connect(delayNode, to: limiterNode, format: nil)
+        rawEngine.connect(limiterNode, to: rawEngine.mainMixerNode, format: nil)
     }
 
     // MARK: - AudioEngineContract Properties
@@ -185,6 +193,7 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
             self.rawEngine.stop()
             self.delayNode.reset()
             self.subMixer.reset()
+            self.limiterNode.reset() // Drop lookahead audio so a restart does not replay a stale tail.
             self.monitor?.setIntendedRunningState(for: self.rawEngine, running: false)
         }
     }

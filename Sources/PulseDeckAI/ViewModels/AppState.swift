@@ -809,6 +809,13 @@ public final class AppState: ObservableObject {
 
     func analysisStatus(for path: String) -> LibraryTrackAnalysisStatus? { analysisStatuses[path] }
 
+    /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.
+    func deckPlayheadSeconds(_ deck: DeckIdentifier) -> Double? {
+        let graph = deck == .deckA ? audioCoordinator?.deckAGraph : audioCoordinator?.deckBGraph
+        guard let graph, graph.loadedTrackURL != nil else { return nil }
+        return graph.currentMasterPlayheadSeconds()
+    }
+
     /// One bounded local analysis at a time; cache writes share the editor's persistence queue.
     /// Captures the requested analysis method (or selectedAnalysisMethod default) into the request identity.
     /// Cancels any existing in-flight task when a different method or re-analysis is requested.

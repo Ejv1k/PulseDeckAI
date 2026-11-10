@@ -50,3 +50,15 @@ extension PhraseAlignedCuesTests {
         XCTAssertGreaterThan(cues.vocal, cues.start)
     }
 }
+
+extension PhraseAlignedCuesTests {
+    func testStoredBeatGridStartsOnFirstDownbeat() {
+        // Two pickup beats before the first bar line at 1.0 s.
+        let beats = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.downbeatAlignedBeats(beats: beats, downbeats: [1.0, 3.0]),
+                       [1.0, 1.5, 2.0, 2.5, 3.0])
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.downbeatAlignedBeats(beats: beats, downbeats: []), beats)
+        // A downbeat at the very end would leave too few beats: keep the full grid.
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.downbeatAlignedBeats(beats: beats, downbeats: [3.0]), beats)
+    }
+}

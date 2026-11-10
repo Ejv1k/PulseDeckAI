@@ -5,7 +5,14 @@ import UniformTypeIdentifiers
 public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
     @FocusState private var isAuditionFocused: Bool
-    @State private var sortByMatch = false
+    @State private var order: LibraryOrder = .folder
+
+    /// How the crate's track list is ordered; only changes the view, never the files.
+    enum LibraryOrder: String, CaseIterable {
+        case folder = "Folder"
+        case bestMatch = "Best match"
+        case setFlow = "Set flow"
+    }
 
     public init(appState: AppState) {
         self.appState = appState
@@ -211,19 +218,13 @@ public struct LibraryBrowserView: View {
                                     .foregroundColor(DJTheme.textMuted)
                             }
 
-                            if appState.referenceTrack != nil {
-                                Toggle(isOn: $sortByMatch) {
-                                    Label("Best match", systemImage: "arrow.up.arrow.down")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                }
-                                .toggleStyle(.button)
-                                .controlSize(.small)
-                                .help("Order this crate by key and tempo fit with the reference deck")
-                            }
+                            orderPicker
 
                             Divider()
                                 .frame(height: 12)
                                 .background(DJTheme.border)
+
+                            analyzeAllControl(for: selected)
 
                             HStack(spacing: 4) {
                                 Text("Engine:")
@@ -720,10 +721,59 @@ public struct LibraryBrowserView: View {
         return .ignored
     }
 
+    // Split out of `body` so the type checker stays within its time limit on slower CI machines.
+    private var orderPicker: some View {
+            Picker("Order", selection: $order) {
+                ForEach(LibraryOrder.allCases, id: \.self) { option in
+                    Text(option.rawValue)
+                        .tag(option)
+                        .disabled(option == .bestMatch && appState.referenceTrack == nil)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("Folder order, best match with the reference deck, or a warm-up → peak → cool-down set")
+    }
+
+    @ViewBuilder
+    private func analyzeAllControl(for selected: LibraryCrateInfo) -> some View {
+            if let progress = appState.crateAnalysisProgress {
+                HStack(spacing: 4) {
+                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                        .frame(width: 50)
+                    Text("\(progress.done)/\(progress.total)")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundColor(DJTheme.textSecondary)
+                    Button("Stop") { appState.cancelCrateAnalysis() }
+                        .controlSize(.small)
+                }
+            } else {
+                Button {
+                    appState.analyzeCrate(selected)
+                } label: {
+                    Label("Analyze All", systemImage: "waveform.badge.magnifyingglass")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(DJTheme.deckA)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!selected.isReadable || selected.audioFiles.isEmpty || appState.isAnalyzingLibraryTrack)
+                .help("Analyze every track in this crate that has no current analysis, one at a time")
+            }
+    }
+
     /// Crate files, optionally ordered best match first against the reference deck.
     /// Unanalyzed tracks and the reference track itself go last; ties keep folder order.
     private func orderedFiles(_ crate: LibraryCrateInfo) -> [String] {
-        guard sortByMatch, let reference = appState.referenceTrack else { return crate.audioFiles }
+        if order == .setFlow {
+            let entries = crate.audioFiles.compactMap { appState.loadedCache?.tracks["\(crate.folderName)/\($0)"] }
+            let planned = SetPlanner.order(entries).map { ($0.relativePath as NSString).lastPathComponent }
+            return planned + crate.audioFiles.filter { !planned.contains($0) }
+        }
+        guard order == .bestMatch, let reference = appState.referenceTrack else { return crate.audioFiles }
         func score(_ file: String) -> Double {
             let path = "\(crate.folderName)/\(file)"
             guard path != reference.relativePath,

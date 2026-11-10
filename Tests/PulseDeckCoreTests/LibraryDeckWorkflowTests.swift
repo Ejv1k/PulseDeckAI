@@ -195,6 +195,25 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertGreaterThan(try f.peak(), 0.1, "Play after the restart must not be silent")
     }
 
+    func testAutoGainLevelsALoadedTrackAndCanBeSwitchedOff() async throws {
+        let f = try Fixture(duration: 2); defer { f.cleanup(); f.app.isAutoGainEnabled = true }
+        f.app.isAutoGainEnabled = true
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        XCTAssertTrue(f.app.isMeasuringLoudness(.deckA))
+        await f.app.waitForPendingLoudness(deck: .deckA)
+        // Fixture: a 0.2-amplitude ~421 Hz sine on both channels = -0.691 + 10 log10(2 x 0.02) ≈ -14.7 LUFS.
+        let gain = try XCTUnwrap(f.app.autoGainDB(.deckA))
+        XCTAssertEqual(gain, 0.67, accuracy: 0.2)
+        XCTAssertFalse(f.app.isMeasuringLoudness(.deckA))
+        XCTAssertEqual(Double(f.audio.deckAGraph.trimGainDB), gain, accuracy: 1e-4)
+        XCTAssertEqual(Double(f.audio.deckAGraph.masterEQNode.globalGain), gain, accuracy: 1e-4)
+        XCTAssertEqual(Double(f.audio.deckAGraph.cueEQNode.globalGain), gain, accuracy: 1e-4, "Headphones are levelled too")
+        f.app.isAutoGainEnabled = false
+        XCTAssertEqual(f.audio.deckAGraph.trimGainDB, 0)
+        f.app.isAutoGainEnabled = true
+        XCTAssertEqual(Double(f.audio.deckAGraph.trimGainDB), gain, accuracy: 1e-4)
+    }
+
     func testActualLoadButtonWithoutSelectionShowsReason() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)

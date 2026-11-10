@@ -75,13 +75,22 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         return NSScreen.main ?? screens.first
     }
 
+    /// A 16:9 window at half the available width, centered, for single-display setups.
+    static func windowedFrame(in visible: NSRect) -> NSRect {
+        let width = (visible.width / 2).rounded()
+        let height = min((width * 9 / 16).rounded(), visible.height)
+        return NSRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height)
+    }
+
     // MARK: - Window Lifecycle
 
     /// Opens or brings the projector window to the front on the designated display.
     public func showProjectorWindow(appState: AppState) {
         guard let viewModel else { return }
 
-        if let existing = window, existing.isVisible {
+        // A minimized projector is still ours; bring it back instead of opening a second window.
+        if let existing = window {
+            if existing.isMiniaturized { existing.deminiaturize(nil) }
             existing.orderFront(nil)
             viewModel.isWindowOpen = true
             return
@@ -90,7 +99,8 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         let targetScreen = Self.selectPresentationScreen()
         let initialFrame: NSRect
         if let screen = targetScreen {
-            initialFrame = screen.frame
+            // A lone display is shared with the studio, so open a window instead of covering it.
+            initialFrame = NSScreen.screens.count > 1 ? screen.frame : Self.windowedFrame(in: screen.visibleFrame)
         } else {
             initialFrame = NSRect(x: 100, y: 100, width: 1280, height: 720)
         }

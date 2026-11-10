@@ -389,6 +389,8 @@ public actor TransitionExecutionService {
         let recoveryCommands = sm.cancel()
         stateMachine = sm
         state = .cancelled
+        automationGate.setActive(true) // Keep manual EQ out until the recovery commands below have run.
+        defer { automationGate.setActive(false) }
 
         let plan = activePlan
         activePlan = nil

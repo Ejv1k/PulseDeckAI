@@ -76,6 +76,8 @@ public final class AppState: ObservableObject {
     @Published public private(set) var activeAnalysisMethod: [String: TrackAnalysisMethod] = [:]
     /// Unique identity token of the currently active in-flight analysis request across all tracks and methods.
     private var activeAnalysisToken: UUID? = nil
+    /// Track path of the in-flight analysis; `activeAnalysisMethod` keeps history per path, this is only the live one.
+    private var activeAnalysisPath: String? = nil
     private var analysisTask: Task<Void, Never>?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
@@ -814,16 +816,21 @@ public final class AppState: ObservableObject {
         guard resolvedLibraryRootURL != nil else { return Task {} }
         let methodToUse = method ?? selectedAnalysisMethod
         if let existing = analysisTask {
-            if isAnalyzingLibraryTrack && activeAnalysisMethod[relativePath] == methodToUse {
+            if isAnalyzingLibraryTrack && activeAnalysisPath == relativePath && activeAnalysisMethod[relativePath] == methodToUse {
                 return existing
             }
             existing.cancel()
+            // The cancelled task exits through its token guard without touching statuses, so settle it here.
+            if let previous = activeAnalysisPath, previous != relativePath, analysisStatuses[previous] == .running {
+                analysisStatuses[previous] = .failed("Analysis cancelled.")
+            }
         }
         let root = libraryRootURL
         let selectedRevision = waveformEditorModel.interactionRevision
         let token = UUID()
         activeAnalysisToken = token
         activeAnalysisMethod[relativePath] = methodToUse
+        activeAnalysisPath = relativePath
         isAnalyzingLibraryTrack = true
         analysisStatuses[relativePath] = .running
 
@@ -840,6 +847,7 @@ public final class AppState: ObservableObject {
             defer {
                 if let self, self.activeAnalysisToken == token {
                     self.activeAnalysisToken = nil
+                    self.activeAnalysisPath = nil
                     self.analysisTask = nil
                     self.isAnalyzingLibraryTrack = false
                 }
@@ -847,16 +855,22 @@ public final class AppState: ObservableObject {
             do {
                 let url = try LibraryTrackSource.url(relativePath: relativePath, root: root)
                 let fingerprint = try LibraryTrackSource.fingerprint(at: url)
-                let entry: TrackCacheEntry
+                // Detached work does not inherit cancellation; forward it so a superseded run stops early.
+                let work: Task<TrackCacheEntry, Error>
                 switch methodToUse {
                 case .dsp:
-                    entry = try await Task.detached(priority: .utility) {
+                    work = Task.detached(priority: .utility) {
                         try LocalTrackAnalyzer().analyze(url: url, libraryRoot: root)
-                    }.value
+                    }
                 case .nativeModel:
-                    entry = try await Task.detached(priority: .utility) {
+                    work = Task.detached(priority: .utility) {
                         try await NativeRhythmTrackAnalyzer().analyze(url: url, libraryRoot: root)
-                    }.value
+                    }
+                }
+                let entry = try await withTaskCancellationHandler {
+                    try await work.value
+                } onCancel: {
+                    work.cancel()
                 }
                 try Task.checkCancellation()
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }

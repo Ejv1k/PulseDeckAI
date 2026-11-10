@@ -11,7 +11,8 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
     public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32"
 
     private let waveformBinLimit = 4_096
-    private let maximumDuration = 6 * 60 * 60.0
+    // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
+    private let maximumDuration = 30 * 60.0
     private let chunkFrames: AVAudioFrameCount = 8_192
 
     public init() {}
@@ -175,7 +176,12 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             throw NativeRhythmAnalysisError.insufficientBeats("Calculated interval is non-finite or non-positive.")
         }
 
-        let rawBPM = 60.0 / medianInterval
+        // The model works on 20 ms frames, so a single interval is quantized; averaging the regular
+        // intervals around the median restores sub-frame tempo precision (e.g. 123 BPM instead of 125).
+        let regularIntervals = validIntervals.filter { abs($0 - medianInterval) <= 0.05 * medianInterval }
+        let beatInterval = regularIntervals.isEmpty ? medianInterval : regularIntervals.reduce(0, +) / Double(regularIntervals.count)
+
+        let rawBPM = 60.0 / beatInterval
         let bpm = (rawBPM * 10.0).rounded() / 10.0
         guard bpm >= 50.0 && bpm <= 220.0 else {
             throw NativeRhythmAnalysisError.insufficientBeats("Derived tempo \(bpm) BPM is outside valid 50-220 range.")
@@ -185,7 +191,7 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         // Floor 0.10 is not a minimum probability guarantee. Bounded strictly in [0.10, 0.85].
         let totalIntervalCount = max(1, beats.count - 1)
         let coverage = Double(validIntervals.count) / Double(totalIntervalCount)
-        let regularCount = validIntervals.filter { abs($0 - medianInterval) <= 0.05 * medianInterval }.count
+        let regularCount = regularIntervals.count
         let regularity = Double(regularCount) / Double(validIntervals.count)
         let rawScore = regularity * coverage * 0.85
         let confidence = min(0.85, max(0.10, rawScore))
@@ -193,7 +199,7 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let firstBeatOffset = beats.first ?? 0.0
         let beatGrid = BeatGrid(
             firstBeatOffsetSeconds: firstBeatOffset,
-            beatIntervalSeconds: medianInterval,
+            beatIntervalSeconds: beatInterval,
             beatTimestamps: beats
         )
 

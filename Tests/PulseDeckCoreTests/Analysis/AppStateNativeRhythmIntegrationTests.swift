@@ -281,6 +281,33 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, "local-dsp-1")
     }
 
+    func testSupersededTrackIsMarkedCancelledAndCanBeRequestedAgain() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+
+        try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent("trackA.wav"), durationSeconds: 6.0, bpm: 120.0)
+        try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent("trackB.wav"), durationSeconds: 6.0, bpm: 120.0)
+        let relA = "01_House/trackA.wav"
+        let relB = "01_House/trackB.wav"
+
+        let taskA1 = app.analyzeTrack(relativePath: relA, method: .nativeModel)
+        let taskB = app.analyzeTrack(relativePath: relB, method: .dsp)
+        // A was superseded: it must not stay "running" forever.
+        XCTAssertEqual(app.analysisStatus(for: relA), .failed("Analysis cancelled."))
+
+        // Re-requesting A must start A, not hand back B's in-flight task.
+        let taskA2 = app.analyzeTrack(relativePath: relA, method: .nativeModel)
+        XCTAssertNotEqual(taskA2, taskB)
+        XCTAssertEqual(app.analysisStatus(for: relA), .running)
+
+        _ = await taskA1.value
+        _ = await taskB.value
+        _ = await taskA2.value
+        XCTAssertEqual(app.analysisStatus(for: relA), .complete)
+        XCTAssertFalse(app.isAnalyzingLibraryTrack)
+    }
+
     // MARK: - 8. Manual Cue Merge Across Analysis Baseline
 
     func testManualCueSaveWhileAnalysisHeldOnDiskMergesAndRemainsLatest() async throws {

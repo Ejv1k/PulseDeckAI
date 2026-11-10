@@ -190,8 +190,15 @@ public actor ModelRhythmService {
                 throw ModelRhythmServiceError.modelExecutionFailed("Output features missing from model prediction")
             }
 
+            guard beatArray.dataType == .float32, downbeatArray.dataType == .float32,
+                  beatArray.count >= chunkSize, downbeatArray.count >= chunkSize else {
+                throw ModelRhythmServiceError.modelExecutionFailed("Unexpected model output layout")
+            }
             let beatPtr = beatArray.dataPointer.bindMemory(to: Float.self, capacity: chunkSize)
             let downbeatPtr = downbeatArray.dataPointer.bindMemory(to: Float.self, capacity: chunkSize)
+            for i in 0..<chunkSize where !beatPtr[i].isFinite || !downbeatPtr[i].isFinite {
+                throw ModelRhythmServiceError.modelExecutionFailed("Non-finite logits at frame \(start + i)")
+            }
 
             // Discard border_size on both ends
             let sliceStart = borderSize
@@ -264,7 +271,7 @@ public actor ModelRhythmService {
 
     /// Snaps each downbeat timestamp to the nearest beat timestamp, returning unique sorted timestamps.
     public static func snapDownbeats(downbeats: [Double], beats: [Double]) -> [Double] {
-        guard !beats.isEmpty else { return downbeats }
+        guard !beats.isEmpty else { return [] }
         var snapped: [Double] = []
         for db in downbeats {
             var closest = beats[0]

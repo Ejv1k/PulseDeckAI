@@ -526,9 +526,11 @@ final class OutputRoutingStudioTests: XCTestCase {
         // Cue engine should now indicate fallback because desired device is missing
         XCTAssertTrue(coordinator.isFallbackActive(for: .cue))
         XCTAssertTrue(appState.isCueFallback)
-        // Must publish the actual fallback device UID, not the stale removed device
-        XCTAssertEqual(appState.cueOutputUID, "builtin_speakers_uid")
-        XCTAssertEqual(appState.cueDeviceDescriptor?.id, "builtin_speakers_uid")
+        // Must publish the actual fallback device UID, not the stale removed device. The cue had its own
+        // device, so it must not fall back onto the master's speakers (previews would reach the PA).
+        XCTAssertNotEqual(appState.cueOutputUID, appState.masterOutputUID)
+        XCTAssertEqual(appState.cueOutputUID, "bluetooth_headphones_uid")
+        XCTAssertEqual(appState.cueDeviceDescriptor?.id, "bluetooth_headphones_uid")
     }
 
     @MainActor

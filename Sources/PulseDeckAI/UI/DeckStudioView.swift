@@ -137,7 +137,7 @@ public struct DeckStudioView: View {
                                 .foregroundColor(color)
                         }
 
-                        if !track.musicalKey.isEmpty, track.musicalKey != "Unknown" {
+                        if !track.musicalKey.isEmpty, track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
                             Text(track.musicalKey)
                                 .font(.system(size: 9.5, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)

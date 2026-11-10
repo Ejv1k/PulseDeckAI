@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import AppKit
 import PulseDeckCore
 
 public enum TransitionMacroStyle: String, CaseIterable, Hashable, Identifiable, Sendable {
@@ -919,6 +920,10 @@ public final class AppState: ObservableObject {
         // Success needs no banner: the deck shows the title. Only failures and pending work speak up.
         deckLoadMessages[deck] = nil
         statusMessage = "\(deck.rawValue): loaded \(relativePath)"
+        // The deck no longer prints a success banner, so VoiceOver gets the confirmation explicitly.
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+            .announcement: "\(deck.rawValue) loaded \(LibraryTrackTitle.display((relativePath as NSString).lastPathComponent))",
+            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
         if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
             validateSHAAnalysis(cached, file: file, identity: load.identity, deck: deck)
         }

@@ -239,6 +239,10 @@ public final class AppState: ObservableObject {
         return false
     }
 
+    static func cueUnavailableMessage(_ error: Error) -> String {
+        "Headphone cue unavailable; master output is running: \(error.localizedDescription)"
+    }
+
     public init() {
         let coordinator = AudioEngineCoordinator()
         self.audioCoordinator = coordinator
@@ -250,7 +254,9 @@ public final class AppState: ObservableObject {
             meteringErrorMessage = "Audio meters unavailable: \(error)"
         }
         do {
-            try coordinator.start()
+            if let cueError = try coordinator.start(requireCue: false) {
+                coordinatorErrorMessage = Self.cueUnavailableMessage(cueError)
+            }
         } catch {
             coordinatorErrorMessage = "Audio engine startup failed: \(error.localizedDescription)"
             statusMessage = "Audio Startup Error: \(error.localizedDescription)"
@@ -313,7 +319,9 @@ public final class AppState: ObservableObject {
         }
         if startCoordinator, let coordinator = self.audioCoordinator {
             do {
-                try coordinator.start()
+                if let cueError = try coordinator.start(requireCue: false) {
+                    self.coordinatorErrorMessage = Self.cueUnavailableMessage(cueError)
+                }
             } catch {
                 self.coordinatorErrorMessage = "Audio engine startup failed: \(error.localizedDescription)"
                 self.statusMessage = "Audio Startup Error: \(error.localizedDescription)"
@@ -1001,7 +1009,13 @@ public final class AppState: ObservableObject {
         // Start coordinator on-demand if stopped; do not publish true against stopped engine
         if !coordinator.masterAudioEngine.isRunning {
             do {
-                try coordinator.start()
+                if let cueError = try coordinator.start(requireCue: false) {
+                    self.coordinatorErrorMessage = Self.cueUnavailableMessage(cueError)
+                    // Master is up, so an earlier start error in the status line is stale.
+                    if statusMessage.hasPrefix("Audio Start Error:") || statusMessage.hasPrefix("Audio Startup Error:") {
+                        statusMessage = "Audio engines running"
+                    }
+                }
             } catch {
                 self.coordinatorErrorMessage = "Failed to start audio engine: \(error.localizedDescription)"
                 self.statusMessage = "Audio Start Error: \(error.localizedDescription)"

@@ -62,8 +62,8 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let editor = WaveformEditorModel(libraryRootURL: fixture.root)
         let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
 
-        // Default method is DSP
-        XCTAssertEqual(app.selectedAnalysisMethod, .dsp)
+        // Default method is the native model
+        XCTAssertEqual(app.selectedAnalysisMethod, .nativeModel)
 
         // Switching header method does NOT alter any track provenance
         app.selectedAnalysisMethod = .nativeModel

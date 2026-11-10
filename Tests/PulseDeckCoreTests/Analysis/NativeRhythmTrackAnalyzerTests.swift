@@ -76,7 +76,7 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
         let entry = try await analyzer.analyze(url: trackURL, libraryRoot: fixture.root)
 
         // 1. Provenance: explicit fixed-1500 model adaptation
-        XCTAssertEqual(entry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(entry.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
         XCTAssertEqual(entry.relativePath, "01_House/clicks120.wav")
         XCTAssertEqual(entry.musicalKey, "Unknown")
         XCTAssertTrue(entry.structure.sections.isEmpty)
@@ -163,7 +163,7 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
 
         // Verify Swift loader
         let loaded = try XCTUnwrap(CachePersistence.load(from: cacheURL))
-        XCTAssertEqual(loaded.tracks["01_House/clicks120.wav"]?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(loaded.tracks["01_House/clicks120.wav"]?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
 
         // Verify Python loader & validator
         let pythonProcess = Process()
@@ -177,7 +177,7 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
             cache = PulseDeckLibraryCache.load('\(cacheURL.path)')
             cache.validate()
             entry = cache.tracks['01_House/clicks120.wav']
-            assert entry.analyzerVersion == 'model-beatthis-small0-fixed1500-fp32-phrase1-key1', f'Wrong analyzerVersion: {entry.analyzerVersion}'
+            assert entry.analyzerVersion == 'model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1', f'Wrong analyzerVersion: {entry.analyzerVersion}'
             assert entry.bpm > 0, 'BPM must be positive'
             print('Python validation verified successfully')
             """
@@ -216,7 +216,7 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
 
         // Provenance must reflect Native Model
         let analyzed = appState.loadedCache?.tracks["01_House/clicks120.wav"]
-        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1")
+        XCTAssertEqual(analyzed?.analyzerVersion, "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1")
 
         // 4. Switch track explicitly back to DSP
         let dspTask = appState.analyzeTrack(relativePath: "01_House/clicks120.wav", method: .dsp)

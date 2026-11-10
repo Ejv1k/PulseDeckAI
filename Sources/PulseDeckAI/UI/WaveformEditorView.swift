@@ -181,6 +181,16 @@ public struct WaveformEditorView: View {
                                 .monospacedDigit()
                                 .foregroundColor(DJTheme.deckA)
 
+                            // Octave fix for half/double-time reads; saved as a manual override.
+                            ForEach([(0.5, "×½"), (2.0, "×2")], id: \.0) { factor, label in
+                                Button(label) { model.scaleBPM(by: factor) }
+                                    .buttonStyle(.borderless)
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundColor(DJTheme.textSecondary)
+                                    .help(factor < 1 ? "Halve tempo (track was read at double time)" : "Double tempo (track was read at half time)")
+                                    .accessibilityLabel(factor < 1 ? "Halve BPM" : "Double BPM")
+                            }
+
                             Text("Key: \(track.musicalKey)")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)

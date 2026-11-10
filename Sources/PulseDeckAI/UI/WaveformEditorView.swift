@@ -113,6 +113,10 @@ public struct WaveformEditorView: View {
             // Header Bar
             headerToolbar
 
+            // Nothing selected: the header alone says so; don't spend 100+ pt on an empty canvas.
+            if selectedTrackPath == nil && model.currentTrack == nil {
+                EmptyView()
+            } else {
             // Main Waveform Canvas & Cue Handles
             waveformContainer
                 .frame(height: isDetailedEditorExpanded ? 160 : 64)
@@ -132,6 +136,7 @@ public struct WaveformEditorView: View {
             } else {
                 // Compact Cue Strip with expand button
                 compactCueBar
+            }
             }
         }
         .padding(8)
@@ -160,7 +165,7 @@ public struct WaveformEditorView: View {
 
                 if let track = model.currentTrack {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(track.relativePath)
+                        Text(LibraryTrackTitle.display((track.relativePath as NSString).lastPathComponent))
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(DJTheme.textPrimary)
                             .lineLimit(1)

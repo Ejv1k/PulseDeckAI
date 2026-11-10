@@ -17,9 +17,6 @@ public struct ContentView: View {
                 // Master & Cue Hardware Output Device Binding
                 OutputRoutingView(appState: appState)
 
-                // Output Level Metering
-                AudioMeterStatusView(appState: appState)
-
                 // Dual-Deck Performance Studio (Deck A, Center Mixer, Deck B)
                 DeckStudioView(appState: appState)
 
@@ -32,7 +29,7 @@ public struct ContentView: View {
 
                 // DJ Crates Sidebar & Track Browser
                 LibraryBrowserView(appState: appState)
-                    .frame(minHeight: 240, idealHeight: 280)
+                    .frame(minHeight: 300, idealHeight: 380)
 
             }
             .padding(.horizontal, 10)

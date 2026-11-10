@@ -50,7 +50,7 @@ public struct LibraryBrowserView: View {
                                         }
 
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text(crate.displayName)
+                                            Text(crate.title)
                                                 .font(.system(size: 11, weight: .semibold))
                                                 .foregroundColor(appState.selectedCrate?.id == crate.id ? DJTheme.textPrimary : DJTheme.textSecondary)
                                                 .lineLimit(2)
@@ -140,7 +140,7 @@ public struct LibraryBrowserView: View {
                     // Header Bar with Crate Info and Reference Deck Selector
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(selected.displayName)
+                            Text(selected.title)
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
 
@@ -246,6 +246,7 @@ public struct LibraryBrowserView: View {
                                 }) {
                                     Text("Model")
                                         .font(.system(size: 9.5, weight: .semibold))
+                                        .fixedSize()
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 3)
                                         .background(appState.selectedAnalysisMethod == .nativeModel ? DJTheme.cue.opacity(0.2) : DJTheme.cardHeader)
@@ -322,7 +323,7 @@ public struct LibraryBrowserView: View {
                                                     .font(.system(size: 11))
                                                     .foregroundColor(isSelected ? DJTheme.deckA : DJTheme.textSecondary)
 
-                                                Text(file)
+                                                Text(LibraryTrackTitle.display(file))
                                                     .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                                                     .foregroundColor(isSelected ? DJTheme.textPrimary : DJTheme.textSecondary)
                                                     .lineLimit(1)
@@ -351,10 +352,6 @@ public struct LibraryBrowserView: View {
                                                     Text(track.musicalKey)
                                                         .font(.system(size: 9.5, weight: .semibold))
                                                         .foregroundColor(DJTheme.cue)
-                                                } else {
-                                                    Text("Key —")
-                                                        .font(.system(size: 9, weight: .medium))
-                                                        .foregroundColor(DJTheme.textMuted)
                                                 }
                                             }
 
@@ -379,23 +376,7 @@ public struct LibraryBrowserView: View {
                                                         .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
                                                         .cornerRadius(DJTheme.chipRadius)
                                                 }
-                                            } else {
-                                                Text("No Ref")
-                                                    .font(.system(size: 8.5, weight: .medium))
-                                                    .padding(.horizontal, 5)
-                                                    .padding(.vertical, 2)
-                                                    .background(DJTheme.cardHeader)
-                                                    .foregroundColor(DJTheme.textMuted)
-                                                    .cornerRadius(DJTheme.chipRadius)
                                             }
-                                        } else {
-                                            Text("Unanalyzed")
-                                                .font(.system(size: 9, weight: .medium))
-                                                .foregroundColor(DJTheme.textMuted)
-                                                .padding(.horizontal, 5)
-                                                .padding(.vertical, 2)
-                                                .background(DJTheme.cardHeader)
-                                                .cornerRadius(DJTheme.chipRadius)
                                         }
 
                                         LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
@@ -415,12 +396,12 @@ public struct LibraryBrowserView: View {
                                             .font(.system(size: 9.5, weight: .semibold))
                                             .padding(.horizontal, 6)
                                             .frame(minHeight: DJTheme.minTouchTarget)
-                                            .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : DJTheme.cue.opacity(0.18))
-                                            .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : DJTheme.cue)
+                                            .background((isPreviewing && appState.isPreviewPlaying) ? DJTheme.cue : (isSelected || isPreviewing ? DJTheme.cue.opacity(0.18) : Color.clear))
+                                            .foregroundColor((isPreviewing && appState.isPreviewPlaying) ? DJTheme.background : (isSelected || isPreviewing ? DJTheme.cue : DJTheme.textSecondary))
                                             .cornerRadius(DJTheme.chipRadius)
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                                                    .stroke(DJTheme.cue.opacity(0.8), lineWidth: 1)
+                                                    .stroke(isSelected || isPreviewing ? DJTheme.cue.opacity(0.8) : DJTheme.border, lineWidth: 1)
                                             )
                                             .contentShape(Rectangle())
                                         }
@@ -870,7 +851,8 @@ struct LibraryTrackAnalysisButton: View {
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue : DJTheme.textSecondary
         }
-        return appState.isAnalyzingLibraryTrack ? DJTheme.textMuted : DJTheme.deckA
+        if appState.isAnalyzingLibraryTrack { return DJTheme.textMuted }
+        return isSelectedRow ? DJTheme.deckA : DJTheme.textSecondary
     }
 
     private var buttonBackgroundColor: Color {
@@ -886,8 +868,10 @@ struct LibraryTrackAnalysisButton: View {
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.12) : DJTheme.cardHeader
         }
-        return DJTheme.deckA.opacity(0.15)
+        return isSelectedRow ? DJTheme.deckA.opacity(0.15) : Color.clear
     }
+
+    private var isSelectedRow: Bool { appState.selectedTrackPath == relativePath }
 
     private var buttonBorderColor: Color {
         if let state = appState.analysisStatus(for: relativePath) {
@@ -902,7 +886,7 @@ struct LibraryTrackAnalysisButton: View {
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.5) : DJTheme.border
         }
-        return DJTheme.deckA.opacity(0.5)
+        return isSelectedRow ? DJTheme.deckA.opacity(0.5) : DJTheme.border
     }
 
     private var buttonHelp: String {
@@ -945,3 +929,19 @@ extension LibraryTrackTransfer {
     }
 }
 
+
+/// Display-only names; identity and paths always use the raw file and folder names.
+enum LibraryTrackTitle {
+    /// "ABBA - Gimme! (Official Video).mp3" -> "ABBA - Gimme!"
+    static func display(_ fileName: String) -> String {
+        let base = (fileName as NSString).deletingPathExtension
+        let cleaned = base.replacing(/\s*[\(\[][^\)\]]*(official|video|lyrics|audio|remaster|4k|hd)[^\)\]]*[\)\]]/.ignoresCase(), with: "")
+            .trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? base : cleaned
+    }
+}
+
+extension LibraryCrateInfo {
+    /// Crate name without the "[NN] " ordering prefix; folder order already sorts the list.
+    var title: String { displayName.replacing(/^\[\d+\]\s*/, with: "") }
+}

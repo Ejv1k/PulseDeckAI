@@ -47,10 +47,8 @@ public struct AudioMeterStatusView: View {
                         .frame(width: proxy.size.width * CGFloat(min(max(snapshot?.peak ?? 0, 0), 1)))
                 }
             }
-            .frame(width: 100, height: 8)
-            Text(String(format: "RMS %.3f", snapshot?.rms ?? 0))
-                .foregroundColor(DJTheme.textSecondary)
-                .frame(width: 86, alignment: .trailing)
+            .frame(width: 140, height: 6)
+            .clipShape(Capsule())
         }
     }
 }

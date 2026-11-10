@@ -23,16 +23,6 @@ public struct StatusHeaderView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(DJTheme.textPrimary)
 
-                Text("Studio")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(DJTheme.deckA.opacity(0.12))
-                    .foregroundColor(DJTheme.deckA)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DJTheme.chipRadius)
-                            .stroke(DJTheme.deckA.opacity(0.4), lineWidth: 1)
-                    )
             }
 
             Spacer(minLength: 6)
@@ -91,13 +81,9 @@ public struct StatusHeaderView: View {
                     .frame(width: 3, height: 3)
 
                 HStack(spacing: 4) {
-                    Text("Status:")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DJTheme.textMuted)
-
                     Text(appState.statusMessage)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundColor(DJTheme.textPrimary)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(DJTheme.textSecondary)
                         .lineLimit(1)
                 }
                 .help(appState.statusMessage)

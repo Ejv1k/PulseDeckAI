@@ -264,3 +264,30 @@ public struct TrackCompatibility: Sendable, Equatable {
         return true
     }
 }
+
+extension TrackCompatibility {
+    /// 0...5 ranking for "Best match" ordering: harmonic fit (0-3) plus tempo fit (0-2).
+    /// Unknown key or tempo scores in the middle, so unanalyzed data never outranks a clear
+    /// match nor sinks below a clash.
+    public var matchScore: Double {
+        let keyScore: Double
+        switch key {
+        case .harmonic(_, let relationship):
+            keyScore = relationship == .exact ? 3 : (relationship == .relative ? 2.5 : 2)
+        case .clash:
+            keyScore = 0
+        case .unknown:
+            keyScore = 1
+        }
+        let tempoScore: Double
+        switch tempo {
+        case .compatible(let deltaPercent):
+            tempoScore = 2 - min(1, abs(deltaPercent) / (TransitionPlanner.maxTempoDifferential * 100))
+        case .mismatch:
+            tempoScore = 0
+        case .unknown:
+            tempoScore = 0.5
+        }
+        return keyScore + tempoScore
+    }
+}

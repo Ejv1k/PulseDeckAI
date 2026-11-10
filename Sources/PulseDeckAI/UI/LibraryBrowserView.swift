@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
     @FocusState private var isAuditionFocused: Bool
+    @State private var sortByMatch = false
 
     public init(appState: AppState) {
         self.appState = appState
@@ -210,6 +211,16 @@ public struct LibraryBrowserView: View {
                                     .foregroundColor(DJTheme.textMuted)
                             }
 
+                            if appState.referenceTrack != nil {
+                                Toggle(isOn: $sortByMatch) {
+                                    Label("Best match", systemImage: "arrow.up.arrow.down")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                }
+                                .toggleStyle(.button)
+                                .controlSize(.small)
+                                .help("Order this crate by key and tempo fit with the reference deck")
+                            }
+
                             Divider()
                                 .frame(height: 12)
                                 .background(DJTheme.border)
@@ -298,7 +309,7 @@ public struct LibraryBrowserView: View {
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 4) {
-                                ForEach(Array(selected.audioFiles.enumerated()), id: \.element) { index, file in
+                                ForEach(Array(orderedFiles(selected).enumerated()), id: \.element) { index, file in
                                     let relPath = "\(selected.folderName)/\(file)"
                                     let isSelected = appState.selectedTrackPath == relPath
                                     let isPreviewing = appState.previewTrackPath == relPath
@@ -707,6 +718,23 @@ public struct LibraryBrowserView: View {
         }
 
         return .ignored
+    }
+
+    /// Crate files, optionally ordered best match first against the reference deck.
+    /// Unanalyzed tracks and the reference track itself go last; ties keep folder order.
+    private func orderedFiles(_ crate: LibraryCrateInfo) -> [String] {
+        guard sortByMatch, let reference = appState.referenceTrack else { return crate.audioFiles }
+        func score(_ file: String) -> Double {
+            let path = "\(crate.folderName)/\(file)"
+            guard path != reference.relativePath,
+                  let entry = appState.loadedCache?.tracks[path],
+                  let compatibility = appState.compatibility(for: entry) else { return -1 }
+            return compatibility.matchScore
+        }
+        return crate.audioFiles.enumerated()
+            .map { (offset: $0.offset, file: $0.element, score: score($0.element)) }
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.offset < $1.offset }
+            .map(\.file)
     }
 
     private func formatTime(_ seconds: Double) -> String {

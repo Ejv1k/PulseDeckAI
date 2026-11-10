@@ -255,7 +255,7 @@ public struct LibraryBrowserView: View {
                                         )
                                 }
                                 .buttonStyle(.plain)
-                                .help("Native CoreML rhythm tracking via Beat This! small0 (fixed-1500 adapted). Key remains unknown.")
+                                .help("Beat This! beat and downbeat model with phrase-aligned cues and key detection.")
                                 .accessibilityLabel("Select Native CoreML Model analysis engine")
                             }
                             .frame(minHeight: 28)
@@ -895,17 +895,17 @@ struct LibraryTrackAnalysisButton: View {
             case .running:
                 return "Analysis in progress with \(appState.activeAnalysisMethod[relativePath]?.displayName ?? "local engine"). Playback remains available."
             case .complete:
-                return "Analysis complete with \(engineLabel). Right-click to switch engine. Key remains unknown."
+                return "Analysis complete with \(engineLabel). Right-click to switch engine."
             case .failed(let reason):
                 return "Analysis failed: \(reason). Click to retry."
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             let engine = entry.analyzerVersion.contains("model") ? "Beat This! small0 CoreML" : "DSP baseline"
-            return "Analyzed with \(engine). Click or right-click to re-analyze. Key remains unknown."
+            return "Analyzed with \(engine). Click or right-click to re-analyze."
         }
         return appState.isAnalyzingLibraryTrack
             ? "One local analysis is running. Playback and library selection remain available."
-            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose method. Key remains unknown."
+            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose method."
     }
 
     var body: some View {

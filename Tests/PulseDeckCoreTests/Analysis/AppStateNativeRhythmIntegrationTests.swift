@@ -416,7 +416,11 @@ extension AppStateNativeRhythmIntegrationTests {
                                      relativePath: "01_House", trackCount: 3, hasGitKeep: false,
                                      audioFiles: ["a.wav", "b.wav", "c.wav"])
         app.analyzeCrate(crate)
-        await Task.yield()
+        // Wait (bounded) until the batch is really analyzing its first track.
+        for _ in 0..<2000 where app.analysisStatus(for: "01_House/a.wav") != .running {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTAssertEqual(app.analysisStatus(for: "01_House/a.wav"), .running)
         let userTask = app.analyzeTrack(relativePath: "01_House/x.wav", method: .dsp)
         await app.crateAnalysisTask?.value
         await userTask.value

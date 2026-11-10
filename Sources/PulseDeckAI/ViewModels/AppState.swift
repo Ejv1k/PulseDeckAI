@@ -842,8 +842,8 @@ public final class AppState: ObservableObject {
                 let task = self.analyzeTrack(relativePath: path, method: method)
                 self.crateCurrentTrackTask = task
                 await task.value
-                // A manual Analyze on another row replaced our run: stop the batch instead of cancelling it.
-                if let active = self.analysisTask, active != task { break }
+                // Our run was cancelled by a manual Analyze elsewhere: stop the batch instead of fighting it.
+                if task.isCancelled { break }
                 guard self.crateBatchID == batchID else { break }
                 self.crateAnalysisProgress = (index + 1, paths.count)
             }

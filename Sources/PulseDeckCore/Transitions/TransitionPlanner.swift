@@ -307,7 +307,8 @@ public struct TransitionPlanner: Sendable {
         let beatInterval = outgoing.beatGrid.beatIntervalSeconds
         // Offset of each bar line (0...bars) from the start. Real bar lines follow 3/4 downbeats and
         // drifting tempo; a grid that ends before the phrase does falls back to uniform 4/4 bars.
-        let barOffsets = Self.barOffsets(bars: bars, from: quantizedStart, barTimestamps: outgoing.beatGrid.barTimestamps)
+        let barOffsets = Self.barOffsets(bars: bars, from: quantizedStart, barTimestamps: outgoing.beatGrid.barTimestamps,
+                                          beatInterval: beatInterval)
             ?? (0...bars).map { Double($0 * 4) * beatInterval }
         let totalDuration = barOffsets[bars]
 
@@ -457,13 +458,15 @@ public struct TransitionPlanner: Sendable {
         )
     }
 
-    /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars.
-    static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double]) -> [Double]? {
+    /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
+    /// or a bar is implausibly short or long (a missed or spurious downbeat).
+    static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double], beatInterval: Double) -> [Double]? {
         let tolerance = 1e-6
         guard let first = barTimestamps.firstIndex(where: { abs($0 - start) <= tolerance }),
               first + bars < barTimestamps.count else { return nil }
         let offsets = barTimestamps[first...(first + bars)].map { $0 - start }
-        guard zip(offsets, offsets.dropFirst()).allSatisfy({ $0 < $1 && $1.isFinite }) else { return nil }
+        let plausibleBar = (1.5 * beatInterval)...(8.5 * beatInterval)
+        guard zip(offsets, offsets.dropFirst()).allSatisfy({ $1.isFinite && plausibleBar.contains($1 - $0) }) else { return nil }
         return offsets
     }
 

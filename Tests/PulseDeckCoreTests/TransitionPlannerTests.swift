@@ -231,11 +231,15 @@ final class TransitionPlannerTests: XCTestCase {
 
     func testBarOffsetsFollowDriftingTempoAndRejectShortGrids() {
         let bars = [10.0, 12.0, 14.1, 16.3]
-        let offsets = TransitionPlanner.barOffsets(bars: 3, from: 10.0, barTimestamps: bars) ?? []
+        let offsets = TransitionPlanner.barOffsets(bars: 3, from: 10.0, barTimestamps: bars, beatInterval: 0.5) ?? []
         XCTAssertEqual(offsets.count, 4)
         for (actual, expected) in zip(offsets, [0, 2.0, 4.1, 6.3]) { XCTAssertEqual(actual, expected, accuracy: 1e-9) }
-        XCTAssertNil(TransitionPlanner.barOffsets(bars: 4, from: 10.0, barTimestamps: bars), "Grid ends before the phrase")
-        XCTAssertNil(TransitionPlanner.barOffsets(bars: 1, from: 11.0, barTimestamps: bars), "Start must be a bar line")
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 4, from: 10.0, barTimestamps: bars, beatInterval: 0.5), "Grid ends before the phrase")
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 1, from: 11.0, barTimestamps: bars, beatInterval: 0.5), "Start must be a bar line")
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 2, from: 10.0, barTimestamps: [10, 12, 18], beatInterval: 0.5),
+                     "A missed downbeat (12-beat bar) falls back to uniform bars")
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 2, from: 10.0, barTimestamps: [10, 10.5, 12.5], beatInterval: 0.5),
+                     "A spurious downbeat (1-beat bar) falls back to uniform bars")
     }
 
     func testTempoDifferenceThreshold6Percent() throws {

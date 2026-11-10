@@ -64,6 +64,18 @@ public struct DeckStudioView: View {
         }
     }
 
+    @ViewBuilder
+    private func mixCountdown(deck: DeckIdentifier, track: TrackCacheEntry) -> some View {
+        if let playhead = appState.deckPlayheadSeconds(deck),
+           let bars = MixCountdown.barsRemaining(playhead: playhead, mixOut: track.cueMarkers.mixOutCue, bpm: track.bpm) {
+            Text(bars <= 1 ? "Mix now" : "Mix in \(bars) bars")
+                .font(.system(size: 9.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(bars <= 8 ? DJTheme.statusWarning : DJTheme.textSecondary)
+                .help("Bars until this track reaches its mix-out cue")
+        }
+    }
+
     private func deckPanel(
         deck: DeckIdentifier,
         title: String,
@@ -106,7 +118,7 @@ public struct DeckStudioView: View {
             // Track metadata
             VStack(alignment: .leading, spacing: 2) {
                 if let track {
-                    Text(track.relativePath)
+                    Text(LibraryTrackTitle.display((track.relativePath as NSString).lastPathComponent))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(DJTheme.textPrimary)
                         .lineLimit(1)
@@ -129,6 +141,13 @@ public struct DeckStudioView: View {
                             Text(track.musicalKey)
                                 .font(.system(size: 9.5, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)
+                        }
+
+                        if isPlaying {
+                            // 4 Hz is plenty for a bar count; the playhead is read on demand, not published.
+                            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                                mixCountdown(deck: deck, track: track)
+                            }
                         }
                     }
                 } else {

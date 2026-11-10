@@ -137,10 +137,20 @@ public struct DeckStudioView: View {
                                 .foregroundColor(color)
                         }
 
-                        if !track.musicalKey.isEmpty {
+                        if !track.musicalKey.isEmpty, track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
                             Text(track.musicalKey)
                                 .font(.system(size: 9.5, weight: .semibold))
                                 .foregroundColor(DJTheme.cue)
+                        }
+
+                        if track.analyzerVersion == "unanalysed-playback" {
+                            Text("Not analyzed")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(DJTheme.textMuted)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .overlay(Capsule().stroke(DJTheme.border, lineWidth: 1))
+                                .help("Analyze this track for BPM, key, waveform and cues")
                         }
 
                         autoGainBadge(deck: deck)

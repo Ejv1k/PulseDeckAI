@@ -23,3 +23,15 @@ final class DownbeatGridTests: XCTestCase {
         XCTAssertEqual(planner.findQuantizedOutgoingDownbeat(timestamps: beats, onOrAfter: 1.0), 2.5)
     }
 }
+
+extension DownbeatGridTests {
+    func testUnsortedOffBeatOrNonFiniteDownbeatsAreCleanedOrIgnored() {
+        let beats = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+        let messy = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: beats,
+                             downbeatTimestamps: [4.0, 2.0, .nan, 2.0, 0.0, 9.9])
+        XCTAssertEqual(messy.barTimestamps, [0.0, 2.0, 4.0], "sorted, deduplicated, off-grid and NaN dropped")
+        let unusable = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: beats,
+                                downbeatTimestamps: [0.25, 9.9])
+        XCTAssertEqual(unusable.barTimestamps, [0.0, 2.0, 4.0], "falls back to stride-4 when <2 downbeats are usable")
+    }
+}

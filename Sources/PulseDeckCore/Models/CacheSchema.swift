@@ -141,9 +141,13 @@ public struct BeatGrid: Codable, Sendable, Equatable {
         self.downbeatTimestamps = downbeatTimestamps
     }
 
-    /// Bar starts: detected downbeats when stored, otherwise every 4th beat (assumes 4/4 from beat 0).
+    /// Bar starts: stored downbeats that sit on a beat (sorted, deduplicated), otherwise every
+    /// 4th beat (assumes 4/4 from beat 0). Hand-edited or partial downbeats fall back safely.
     public var barTimestamps: [Double] {
-        if let downbeats = downbeatTimestamps, !downbeats.isEmpty { return downbeats }
+        let onBeat = Set(downbeatTimestamps ?? []).filter { downbeat in
+            downbeat.isFinite && beatTimestamps.contains { abs($0 - downbeat) <= 0.02 }
+        }.sorted()
+        if onBeat.count >= 2 { return onBeat }
         return stride(from: 0, to: beatTimestamps.count, by: 4).map { beatTimestamps[$0] }
     }
 }

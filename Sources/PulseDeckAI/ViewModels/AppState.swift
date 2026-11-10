@@ -80,6 +80,9 @@ public final class AppState: ObservableObject {
     /// Track path of the in-flight analysis; `activeAnalysisMethod` keeps history per path, this is only the live one.
     private var activeAnalysisPath: String? = nil
     private var analysisTask: Task<Void, Never>?
+    /// "Analyze crate" progress while running, nil when idle.
+    @Published private(set) var crateAnalysisProgress: (done: Int, total: Int)?
+    private(set) var crateAnalysisTask: Task<Void, Never>?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
     private var deckLoadedSourceIdentities: [DeckIdentifier: LibraryTrackSource.Identity] = [:]
@@ -808,6 +811,38 @@ public final class AppState: ObservableObject {
     }
 
     func analysisStatus(for path: String) -> LibraryTrackAnalysisStatus? { analysisStatuses[path] }
+
+    /// Analyzes, one at a time with the selected method, every track in the crate that lacks a
+    /// current analysis. Manual overrides survive through the normal re-analysis merge.
+    func analyzeCrate(_ crate: LibraryCrateInfo) {
+        guard crateAnalysisTask == nil else { return }
+        let method = selectedAnalysisMethod
+        let current = method == .nativeModel ? NativeRhythmTrackAnalyzer.analyzerVersion : nil
+        let paths = crate.audioFiles.map { "\(crate.folderName)/\($0)" }.filter { path in
+            guard let entry = loadedCache?.tracks[path], entry.analyzerVersion != "unanalysed-playback" else { return true }
+            return current.map { entry.analyzerVersion != $0 } ?? false
+        }
+        guard !paths.isEmpty else {
+            statusMessage = "Every track in \(crate.title) is already analyzed."
+            return
+        }
+        crateAnalysisProgress = (0, paths.count)
+        crateAnalysisTask = Task { [weak self] in
+            for (index, path) in paths.enumerated() {
+                guard let self, !Task.isCancelled else { break }
+                await self.analyzeTrack(relativePath: path, method: method).value
+                self.crateAnalysisProgress = (index + 1, paths.count)
+            }
+            self?.crateAnalysisProgress = nil
+            self?.crateAnalysisTask = nil
+        }
+    }
+
+    /// Stops a running crate analysis, including the track in progress.
+    func cancelCrateAnalysis() {
+        crateAnalysisTask?.cancel()
+        analysisTask?.cancel()
+    }
 
     /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.
     func deckPlayheadSeconds(_ deck: DeckIdentifier) -> Double? {

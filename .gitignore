@@ -60,3 +60,6 @@ __pycache__/
 !PulseDeck_Library/**/.gitkeep
 !PulseDeck_Library/.pulsedeck_ai_cache.json
 dist/
+
+# Claude Code personal settings
+.claude/settings.local.json

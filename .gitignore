@@ -59,6 +59,7 @@ __pycache__/
 # Ensure all PulseDeck_Library gitkeep files and cache JSON template are tracked
 !PulseDeck_Library/**/.gitkeep
 !PulseDeck_Library/.pulsedeck_ai_cache.json
+dist/
 
 # Claude Code personal settings
 .claude/settings.local.json

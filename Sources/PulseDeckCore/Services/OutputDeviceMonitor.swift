@@ -38,6 +38,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         var recoveryEpoch: String = ""
         var recoveryAttempts: Int = 0
         var recoveryLimitEmitted: Bool = false
+        /// The monitor itself paused this engine (device lost); its nodes kept their schedule.
+        var pausedByMonitor: Bool = false
 
         init(
             engine: AVAudioEngine,
@@ -89,6 +91,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
     private let callbackLock = NSLock()
     private var _onTopologyChange: (@Sendable () -> Void)?
     private var _onMonitorError: (@Sendable (CoreAudioError) -> Void)?
+    private var _onEngineRestarted: (@Sendable (AudioEngineRole) -> Void)?
 
     private var isMonitoring: Bool = false
     private var isShuttingDown: Bool = false
@@ -275,6 +278,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         syncControl {
             if let registration = self.registeredEngines.first(where: { $0.engine === engine }) {
                 registration.intendedRunningState = running
+                // The app now owns this engine's state; a stale monitor pause must not mask a later system stop.
+                registration.pausedByMonitor = false
             }
         }
     }
@@ -287,6 +292,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
                 return []
             }
+            registration.pausedByMonitor = false
             if let desiredUID {
                 registration.desiredDeviceUID = desiredUID
             }
@@ -320,6 +326,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             guard let registration = self.registeredEngines.first(where: { $0.engine === engine }) else {
                 return []
             }
+            registration.pausedByMonitor = false
             if let desiredUID {
                 registration.desiredDeviceUID = desiredUID
             }
@@ -386,6 +393,22 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         set {
             callbackLock.lock()
             _onTopologyChange = newValue
+            callbackLock.unlock()
+        }
+    }
+
+    /// Called on the control queue right after recovery starts an engine that had stopped.
+    /// AVAudioEngine resets its player nodes when it stops for a device change, so owners must
+    /// re-queue audio here; otherwise the engine runs but plays silence.
+    public var onEngineRestarted: (@Sendable (AudioEngineRole) -> Void)? {
+        get {
+            callbackLock.lock()
+            defer { callbackLock.unlock() }
+            return _onEngineRestarted
+        }
+        set {
+            callbackLock.lock()
+            _onEngineRestarted = newValue
             callbackLock.unlock()
         }
     }
@@ -673,6 +696,14 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 }
             }
 
+            // The DJ's chosen device is back while we sit on a fallback (or on nothing): return to it.
+            if let desiredUID = registration.desiredDeviceUID, desiredUID != registration.boundDeviceUID,
+               devices.contains(where: { $0.id == desiredUID }),
+               let desiredID = try CoreAudioOutputDevices.deviceID(forUID: desiredUID, using: hal) {
+                steps.append(.attach(registration, engine, deviceID: desiredID, uid: desiredUID))
+                continue
+            }
+
             if let boundUID = registration.boundDeviceUID,
                devices.contains(where: { $0.id == boundUID }) {
                 // Throws stay failures. `nil` means this successful read did not find the UID.
@@ -725,18 +756,29 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
 
         if let defaultDeviceID {
             let defaultUID = try hal.getDeviceUID(deviceID: defaultDeviceID)
-            if !avoidUIDs.contains(defaultUID), devices.contains(where: { $0.id == defaultUID }) {
+            if !avoidUIDs.contains(defaultUID), devices.contains(where: { $0.id == defaultUID }),
+               isPhysical(defaultDeviceID) {
                 return (defaultDeviceID, defaultUID)
             }
         }
 
-        if let first = devices.first(where: { $0.outputChannelCount > 0 && !avoidUIDs.contains($0.id) }) {
-            if let firstID = try CoreAudioOutputDevices.deviceID(forUID: first.id, using: hal) {
-                return (firstID, first.id)
+        for candidate in devices where candidate.outputChannelCount > 0 && !avoidUIDs.contains(candidate.id) {
+            if let candidateID = try CoreAudioOutputDevices.deviceID(forUID: candidate.id, using: hal),
+               isPhysical(candidateID) {
+                return (candidateID, candidate.id)
             }
         }
 
         return nil
+    }
+
+    /// Automatic fallback never picks a virtual device (call-app loopbacks, which would send a private
+    /// cue into a meeting) or an aggregate. The DJ can still choose either one explicitly.
+    private func isPhysical(_ deviceID: AudioDeviceID) -> Bool {
+        // Fail closed: an unreadable transport could be exactly the loopback this guard exists for.
+        guard let transport = try? hal.getTransportType(deviceID: deviceID) else { return false }
+        return transport != kAudioDeviceTransportTypeVirtual && transport != kAudioDeviceTransportTypeAggregate
+            && transport != kAudioDeviceTransportTypeAutoAggregate
     }
 
     private func apply(_ step: RecoveryStep, topology: String, events: inout [MonitorEvent]) {
@@ -748,6 +790,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         case .clearMissing(let registration, let engine):
             if engine.isRunning {
                 engine.pause()
+                registration.pausedByMonitor = true
             }
             registration.boundDeviceID = nil
             registration.boundDeviceUID = nil
@@ -769,6 +812,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             return
         }
         if engine.isRunning {
+            // Something else restarted it (the app); the monitor's earlier pause no longer applies.
+            registration.pausedByMonitor = false
             noteRecoverySuccess(registration)
             return
         }
@@ -787,13 +832,16 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
             return
         }
 
-        if engine.isRunning {
+        let wasRunning = engine.isRunning
+        if wasRunning {
             engine.pause()
         }
 
         do {
             try CoreAudioOutputDevices.bind(deviceID, to: engine, using: hal)
         } catch {
+            // Rebinding away from a working fallback must not leave that healthy engine silent.
+            if wasRunning { try? engine.start() }
             noteRecoveryFailure(registration, error: error, operation: "bindOutputDevice", events: &events)
             return
         }
@@ -802,6 +850,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         registration.boundDeviceUID = uid
 
         guard registration.intendedRunningState else {
+            registration.pausedByMonitor = false
             noteRecoverySuccess(registration)
             return
         }
@@ -809,6 +858,9 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         do {
             try engine.start()
             noteRecoverySuccess(registration)
+            // A pause (ours or the monitor's) keeps player nodes scheduled; a system stop has lost them.
+            if !wasRunning && !registration.pausedByMonitor { onEngineRestarted?(registration.role) }
+            registration.pausedByMonitor = false
         } catch {
             // Bind succeeded, so the stored ID now matches. Further attempts use the start-on-present path
             // and keep this epoch's counter. The cap is not cleared before this start failure.
@@ -829,6 +881,8 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         do {
             try engine.start()
             noteRecoverySuccess(registration)
+            if !registration.pausedByMonitor { onEngineRestarted?(registration.role) }
+            registration.pausedByMonitor = false
         } catch {
             noteRecoveryFailure(registration, error: error, operation: "AVAudioEngine.start", events: &events)
         }

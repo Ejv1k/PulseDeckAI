@@ -102,6 +102,13 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
             masterEngine: master,
             monitor: monitorInstance
         )
+
+        monitorInstance.onEngineRestarted = { [weak deckA = self.deckAGraph, weak deckB = self.deckBGraph,
+                                               weak preview = self.cuePreview] role in
+            deckA?.resumeAfterEngineRestart(role: role)
+            deckB?.resumeAfterEngineRestart(role: role)
+            if role == .cue { preview?.resumeAfterEngineRestart() }
+        }
     }
 
     // MARK: - AudioEngineCoordinatorContract Conformance

@@ -559,6 +559,34 @@ final class OutputRoutingStudioTests: XCTestCase {
         XCTAssertEqual(appState.cueDeviceDescriptor?.id, "bluetooth_headphones_uid")
     }
 
+    func testCueReturnsToItsHeadphonesWhenTheyComeBack() throws {
+        try coordinator.setOutputDevice(role: .master, uid: "builtin_speakers_uid")
+        try coordinator.setOutputDevice(role: .cue, uid: "wired_headphones_uid")
+        try? coordinator.start()
+        mockHAL.removeDevice(id: 102)
+        coordinator.handleDeviceConfigurationChange()
+        XCTAssertTrue(coordinator.isFallbackActive(for: .cue))
+        mockHAL.addDevice(id: 102, uid: "wired_headphones_uid", name: "External Headphones", outputChannels: 2)
+        coordinator.handleDeviceConfigurationChange()
+        XCTAssertEqual(coordinator.boundDevice(for: .cue)?.id, "wired_headphones_uid", "Replugged headphones win back the cue")
+        XCTAssertFalse(coordinator.isFallbackActive(for: .cue))
+        XCTAssertEqual(coordinator.boundDevice(for: .master)?.id, "builtin_speakers_uid")
+    }
+
+    func testFallbackNeverPicksAVirtualLoopbackDevice() throws {
+        mockHAL.addDevice(id: 120, uid: "teams_loopback_uid", name: "Microsoft Teams Audio", outputChannels: 1,
+                          transportType: kAudioDeviceTransportTypeVirtual)
+        try coordinator.setOutputDevice(role: .master, uid: "builtin_speakers_uid")
+        try coordinator.setOutputDevice(role: .cue, uid: "wired_headphones_uid")
+        try? coordinator.start()
+        mockHAL.removeDevice(id: 103) // The only physical non-master alternative.
+        mockHAL.removeDevice(id: 102)
+        coordinator.handleDeviceConfigurationChange()
+        XCTAssertNotEqual(coordinator.boundDevice(for: .cue)?.id, "teams_loopback_uid",
+                          "A private cue must never fall back into a call app's loopback")
+        XCTAssertNotEqual(coordinator.boundDevice(for: .cue)?.id, "builtin_speakers_uid")
+    }
+
     @MainActor
     func testUnboundRoleDoesNotFabricateDefaultDescriptor() {
         // Coordinator freshly created without registration binding

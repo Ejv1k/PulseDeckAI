@@ -904,9 +904,9 @@ public final class AppState: ObservableObject {
                 }
                 switch methodToUse {
                 case .dsp:
-                    self.statusMessage = "Local analysis ready: \(relativePath). Tempo is heuristic; key remains unknown."
+                    self.statusMessage = "Local analysis ready: \(relativePath). Tempo is heuristic; key is not detected by DSP."
                 case .nativeModel:
-                    self.statusMessage = "Native rhythm analysis ready: \(relativePath). Tempo derived from Beat This! small0 beats (fixed-1500 adapted); key remains unknown."
+                    self.statusMessage = "Native rhythm analysis ready: \(relativePath). Tempo, phrase cues and key estimated on-device."
                 }
             } catch {
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }

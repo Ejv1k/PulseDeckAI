@@ -11,9 +11,9 @@ public enum TrackAnalysisMethod: String, CaseIterable, Identifiable, Sendable {
     public var helpText: String {
         switch self {
         case .dsp:
-            return "DSP baseline (heuristic onset autocorrelation). Key remains unknown."
+            return "Fast DSP heuristic (onset autocorrelation). Key is not detected."
         case .nativeModel:
-            return "Native CoreML rhythm tracking via Beat This! small0 (fixed-1500 adapted). Key remains unknown."
+            return "Beat This! beat and downbeat model with phrase-aligned cues and key detection."
         }
     }
 }

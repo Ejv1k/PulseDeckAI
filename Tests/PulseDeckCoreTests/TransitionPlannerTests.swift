@@ -210,6 +210,34 @@ final class TransitionPlannerTests: XCTestCase {
         }
     }
 
+    func testBassSwapBarsFollowThreeFourDownbeats() throws {
+        let uniform = makeBeatGrid(bpm: 120.0)
+        // 3/4: a bar line on every third beat.
+        let waltz = BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: uniform.beatTimestamps,
+                             downbeatTimestamps: stride(from: 0, to: uniform.beatTimestamps.count, by: 3).map { uniform.beatTimestamps[$0] })
+        let plan = try TransitionPlanner().plan(TransitionRequest(
+            outgoingTrack: makeTrack(deck: .deckA, beatGrid: waltz),
+            incomingTrack: makeTrack(deck: .deckB),
+            style: .beatSyncedBassSwap(bars: 8)))
+        XCTAssertEqual(plan.startTimestampSeconds, 201.0, accuracy: 0.001, "First 3/4 bar line at or after the 200 s mix-out")
+        XCTAssertEqual(plan.durationSeconds, 12.0, accuracy: 0.001, "8 bars x 3 beats x 0.5 s")
+        XCTAssertEqual(plan.metadata.bassSwapOffsetSeconds ?? -1, 6.0, accuracy: 0.001)
+        let fades = plan.events.compactMap { event -> Double? in
+            if case .setVolume(.deckA, let volume) = event.command, volume > 0, volume < 1 { return event.timeOffsetSeconds }
+            return nil
+        }
+        XCTAssertEqual(fades.first ?? -1, 1.5, accuracy: 0.001, "Each fade step lands on a real bar line")
+    }
+
+    func testBarOffsetsFollowDriftingTempoAndRejectShortGrids() {
+        let bars = [10.0, 12.0, 14.1, 16.3]
+        let offsets = TransitionPlanner.barOffsets(bars: 3, from: 10.0, barTimestamps: bars) ?? []
+        XCTAssertEqual(offsets.count, 4)
+        for (actual, expected) in zip(offsets, [0, 2.0, 4.1, 6.3]) { XCTAssertEqual(actual, expected, accuracy: 1e-9) }
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 4, from: 10.0, barTimestamps: bars), "Grid ends before the phrase")
+        XCTAssertNil(TransitionPlanner.barOffsets(bars: 1, from: 11.0, barTimestamps: bars), "Start must be a bar line")
+    }
+
     func testTempoDifferenceThreshold6Percent() throws {
         let planner = TransitionPlanner()
         let outgoing = makeTrack(deck: .deckA, bpm: 120.0)

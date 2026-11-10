@@ -167,6 +167,8 @@ public actor TransitionExecutionService {
 
     private var executionGeneration: UInt64 = 0
     private var initialOutgoingRate: Float = 1.0
+    /// Incoming deck tempo/key-lock before the plan retuned it; restored only on cancel.
+    private var initialIncomingTimePitch: TimePitchParameters?
     private var autoPilotNotice: String?
     /// Outgoing rate the active plan was built for; pitch rides are bounded against this, not the last step.
     private var planOutgoingRate: Float = 1.0
@@ -295,6 +297,7 @@ public actor TransitionExecutionService {
         executionGeneration &+= 1
         initialOutgoingRate = request.outgoingPlaybackRate
         planOutgoingRate = request.outgoingPlaybackRate
+        initialIncomingTimePitch = deckGraph(for: plan.incomingDeck).timePitchParameters
         autoPilotNotice = nil
         armedRequest = nil
         armedTriggerPosition = nil
@@ -371,6 +374,10 @@ public actor TransitionExecutionService {
         activePlan = nil
 
         executeCommands(recoveryCommands)
+        if let plan, let saved = initialIncomingTimePitch {
+            deckGraph(for: plan.incomingDeck).timePitchParameters = saved
+        }
+        initialIncomingTimePitch = nil
 
         // Restore crossfader to initial pre-transition position
         if let initialPos = initialCrossfaderPosition {
@@ -454,6 +461,7 @@ public actor TransitionExecutionService {
         lastTickedPosition = nil
         initialCrossfaderPosition = nil
         initialOutgoingRate = 1
+        initialIncomingTimePitch = nil
         lastObservedDeckGeneration.removeAll(keepingCapacity: true)
     }
 

@@ -129,6 +129,21 @@ def create_sample_entry(
     )
 
 
+class TestBeatGridFinite(unittest.TestCase):
+    def test_non_finite_beat_values_are_rejected(self):
+        base = {"firstBeatOffsetSeconds": 0.0, "beatIntervalSeconds": 0.5, "beatTimestamps": [0.0, 0.5]}
+        self.assertEqual(BeatGrid.from_dict(base).beatTimestamps, [0.0, 0.5])
+        for field, bad in [("beatTimestamps", [0.0, float("nan")]), ("beatTimestamps", [float("inf")]),
+                           ("downbeatTimestamps", [float("nan")]), ("beatIntervalSeconds", float("nan")),
+                           ("firstBeatOffsetSeconds", float("-inf"))]:
+            with self.subTest(field=field, bad=bad):
+                with self.assertRaises(ValueError):
+                    BeatGrid.from_dict({**base, field: bad})
+        # The literal NaN token that Python's json parser accepts by default.
+        with self.assertRaises(ValueError):
+            BeatGrid.from_dict(json.loads('{"firstBeatOffsetSeconds": 0, "beatIntervalSeconds": 0.5, "beatTimestamps": [NaN]}'))
+
+
 class TestCueMarkers(unittest.TestCase):
     """Tests for CueMarkers validation and duration clamping."""
 

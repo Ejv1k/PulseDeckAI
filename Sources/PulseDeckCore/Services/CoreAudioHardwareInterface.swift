@@ -85,6 +85,10 @@ public protocol AudioHardwareInterface: Sendable {
     /// Assigns the given CoreAudio device ID to an `AudioUnit` output node via `kAudioOutputUnitProperty_CurrentDevice`.
     func setOutputDevice(deviceID: AudioDeviceID, for audioUnit: AudioUnit) throws
 
+    /// Reads the device an output `AudioUnit` is really rendering to (`kAudioOutputUnitProperty_CurrentDevice`).
+    /// AVAudioEngine's output unit can silently follow the system default output, so a stored binding is not proof.
+    func getOutputDevice(for audioUnit: AudioUnit) throws -> AudioDeviceID
+
     /// Registers a listener block on the specified queue for system device list changes (`kAudioHardwarePropertyDevices`).
     func addDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws
 
@@ -340,6 +344,16 @@ public final class SystemAudioHardware: AudioHardwareInterface, @unchecked Senda
         guard status == noErr else {
             throw CoreAudioError.osStatus(status, operation: "kAudioOutputUnitProperty_CurrentDevice(\(deviceID))")
         }
+    }
+
+    public func getOutputDevice(for audioUnit: AudioUnit) throws -> AudioDeviceID {
+        var devID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &devID, &size)
+        guard status == noErr else {
+            throw CoreAudioError.osStatus(status, operation: "get kAudioOutputUnitProperty_CurrentDevice")
+        }
+        return devID
     }
 
     public func addDevicesListener(on queue: DispatchQueue, block: @escaping OutputPropertyListenerBlock) throws {

@@ -573,6 +573,26 @@ final class OutputRoutingStudioTests: XCTestCase {
         XCTAssertEqual(coordinator.boundDevice(for: .master)?.id, "builtin_speakers_uid")
     }
 
+    func testEnginesThatFollowedANewDefaultOutputAreReturnedToTheirDevices() throws {
+        try coordinator.setOutputDevice(role: .master, uid: "builtin_speakers_uid")
+        try coordinator.setOutputDevice(role: .cue, uid: "wired_headphones_uid")
+        try? coordinator.start()
+        let masterUnit = try XCTUnwrap(coordinator.masterAudioEngine.rawEngine.outputNode.audioUnit)
+        let cueUnit = try XCTUnwrap(coordinator.cueAudioEngine.rawEngine.outputNode.audioUnit)
+        // Issue #60: plugging in a jack makes it the default, and macOS drags every output unit along.
+        mockHAL.setDefaultOutputID(102)
+        mockHAL.simulateUnitsFollowingDefault()
+        XCTAssertEqual(try mockHAL.getOutputDevice(for: masterUnit), 102, "Precondition: master was moved to the headphones")
+        coordinator.handleDeviceConfigurationChange()
+        XCTAssertEqual(try mockHAL.getOutputDevice(for: masterUnit), 101, "Master must be put back on the speakers")
+        XCTAssertEqual(try mockHAL.getOutputDevice(for: cueUnit), 102)
+        mockHAL.setDefaultOutputID(101)
+        mockHAL.simulateUnitsFollowingDefault()
+        coordinator.handleDeviceConfigurationChange()
+        XCTAssertEqual(try mockHAL.getOutputDevice(for: cueUnit), 102, "The private cue must be put back on the headphones")
+        XCTAssertEqual(try mockHAL.getOutputDevice(for: masterUnit), 101)
+    }
+
     func testFallbackNeverPicksAVirtualLoopbackDevice() throws {
         mockHAL.addDevice(id: 120, uid: "teams_loopback_uid", name: "Microsoft Teams Audio", outputChannels: 1,
                           transportType: kAudioDeviceTransportTypeVirtual)

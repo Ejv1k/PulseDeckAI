@@ -708,7 +708,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                devices.contains(where: { $0.id == boundUID }) {
                 // Throws stay failures. `nil` means this successful read did not find the UID.
                 if let resolvedID = try CoreAudioOutputDevices.deviceID(forUID: boundUID, using: hal) {
-                    if registration.boundDeviceID == resolvedID {
+                    if registration.boundDeviceID == resolvedID, unitRenders(to: resolvedID, engine: engine) {
                         steps.append(.maintain(registration, engine, candidateUID: boundUID))
                     } else {
                         // Same UID, new numeric ID. Stay on this device. Do not accept another UID at the old ID.
@@ -770,6 +770,14 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         }
 
         return nil
+    }
+
+    /// False only when the output unit provably renders elsewhere: macOS can move AVAudioEngine's unit to a
+    /// new default output (e.g. a headphone jack plugged in) while our binding still names the old device.
+    /// An unreadable unit is not proof of a move, so it does not trigger a rebind.
+    private func unitRenders(to deviceID: AudioDeviceID, engine: AVAudioEngine) -> Bool {
+        guard let unit = engine.outputNode.audioUnit, let actual = try? hal.getOutputDevice(for: unit) else { return true }
+        return actual == deviceID
     }
 
     /// Automatic fallback never picks a virtual device (call-app loopbacks, which would send a private

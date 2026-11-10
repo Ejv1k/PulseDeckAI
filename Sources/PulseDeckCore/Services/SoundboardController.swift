@@ -463,6 +463,8 @@ public final class SoundboardController: @unchecked Sendable {
         guard index >= 0 && index < Self.padCount else { return }
 
         executeOnControlQueue {
+            // A stopped engine would never play or complete the buffer, leaving the pad lit forever.
+            guard let master = self.masterEngine, master.isRunning else { return }
             stateLock.lock()
             var pad = self._pads[index]
             pad.triggerGeneration &+= 1
@@ -477,7 +479,7 @@ public final class SoundboardController: @unchecked Sendable {
             // Stop any in-flight playback on this pad to restart deterministically
             player.stop()
 
-            let isManual = self.masterEngine?.rawEngine.isInManualRenderingMode ?? false
+            let isManual = master.rawEngine.isInManualRenderingMode
             let callbackType: AVAudioPlayerNodeCompletionCallbackType = isManual ? .dataRendered : .dataPlayedBack
 
             // Schedule buffer from RAM with explicit playback completion tracking
@@ -490,9 +492,7 @@ public final class SoundboardController: @unchecked Sendable {
                 }
             }
 
-            if let master = self.masterEngine, master.isRunning {
-                player.play()
-            }
+            player.play()
 
             self.notifyPadsChanged()
         }

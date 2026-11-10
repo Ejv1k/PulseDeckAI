@@ -166,6 +166,22 @@ public final class CuePreviewPlayer: @unchecked Sendable {
         }
     }
 
+    /// Re-queues a playing preview after recovery restarted the cue engine (the stop reset the node).
+    public func resumeAfterEngineRestart() {
+        executeOnControlQueue {
+            self.stateLock.lock()
+            let playhead = self.currentPlayheadSecondsLocked()
+            let file = self._currentAudioFile
+            let shouldResume = self._isPlaying && playhead < self._trackDurationSeconds
+            self.stateLock.unlock()
+            guard shouldResume, let file else { return }
+            self.invalidateSchedule()
+            self.playerNode.stop()
+            self.scheduleSegment(file: file, startSeconds: playhead)
+            self.playerNode.play()
+        }
+    }
+
     public func pause() {
         executeOnControlQueue {
             self.stateLock.lock()

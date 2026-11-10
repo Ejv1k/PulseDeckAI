@@ -610,6 +610,39 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         }
     }
 
+    /// Re-queues audio after recovery restarted an engine the system had stopped. The stop reset the
+    /// player node, so a deck that should be playing would otherwise stay silent at a frozen playhead.
+    public func resumeAfterEngineRestart(role: AudioEngineRole) {
+        executeOnControlQueue {
+            self.stateLock.lock()
+            let masterFile = self._masterAudioFile
+            let cueFile = self._cueAudioFile
+            let masterPlaying = self._isMasterPlaying
+            let cuePlaying = self._isCuePlaying || (self._isMasterPlaying && self._isCueActive)
+            let duration = self._trackDurationSeconds
+            self.stateLock.unlock()
+
+            switch role {
+            case .master:
+                guard masterPlaying, let masterFile else { return }
+                let playhead = self.currentMasterPlayheadSeconds()
+                guard playhead < duration else { return }
+                self.invalidateSchedule(for: .master)
+                self.masterPlayerNode.stop()
+                self.scheduleMasterSegment(file: masterFile, startSeconds: playhead)
+                self.masterPlayerNode.play()
+            case .cue:
+                guard cuePlaying, let cueFile else { return }
+                let playhead = self.currentCuePlayheadSeconds()
+                guard playhead < duration else { return }
+                self.invalidateSchedule(for: .cue)
+                self.cuePlayerNode.stop()
+                self.scheduleCueSegment(file: cueFile, startSeconds: playhead)
+                self.cuePlayerNode.play()
+            }
+        }
+    }
+
     // MARK: - Independent Cue Scrubbing (Zero Master FOH Effect)
 
     /// Scrubs the cue headphone preview independently without affecting master playback.

@@ -146,6 +146,22 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
     }
 
+    func testPlayingDeckResumesAfterTheSystemRestartsItsEngine() throws {
+        let f = try Fixture(duration: 3); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        XCTAssertGreaterThan(try f.peak(), 0.1)
+        // A device change makes macOS stop the engine, which resets its player nodes.
+        let engine = f.audio.masterAudioEngine.rawEngine
+        engine.stop()
+        try engine.start()
+        XCTAssertLessThan(try f.peak(), 0.01, "Reproduces the silent-but-running state")
+        XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
+        f.audio.deckAGraph.resumeAfterEngineRestart(role: .master)
+        XCTAssertGreaterThan(try f.peak(), 0.1, "Recovery must re-queue audio from the playhead")
+    }
+
     func testActualLoadButtonWithoutSelectionShowsReason() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)

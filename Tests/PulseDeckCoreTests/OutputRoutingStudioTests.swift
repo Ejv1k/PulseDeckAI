@@ -127,6 +127,29 @@ final class OutputRoutingStudioTests: XCTestCase {
     }
 
     @MainActor
+    func testCueStartFailureOnPlayKeepsMasterRunningAndReportsCue() throws {
+        let app = try makeOfflineApp()
+        coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueOnPlay")
+        app.toggleDeckPlay(deck: .deckA)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertTrue(coordinator.monitor.isMonitoringActive)
+        XCTAssertTrue(app.isDeckAPlaying)
+        XCTAssertFalse(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(app.coordinatorErrorMessage?.hasPrefix("Headphone cue unavailable") ?? false)
+        coordinator.cueAudioEngine.startErrorForTesting = nil
+    }
+
+    @MainActor
+    func testCueStartFailureAtLaunchKeepsMasterRunning() throws {
+        coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueAtLaunch")
+        let app = try makeOfflineApp(startCoordinator: true)
+        XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
+        XCTAssertFalse(coordinator.cueAudioEngine.isRunning)
+        XCTAssertTrue(app.coordinatorErrorMessage?.hasPrefix("Headphone cue unavailable") ?? false)
+        coordinator.cueAudioEngine.startErrorForTesting = nil
+    }
+
+    @MainActor
     func testCueActivationFailureRejectsBothDecksAndSuccessfulRetryRecovers() async throws {
         let app = try makeOfflineApp()
         coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueStart")
@@ -363,8 +386,9 @@ final class OutputRoutingStudioTests: XCTestCase {
         app.selectOutputDevice(role: .master, uid: "wired_headphones_uid")
         app.selectOutputDevice(role: .cue, uid: "bluetooth_headphones_uid")
         for attempt in 0..<3 {
-            audio.masterAudioEngine.startErrorForTesting = attempt == 1
-                ? CoreAudioError.osStatus(-1, operation: "masterRetry") : nil
+            // A cue-only failure keeps master running (see testCueStartFailureOnPlay…), so the
+            // rollback under test is driven by master failing, with and without a cue failure.
+            audio.masterAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-1, operation: "masterRetry")
             audio.cueAudioEngine.startErrorForTesting = attempt == 1
                 ? nil : CoreAudioError.osStatus(-10868, operation: "cueRetry")
             app.toggleDeckPlay(deck: .deckB)

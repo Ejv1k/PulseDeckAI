@@ -209,7 +209,10 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
     // MARK: - Lifecycle Controls
 
     /// Starts both audio engines and activates hardware monitoring.
-    public func start() throws {
+    /// - Parameter requireCue: when false, a cue engine failure leaves master and monitoring
+    ///   running and is returned instead of thrown, so missing headphones never silence master.
+    @discardableResult
+    public func start(requireCue: Bool = true) throws -> Error? {
         try monitor.performOnControlQueue {
             // Rollback and normal shutdown remove registrations. Restore them before reconciliation;
             // currentDevice records the last explicit preference, not a recovered fallback binding.
@@ -228,7 +231,13 @@ public final class AudioEngineCoordinator: AudioEngineCoordinatorContract, @unch
                 try masterAudioEngine.start()
                 masterStarted = true
 
-                try cueAudioEngine.start()
+                do {
+                    try cueAudioEngine.start()
+                } catch where !requireCue {
+                    cueAudioEngine.stop()
+                    return error
+                }
+                return nil
             } catch {
                 if masterStarted {
                     masterAudioEngine.stop()

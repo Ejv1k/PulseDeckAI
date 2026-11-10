@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 #if canImport(Darwin)
@@ -10,10 +11,11 @@ import Glibc
 public enum CachePersistence: Sendable {
 
     /// Loads and decodes the library cache from disk.
-    /// Strictly validates schema invariants (schemaVersion == "1.0.0", non-empty libraryRoot,
-    /// finite non-negative duration, confidence in 0...1, and valid cue bounds).
-    /// Returns nil if file is nonexistent, decoding fails, or schema validation fails.
-    /// Does not convert schema validation failures into an empty cache (empty default cache is
+    /// Strictly validates schema invariants (schemaVersion == "1.0.0", non-empty libraryRoot).
+    /// Tracks that fail duration, confidence, or cue bounds are dropped so one bad entry cannot
+    /// block every edit; the original bytes are first kept in a hidden backup next to the cache.
+    /// Returns nil if file is nonexistent, decoding fails, schema validation fails, or the backup
+    /// cannot be written. Does not convert failures into an empty cache (empty default cache is
     /// returned solely for a 0-byte file).
     public static func load(from fileURL: URL) -> PulseDeckLibraryCache? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -26,7 +28,14 @@ public enum CachePersistence: Sendable {
                 return PulseDeckLibraryCache()
             }
             let decoder = JSONDecoder()
-            let decoded = try decoder.decode(PulseDeckLibraryCache.self, from: data)
+            var decoded = try decoder.decode(PulseDeckLibraryCache.self, from: data)
+            let invalidPaths = decoded.tracks.compactMap { path, track in
+                (try? PulseDeckLibraryCache.validate(track: track, path: path)) == nil ? path : nil
+            }
+            if !invalidPaths.isEmpty {
+                try keepInvalidTrackBackup(of: data, besides: fileURL)
+                for path in invalidPaths { decoded.tracks[path] = nil }
+            }
             // Strictly validate schema invariants with parity to Python loader
             try decoded.validate()
             return decoded
@@ -34,6 +43,20 @@ public enum CachePersistence: Sendable {
             // Return nil on malformed JSON or schema validation failure
             return nil
         }
+    }
+
+    /// Backup of a cache whose invalid tracks were dropped on load, named by content hash so
+    /// repeated loads of the same file reuse one backup and a later bad file never replaces it.
+    public static func invalidTrackBackupURL(for data: Data, besides fileURL: URL) -> URL {
+        let digest = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return fileURL.deletingLastPathComponent()
+            .appendingPathComponent("\(fileURL.lastPathComponent).invalid-\(digest).bak")
+    }
+
+    private static func keepInvalidTrackBackup(of data: Data, besides fileURL: URL) throws {
+        let backupURL = invalidTrackBackupURL(for: data, besides: fileURL)
+        guard !FileManager.default.fileExists(atPath: backupURL.path) else { return }
+        try data.write(to: backupURL, options: .atomic)
     }
 
     /// Atomically persists the library cache to disk using temporary file staging,

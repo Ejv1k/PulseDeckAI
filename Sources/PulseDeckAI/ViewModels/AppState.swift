@@ -25,6 +25,13 @@ public final class AppState: ObservableObject {
                 for task in deckAnalysisValidationTasks.values { task.cancel() }
                 deckAnalysisValidationTasks.removeAll()
                 deckAnalysisValidationIDs.removeAll()
+                for task in loudnessTasks.values { task.cancel() }
+                loudnessTasks.removeAll()
+                loudnessRequestIDs.removeAll()
+                for deck in [DeckIdentifier.deckA, .deckB] where isMeasuringLoudness(deck) {
+                    setAutoGain(nil, measuring: false, deck: deck)
+                    applyAutoGain(deck: deck)
+                }
                 for task in deckLoadTasks.values { task.cancel() }
                 deckLoadTasks.removeAll()
                 deckLoadRequestIDs.removeAll()
@@ -95,6 +102,23 @@ public final class AppState: ObservableObject {
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
     private var deckLoadTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckLoadRequestIDs: [DeckIdentifier: UUID] = [:]
+    /// App preferences; nil for injected (test) instances so they never touch the user's settings.
+    private var preferences: UserDefaults?
+    private var loudnessTasks: [DeckIdentifier: Task<Void, Never>] = [:]
+    private var loudnessRequestIDs: [DeckIdentifier: UUID] = [:]
+    /// Auto gain per deck once measured (dB toward -14 LUFS); nil while measuring or for silent/unreadable audio.
+    @Published public private(set) var deckAAutoGainDB: Double?
+    @Published public private(set) var deckBAutoGainDB: Double?
+    @Published public private(set) var deckAAutoGainMeasuring = false
+    @Published public private(set) var deckBAutoGainMeasuring = false
+    /// Every track plays at a similar loudness (EBU R128). Persisted; on by default.
+    @Published public var isAutoGainEnabled: Bool = true {
+        didSet {
+            guard oldValue != isAutoGainEnabled else { return }
+            preferences?.set(isAutoGainEnabled, forKey: "autoGainEnabled")
+            for deck in [DeckIdentifier.deckA, .deckB] { applyAutoGain(deck: deck) }
+        }
+    }
     var beforeDeckLoadPreparationForTesting: (@Sendable (String) async -> Void)?
     private var deckLoadedSourceIdentities: [DeckIdentifier: LibraryTrackSource.Identity] = [:]
     var beforeCachedFingerprintValidationForTesting: (@Sendable () async -> Void)?
@@ -271,6 +295,9 @@ public final class AppState: ObservableObject {
             statusMessage = "Audio Startup Error: \(error.localizedDescription)"
         }
 
+        self.preferences = .standard
+        self.isAutoGainEnabled = UserDefaults.standard.object(forKey: "autoGainEnabled") as? Bool ?? true
+
         let locationStore = LibraryLocationStore.applicationStore()
         let location = LibraryLocation.resolve(
             arguments: ProcessInfo.processInfo.arguments,
@@ -306,9 +333,11 @@ public final class AppState: ObservableObject {
         libraryLocationStore: LibraryLocationStore? = nil,
         libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
         beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)? = nil,
-        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
+        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() },
+        autoGainEnabled: Bool = false
     ) {
         // Explicitly injected roots win; this initializer never restores normal app preferences.
+        self.isAutoGainEnabled = autoGainEnabled
         self.libraryLocationStore = libraryLocationStore
         self.libraryLaunchIssue = libraryLaunchIssue
         self.beforeSoundboardPreloadForTesting = beforeSoundboardPreloadForTesting
@@ -818,6 +847,46 @@ public final class AppState: ObservableObject {
         return true
     }
 
+    func autoGainDB(_ deck: DeckIdentifier) -> Double? { deck == .deckA ? deckAAutoGainDB : deckBAutoGainDB }
+    func isMeasuringLoudness(_ deck: DeckIdentifier) -> Bool { deck == .deckA ? deckAAutoGainMeasuring : deckBAutoGainMeasuring }
+
+    /// Measures integrated loudness in the background after a load. Until it finishes the deck plays at
+    /// unity trim; a result for a track that has since been replaced is dropped.
+    private func measureLoudness(deck: DeckIdentifier, file: URL) {
+        loudnessTasks[deck]?.cancel()
+        let request = UUID()
+        loudnessRequestIDs[deck] = request
+        setAutoGain(nil, measuring: true, deck: deck)
+        applyAutoGain(deck: deck)
+        loudnessTasks[deck] = Task { [weak self] in
+            let measurement = Task.detached(priority: .utility) { try? LoudnessMeter.measure(url: file) }
+            // A detached task does not inherit cancellation; forward it so a superseded load stops decoding.
+            let measured = await withTaskCancellationHandler { await measurement.value } onCancel: { measurement.cancel() }
+            guard let self, !Task.isCancelled, self.loudnessRequestIDs[deck] == request else { return }
+            self.loudnessTasks[deck] = nil
+            self.loudnessRequestIDs[deck] = nil
+            self.setAutoGain(measured.map { LoudnessMeter.autoGainDB(for: $0) }, measuring: false, deck: deck)
+            self.applyAutoGain(deck: deck)
+        }
+    }
+
+    func waitForPendingLoudness(deck: DeckIdentifier) async {
+        await loudnessTasks[deck]?.value
+    }
+
+    private func setAutoGain(_ gain: Double?, measuring: Bool, deck: DeckIdentifier) {
+        if deck == .deckA { deckAAutoGainDB = gain; deckAAutoGainMeasuring = measuring }
+        else { deckBAutoGainDB = gain; deckBAutoGainMeasuring = measuring }
+    }
+
+    private func applyAutoGain(deck: DeckIdentifier) {
+        guard let coordinator = audioCoordinator else { return }
+        let gain = Float(isAutoGainEnabled ? (autoGainDB(deck) ?? 0) : 0)
+        coordinator.monitor.performOnControlQueue {
+            (deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph).trimGainDB = gain
+        }
+    }
+
     func waitForPendingDeckLoad(deck: DeckIdentifier) async {
         await deckLoadTasks[deck]?.value
     }
@@ -845,6 +914,7 @@ public final class AppState: ObservableObject {
         deckAnalysisValidationTasks[deck] = nil
         deckAnalysisValidationIDs[deck] = nil
         deckLoadedSourceIdentities[deck] = load.identity
+        measureLoudness(deck: deck, file: file)
         if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
         deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
         statusMessage = deckLoadMessages[deck] ?? "Loaded"

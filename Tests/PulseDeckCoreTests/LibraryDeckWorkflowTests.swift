@@ -225,7 +225,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         f.app.toggleDeckPlay(deck: .deckA)
         graph.rampTrimGain(to: 3, duration: 0.3)
         XCTAssertEqual(graph.trimGainDB, -6, accuracy: 0.5, "An audible deck must not jump")
-        try await Task.sleep(nanoseconds: 600_000_000)
+        for _ in 0..<100 where graph.trimGainDB != 3 { try await Task.sleep(nanoseconds: 20_000_000) } // ≤ 2 s
         XCTAssertEqual(graph.trimGainDB, 3, accuracy: 1e-4)
         XCTAssertEqual(graph.masterEQNode.globalGain, 3, accuracy: 1e-4)
         graph.trimGainDB = 0 // A direct set cancels any ramp still in flight.

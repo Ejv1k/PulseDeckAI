@@ -64,6 +64,7 @@ final class TalkoverTests: XCTestCase {
 
     func testFinalTalkoverTickCannotReopenClosedCrossfader() throws {
         let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        coordinator.masterAudioEngine.limiterNode.bypass = true // Sample-accurate silence checks: the master limiter's lookahead tail is out of scope here.
         let master = coordinator.masterAudioEngine.rawEngine
         let cue = coordinator.cueAudioEngine.rawEngine
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))

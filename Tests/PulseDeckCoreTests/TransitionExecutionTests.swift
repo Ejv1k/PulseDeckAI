@@ -1719,6 +1719,7 @@ final class TransitionExecutionTests: XCTestCase {
         }
         for outgoing: DeckIdentifier in [.deckA, .deckB] {
             let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+            coordinator.masterAudioEngine.limiterNode.bypass = true // Sample-accurate silence checks: the master limiter's lookahead tail is out of scope here.
             let service = coordinator.transitionExecutionService
             let master = coordinator.masterAudioEngine.rawEngine
             let cue = coordinator.cueAudioEngine.rawEngine

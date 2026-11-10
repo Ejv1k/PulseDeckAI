@@ -165,6 +165,8 @@ public struct DeckStudioView: View {
             Divider()
                 .background(DJTheme.border)
 
+            DeckEQStrip(appState: appState, deck: deck, color: color)
+
             // Transport Controls
             HStack(spacing: 8) {
                 Button(action: {

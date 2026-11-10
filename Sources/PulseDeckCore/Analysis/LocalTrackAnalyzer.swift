@@ -131,9 +131,19 @@ public struct LocalTrackAnalyzer: Sendable {
             throw LocalAnalysisError.invalidMetadata
         }
         let fingerprint = "\(fileSize)-\(Int64(modified.timeIntervalSince1970 * 1_000))"
-        // Same chroma key estimate as the model path; a second 22.05 kHz decode keeps this pass streaming.
-        let musicalKey = (try? KeyDetector.detectKey(samples: SlaneyMelSpectrogram.loadAudioSamples(from: fileURL),
-                                                     sampleRate: SlaneyMelSpectrogram.sampleRate)) ?? nil ?? "Unknown"
+        // Same chroma key estimate as the model path, on a whole-track 22.05 kHz decode. Bounded like the model
+        // path (30 min ≈ 160 MB of samples); longer mixes keep "Unknown" rather than risk gigabytes.
+        var musicalKey = "Unknown"
+        if duration <= 30 * 60 {
+            do {
+                let samples = try SlaneyMelSpectrogram.loadAudioSamples(from: fileURL)
+                musicalKey = try KeyDetector.detectKey(samples: samples, sampleRate: SlaneyMelSpectrogram.sampleRate) ?? "Unknown"
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                musicalKey = "Unknown" // An unreadable second pass must not fail the waveform and tempo result.
+            }
+        }
         let bitDepth: Int
         switch format.commonFormat {
         case .pcmFormatFloat32, .pcmFormatInt32: bitDepth = 32

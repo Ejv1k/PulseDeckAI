@@ -144,6 +144,7 @@ public enum WaveformEditorError: LocalizedError, Equatable {
 public enum WaveformEditIntent: Sendable {
     case cue(CueType, acceptedPreviousValues: Set<Double>)
     case aiTrimBypass(acceptedPreviousValues: Set<Bool>)
+    case bpm(acceptedPreviousValues: Set<Double>)
 }
 
 /// Asynchronous persistence boundary shared by the editor and its production background actor.
@@ -269,6 +270,12 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             }
             merged.aiTrimBypass = track.aiTrimBypass
             if !mergedFields.contains("aiTrimBypass") { mergedFields.append("aiTrimBypass") }
+        case .bpm(let acceptedPreviousValues):
+            guard acceptedPreviousValues.contains(disk.bpm) else {
+                throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "BPM")
+            }
+            merged.bpm = track.bpm
+            if !mergedFields.contains("bpm") { mergedFields.append("bpm") }
         }
 
         merged.manualOverrides = ManualOverrides(
@@ -327,6 +334,7 @@ public final class WaveformEditorModel: ObservableObject {
     private enum EditedField: Hashable {
         case cue(CueType)
         case aiTrimBypass
+        case bpm
     }
     private struct FieldEdit {
         let revision: UInt64
@@ -338,6 +346,7 @@ public final class WaveformEditorModel: ObservableObject {
         let revision: UInt64
         var acceptedPreviousCueValues: [CueType: Set<Double>]
         var acceptedPreviousBypassValues: Set<Bool>
+        var acceptedPreviousBPMValues: Set<Double> = []
         var fieldEdits: [EditedField: FieldEdit]
 
         var hasPendingEdits: Bool { fieldEdits.values.contains(where: \.isPending) }
@@ -408,6 +417,9 @@ public final class WaveformEditorModel: ObservableObject {
         if local.fieldEdits[.aiTrimBypass] != nil {
             merged.aiTrimBypass = local.track.aiTrimBypass
         }
+        if local.fieldEdits[.bpm] != nil {
+            merged.bpm = local.track.bpm
+        }
 
         var overrides = persisted.manualOverrides
         if !local.fieldEdits.isEmpty {
@@ -419,6 +431,9 @@ public final class WaveformEditorModel: ObservableObject {
             if local.fieldEdits[.aiTrimBypass] != nil,
                !overrides.overriddenFields.contains("aiTrimBypass") {
                 overrides.overriddenFields.append("aiTrimBypass")
+            }
+            if local.fieldEdits[.bpm] != nil, !overrides.overriddenFields.contains("bpm") {
+                overrides.overriddenFields.append("bpm")
             }
             overrides.updatedAt = local.track.manualOverrides.updatedAt ?? overrides.updatedAt
             overrides.author = local.track.manualOverrides.author ?? overrides.author
@@ -725,6 +740,34 @@ public final class WaveformEditorModel: ObservableObject {
         persistCurrentTrackToCache(intent: .aiTrimBypass(acceptedPreviousValues: acceptedPreviousValues))
     }
 
+    /// Halves or doubles the tempo label to fix octave errors (e.g. a 12/8 ballad read at 2x)
+    /// and persists it as a manual "bpm" override that re-analysis keeps. The beat grid is unchanged.
+    public func scaleBPM(by factor: Double) {
+        guard factor == 0.5 || factor == 2, var track = currentTrack, track.bpm > 0 else { return }
+        let newBPM = (track.bpm * factor * 10).rounded() / 10
+        guard (40.0...250.0).contains(newBPM) else {
+            statusMessage = String(format: "%.1f BPM is outside the supported 40-250 range", newBPM)
+            return
+        }
+        let identity = TrackIdentity(root: libraryRootURL, relativePath: track.relativePath)
+        var acceptedPreviousValues = localEdits[identity]?.acceptedPreviousBPMValues ?? []
+        acceptedPreviousValues.insert(track.bpm)
+        interactionRevision &+= 1
+
+        var overrides = manualOverrides
+        overrides.isManual = true
+        if !overrides.overriddenFields.contains("bpm") { overrides.overriddenFields.append("bpm") }
+        overrides.updatedAt = ISO8601DateFormatter().string(from: Date())
+        overrides.author = "DJ (PulseDeck Manual Editor)"
+        manualOverrides = overrides
+
+        track.bpm = newBPM
+        track.manualOverrides = overrides
+        currentTrack = track
+        statusMessage = String(format: "Tempo set to %.1f BPM", newBPM)
+        persistCurrentTrackToCache(intent: .bpm(acceptedPreviousValues: acceptedPreviousValues))
+    }
+
     // MARK: - Zoom and Scroll
 
     public func setZoom(_ newZoom: Double, focusTime: Double? = nil) {
@@ -784,6 +827,7 @@ public final class WaveformEditorModel: ObservableObject {
         switch intent {
         case .cue(let cue, _): .cue(cue)
         case .aiTrimBypass: .aiTrimBypass
+        case .bpm: .bpm
         }
     }
 
@@ -827,11 +871,14 @@ public final class WaveformEditorModel: ObservableObject {
         let identity = TrackIdentity(root: rootURL, relativePath: track.relativePath)
         var acceptedPreviousCueValues = localEdits[identity]?.acceptedPreviousCueValues ?? [:]
         var acceptedPreviousBypassValues = localEdits[identity]?.acceptedPreviousBypassValues ?? []
+        var acceptedPreviousBPMValues = localEdits[identity]?.acceptedPreviousBPMValues ?? []
         switch intent {
         case .cue(let cue, let values):
             acceptedPreviousCueValues[cue] = values
         case .aiTrimBypass(let values):
             acceptedPreviousBypassValues = values
+        case .bpm(let values):
+            acceptedPreviousBPMValues = values
         }
         nextRevision &+= 1
         let revision = nextRevision
@@ -841,6 +888,7 @@ public final class WaveformEditorModel: ObservableObject {
         localEdits[identity] = LocalEdit(track: track, revision: revision,
                                          acceptedPreviousCueValues: acceptedPreviousCueValues,
                                          acceptedPreviousBypassValues: acceptedPreviousBypassValues,
+                                         acceptedPreviousBPMValues: acceptedPreviousBPMValues,
                                          fieldEdits: fieldEdits)
         pendingSaveCount += 1
         self.isSaving = true

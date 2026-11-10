@@ -25,6 +25,9 @@ public final class AppState: ObservableObject {
                 for task in deckAnalysisValidationTasks.values { task.cancel() }
                 deckAnalysisValidationTasks.removeAll()
                 deckAnalysisValidationIDs.removeAll()
+                for task in deckLoadTasks.values { task.cancel() }
+                deckLoadTasks.removeAll()
+                deckLoadRequestIDs.removeAll()
                 analysisStatuses = [:]
                 deckLoadMessages = [:]
                 loadedCache = nil
@@ -90,6 +93,9 @@ public final class AppState: ObservableObject {
     private var crateBatchID: UUID?
     private var deckAnalysisValidationTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
+    private var deckLoadTasks: [DeckIdentifier: Task<Void, Never>] = [:]
+    private var deckLoadRequestIDs: [DeckIdentifier: UUID] = [:]
+    var beforeDeckLoadPreparationForTesting: (@Sendable (String) async -> Void)?
     private var deckLoadedSourceIdentities: [DeckIdentifier: LibraryTrackSource.Identity] = [:]
     var beforeCachedFingerprintValidationForTesting: (@Sendable () async -> Void)?
 
@@ -688,7 +694,7 @@ public final class AppState: ObservableObject {
             reportDeckLoadFailure("Select a library track, then click LOAD or drag it onto this deck.", deck: deck)
             return
         }
-        _ = loadTrack(relativePath: path, deck: deck)
+        startTrackLoad(relativePath: path, deck: deck)
     }
 
     func deckLoadMessage(for deck: DeckIdentifier) -> String? { deckLoadMessages[deck] }
@@ -698,57 +704,151 @@ public final class AppState: ObservableObject {
         statusMessage = "\(deck.rawValue): \(reason)"
     }
 
-    /// The single entry point shared by the real LOAD control and native library drops.
+    /// Everything a deck load needs from disk, gathered before touching any deck.
+    private struct PreparedDeckLoad {
+        let file: URL
+        let identity: LibraryTrackSource.Identity
+        let basic: TrackCacheEntry
+        let masterFile: AVAudioFile
+        let cueFile: AVAudioFile
+    }
+
+    /// File I/O only; safe off MainActor. Slow USB/NAS volumes block here, not the UI.
+    nonisolated private static func prepareDeckLoad(relativePath: String, root: URL) throws -> sending PreparedDeckLoad {
+        let file = try LibraryTrackSource.url(relativePath: relativePath, root: root)
+        let identity = try LibraryTrackSource.identity(at: file)
+        // Opening a header is enough to load fresh files. Do not synthesize measured analysis.
+        let basic = try LibraryTrackSource.metadata(at: file, relativePath: relativePath)
+        let masterFile = try AVAudioFile(forReading: file)
+        let cueFile = try AVAudioFile(forReading: file)
+        guard identity == (try LibraryTrackSource.identity(at: file)), basic.fileFingerprint == identity.fingerprint else {
+            throw LibraryTrackSource.Failure("The file changed while loading. Wait for the copy to finish and load again.")
+        }
+        return PreparedDeckLoad(file: file, identity: identity, basic: basic, masterFile: masterFile, cueFile: cueFile)
+    }
+
+    /// Nonisolated async runs on the generic executor, like preview preparation.
+    nonisolated private static func prepareDeckLoadInBackground(
+        relativePath: String, root: URL, beforePreparation: (@Sendable (String) async -> Void)?
+    ) async throws -> sending PreparedDeckLoad {
+        await beforePreparation?(relativePath)
+        return try prepareDeckLoad(relativePath: relativePath, root: root)
+    }
+
+    /// Cheap refusals that need no disk access. The commit re-checks atomically.
+    private func deckLoadRefusal(deck: DeckIdentifier) -> String? {
+        guard resolvedLibraryRootURL != nil else { return libraryLocationError ?? "Open Library to choose a library root." }
+        guard !isTransitionBusy, pendingSafetyLockAutomationCommands == 0 else {
+            return "Automation owns deck transport; finish or cancel it before loading."
+        }
+        guard audioCoordinator != nil else { return "Audio engine is unavailable; check output routing before loading." }
+        return nil
+    }
+
+    /// Any newer load request, even a refused one, supersedes a load still preparing.
+    private func cancelPendingDeckLoad(deck: DeckIdentifier) {
+        deckLoadTasks[deck]?.cancel()
+        deckLoadTasks[deck] = nil
+        deckLoadRequestIDs[deck] = nil
+    }
+
+    /// Synchronous load, kept for scripted callers and tests. UI controls use `startTrackLoad`.
     @discardableResult
     public func loadTrack(relativePath: String, deck: DeckIdentifier) -> Bool {
-        guard resolvedLibraryRootURL != nil else {
-            reportDeckLoadFailure(libraryLocationError ?? "Open Library to choose a library root.", deck: deck)
-            return false
-        }
-        guard !isTransitionBusy, pendingSafetyLockAutomationCommands == 0 else {
-            reportDeckLoadFailure("Automation owns deck transport; finish or cancel it before loading.", deck: deck)
+        cancelPendingDeckLoad(deck: deck)
+        if let reason = deckLoadRefusal(deck: deck) {
+            reportDeckLoadFailure(reason, deck: deck)
             return false
         }
         do {
-            let file = try LibraryTrackSource.url(relativePath: relativePath, root: libraryRootURL)
-            let sourceIdentity = try LibraryTrackSource.identity(at: file)
-            // Opening a header is enough to load fresh files. Do not synthesize measured analysis.
-            let basic = try LibraryTrackSource.metadata(at: file, relativePath: relativePath)
-            let cache = loadedCacheRootURL == libraryRootURL.standardizedFileURL ? loadedCache : nil
-            let cached = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: cache, libraryRootURL: libraryRootURL)
-            guard sourceIdentity == (try LibraryTrackSource.identity(at: file)), basic.fileFingerprint == sourceIdentity.fingerprint else {
-                throw LibraryTrackSource.Failure("The file changed while loading. Wait for the copy to finish and load again.")
-            }
-            let durationMatches = cached.map { abs($0.duration - basic.duration) < 0.01 } ?? false
-            let entry = durationMatches && cached?.fileFingerprint == sourceIdentity.fingerprint ? (cached ?? basic) : basic
-            guard audioCoordinator != nil else {
-                reportDeckLoadFailure("Audio engine is unavailable; check output routing before loading.", deck: deck)
-                return false
-            }
-            // Safety and automation authorization remain atomic with both actual graph loads.
-            masterSafetyLockMessage = nil
-            guard performManualDeckMutation(deck: deck, action: .replace, mutation: { graph in
-                try graph.loadTrack(url: file)
-                graph.volume = 1
-            }) else {
-                reportDeckLoadFailure(masterSafetyLockMessage ?? statusMessage, deck: deck)
-                return false
-            }
-            deckAnalysisValidationTasks[deck]?.cancel()
-            deckAnalysisValidationTasks[deck] = nil
-            deckAnalysisValidationIDs[deck] = nil
-            deckLoadedSourceIdentities[deck] = sourceIdentity
-            if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
-            deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
-            statusMessage = deckLoadMessages[deck] ?? "Loaded"
-            if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
-                validateSHAAnalysis(cached, file: file, identity: sourceIdentity, deck: deck)
-            }
-            return true
+            return commitDeckLoad(try Self.prepareDeckLoad(relativePath: relativePath, root: libraryRootURL),
+                                  relativePath: relativePath, deck: deck)
         } catch {
             reportDeckLoadFailure("Unable to load \(relativePath): \(error.localizedDescription)", deck: deck)
             return false
         }
+    }
+
+    /// The single entry point shared by the real LOAD control and native library drops.
+    /// Returns false only for immediate refusals; disk failures arrive later as the deck message.
+    @discardableResult
+    func startTrackLoad(relativePath: String, deck: DeckIdentifier, focusOnSuccess: Bool = false) -> Bool {
+        cancelPendingDeckLoad(deck: deck)
+        if let reason = deckLoadRefusal(deck: deck) {
+            reportDeckLoadFailure(reason, deck: deck)
+            return false
+        }
+        if isMasterDeckProtected(deck) {
+            masterSafetyLockMessage = "Master Safety Lock blocked \(MasterSafetyLockAction.replace.rawValue) on \(deck.rawValue). Use Shift+Space for one pause, or switch the lock off."
+            reportDeckLoadFailure(masterSafetyLockMessage ?? "", deck: deck)
+            return false
+        }
+        let request = UUID()
+        let root = libraryRootURL.standardizedFileURL
+        deckLoadRequestIDs[deck] = request
+        deckLoadMessages[deck] = "Loading \(relativePath)…"
+        let beforePreparation = beforeDeckLoadPreparationForTesting
+        deckLoadTasks[deck] = Task { [weak self] in
+            let prepared: Result<PreparedDeckLoad, any Error>
+            do {
+                prepared = .success(try await Self.prepareDeckLoadInBackground(
+                    relativePath: relativePath, root: root, beforePreparation: beforePreparation))
+            } catch {
+                prepared = .failure(error)
+            }
+            // A newer load, a root change or cancellation owns the deck now; drop this result.
+            guard let self, !Task.isCancelled, self.deckLoadRequestIDs[deck] == request,
+                  self.libraryRootURL.standardizedFileURL == root else { return }
+            self.deckLoadRequestIDs[deck] = nil
+            self.deckLoadTasks[deck] = nil
+            switch prepared {
+            case .success(let load):
+                if let reason = self.deckLoadRefusal(deck: deck) {
+                    self.reportDeckLoadFailure(reason, deck: deck)
+                } else if self.commitDeckLoad(load, relativePath: relativePath, deck: deck), focusOnSuccess {
+                    self.focusMasterDeck(deck)
+                }
+            case .failure(let error):
+                self.reportDeckLoadFailure("Unable to load \(relativePath): \(error.localizedDescription)", deck: deck)
+            }
+        }
+        return true
+    }
+
+    func waitForPendingDeckLoad(deck: DeckIdentifier) async {
+        await deckLoadTasks[deck]?.value
+    }
+
+    /// MainActor half of a load: cache lookup, safety-checked graph swap, published state.
+    private func commitDeckLoad(_ load: sending PreparedDeckLoad, relativePath: String, deck: DeckIdentifier) -> Bool {
+        let cache = loadedCacheRootURL == libraryRootURL.standardizedFileURL ? loadedCache : nil
+        let cached = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: cache, libraryRootURL: libraryRootURL)
+        let durationMatches = cached.map { abs($0.duration - load.basic.duration) < 0.01 } ?? false
+        let entry = durationMatches && cached?.fileFingerprint == load.identity.fingerprint ? (cached ?? load.basic) : load.basic
+        let file = load.file
+        // `sending` gave this call sole ownership; older SDKs mark AVAudioFile non-Sendable.
+        nonisolated(unsafe) let masterFile = load.masterFile
+        nonisolated(unsafe) let cueFile = load.cueFile
+        // Safety and automation authorization remain atomic with both actual graph loads.
+        masterSafetyLockMessage = nil
+        guard performManualDeckMutation(deck: deck, action: .replace, mutation: { graph in
+            graph.loadTrack(masterFile: masterFile, cueFile: cueFile, url: file)
+            graph.volume = 1
+        }) else {
+            reportDeckLoadFailure(masterSafetyLockMessage ?? statusMessage, deck: deck)
+            return false
+        }
+        deckAnalysisValidationTasks[deck]?.cancel()
+        deckAnalysisValidationTasks[deck] = nil
+        deckAnalysisValidationIDs[deck] = nil
+        deckLoadedSourceIdentities[deck] = load.identity
+        if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
+        deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
+        statusMessage = deckLoadMessages[deck] ?? "Loaded"
+        if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
+            validateSHAAnalysis(cached, file: file, identity: load.identity, deck: deck)
+        }
+        return true
     }
 
     /// Full-file hashing stays off the UI/control queues. Until it succeeds, header-only
@@ -818,9 +918,7 @@ public final class AppState: ObservableObject {
             reportDeckLoadFailure("This drag belongs to another library. Select a track from the current library.", deck: deck)
             return false
         }
-        let loaded = loadTrack(relativePath: item.relativePath, deck: deck)
-        if loaded { focusMasterDeck(deck) }
-        return loaded
+        return startTrackLoad(relativePath: item.relativePath, deck: deck, focusOnSuccess: true)
     }
 
     func analysisStatus(for path: String) -> LibraryTrackAnalysisStatus? { analysisStatuses[path] }

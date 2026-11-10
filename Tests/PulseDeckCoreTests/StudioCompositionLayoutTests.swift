@@ -207,6 +207,13 @@ final class StudioCompositionLayoutTests: XCTestCase {
         }
     }
 
+    /// This test mounts AppKit views with `wait(for:)`, so it stays synchronous and spins the run loop.
+    private func waitForDeckLoad(_ state: AppState, deck: DeckIdentifier) {
+        let loaded = expectation(description: "Deck load finished")
+        Task { await state.waitForPendingDeckLoad(deck: deck); loaded.fulfill() }
+        wait(for: [loaded], timeout: 5)
+    }
+
     private func pressButton<V: View>(_ button: V) throws {
         _ = NSApplication.shared
         let ready = expectation(description: "Button action capture ready")
@@ -341,11 +348,13 @@ final class StudioCompositionLayoutTests: XCTestCase {
         // Step B: Load selected track into Deck A via LibraryDeckLoadButton
         let loadDeckA = LibraryDeckLoadButton(appState: fixture.state, deck: .deckA, title: "DECK A", color: .blue)
         try pressButton(loadDeckA.button)
+        waitForDeckLoad(fixture.state, deck: .deckA)
         XCTAssertEqual(fixture.state.deckATrack?.relativePath, trackPath, "LibraryDeckLoadButton must load track into Deck A")
 
         // Step C: Load selected track into Deck B via LibraryDeckLoadButton
         let loadDeckB = LibraryDeckLoadButton(appState: fixture.state, deck: .deckB, title: "DECK B", color: .red)
         try pressButton(loadDeckB.button)
+        waitForDeckLoad(fixture.state, deck: .deckB)
         XCTAssertEqual(fixture.state.deckBTrack?.relativePath, trackPath, "LibraryDeckLoadButton must load track into Deck B")
 
         // Step D: Trigger explicit local analysis via LibraryTrackAnalysisButton

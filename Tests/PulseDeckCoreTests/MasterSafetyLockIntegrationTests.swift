@@ -57,8 +57,8 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
                 app = AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
                     loadedCache: PulseDeckLibraryCache(tracks: tracks), audioCoordinator: audio, startCoordinator: false,
                     libraryLocationStore: libraryLocationStore, chooseLibraryDirectory: libraryChooser)
-                app.selectedTrackPath = "a.wav"; app.loadSelectedTrackIntoDeck(deck: .deckA)
-                app.selectedTrackPath = "b.wav"; app.loadSelectedTrackIntoDeck(deck: .deckB)
+                app.selectedTrackPath = "a.wav"; _ = app.loadTrack(relativePath: "a.wav", deck: .deckA)
+                app.selectedTrackPath = "b.wav"; _ = app.loadTrack(relativePath: "b.wav", deck: .deckB)
                 app.updateCrossfader(position: 0)
                 app.toggleDeckPlay(deck: .deckA)
             } catch {
@@ -94,12 +94,13 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testDefaultLockRejectsOnAirReplacementBeforeLoading() throws {
+    func testDefaultLockRejectsOnAirReplacementBeforeLoading() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         let original = f.audio.deckAGraph.loadedTrackURL
         let generation = f.audio.deckAGraph.scheduleGeneration
         f.app.selectedTrackPath = "b.wav"
         f.app.loadSelectedTrackIntoDeck(deck: .deckA)
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, original)
         XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
         XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
@@ -145,13 +146,14 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testRealTransportAndChannelStateOverrideStalePublishedLabels() throws {
+    func testRealTransportAndChannelStateOverrideStalePublishedLabels() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.audio.deckAGraph.pause() // Internal cleanup does not go through a manual policy.
         XCTAssertTrue(f.app.isDeckAPlaying)
         XCTAssertFalse(f.app.isMasterDeckProtected(.deckA))
         f.app.selectedTrackPath = "b.wav"
         f.app.loadSelectedTrackIntoDeck(deck: .deckA)
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertFalse(f.app.isDeckAPlaying)
         f.audio.deckAGraph.play()
         f.app.focusMasterDeck(.deckB)
@@ -163,7 +165,7 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testExplicitUnlockAndOneShotConfirmationDoNotSharePersistentBypass() throws {
+    func testExplicitUnlockAndOneShotConfirmationDoNotSharePersistentBypass() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         f.app.focusMasterDeck(.deckB)
         XCTAssertFalse(f.app.forcePauseFocusedMasterDeck())
@@ -180,6 +182,7 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         XCTAssertTrue(f.app.stopDeck(deck: .deckA))
         f.app.selectedTrackPath = "b.wav"
         f.app.loadSelectedTrackIntoDeck(deck: .deckA)
+        await f.app.waitForPendingDeckLoad(deck: .deckA)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, f.root.appendingPathComponent("b.wav"))
         XCTAssertFalse(f.app.seekDeck(deck: .deckA, to: .nan))
         f.app.setMasterSafetyLockEnabled(true)

@@ -245,7 +245,7 @@ final class CacheSchemaTests: XCTestCase {
         endTrimExceedsCache.tracks[entryExceeds.relativePath] = entryExceeds
         let endTrimURL = tempDir.appendingPathComponent("end_trim_exceeds.json")
         try encoder.encode(endTrimExceedsCache).write(to: endTrimURL)
-        XCTAssertNil(CachePersistence.load(from: endTrimURL), "endTrimCue past duration must fail validation and return nil")
+        try assertInvalidTrackDropped(at: endTrimURL)
 
         // 3. Inverted cues must fail validation and return nil
         var invertedCuesCache = PulseDeckLibraryCache()
@@ -254,7 +254,7 @@ final class CacheSchemaTests: XCTestCase {
         invertedCuesCache.tracks[entryInverted.relativePath] = entryInverted
         let invertedURL = tempDir.appendingPathComponent("inverted_cues.json")
         try encoder.encode(invertedCuesCache).write(to: invertedURL)
-        XCTAssertNil(CachePersistence.load(from: invertedURL), "Inverted cues must fail validation and return nil")
+        try assertInvalidTrackDropped(at: invertedURL)
 
         // 4. Confidence outside 0.0...1.0 (confidence of 1.5) must fail validation and return nil
         var invalidConfidenceCache = PulseDeckLibraryCache()
@@ -289,7 +289,7 @@ final class CacheSchemaTests: XCTestCase {
         invalidConfidenceCache.tracks[entryConfidence.relativePath] = entryConfidence
         let confidenceURL = tempDir.appendingPathComponent("invalid_confidence.json")
         try encoder.encode(invalidConfidenceCache).write(to: confidenceURL)
-        XCTAssertNil(CachePersistence.load(from: confidenceURL), "Confidence 1.5 must fail validation and return nil")
+        try assertInvalidTrackDropped(at: confidenceURL)
 
         // 5. Negative duration must fail validation and return nil
         var negativeDurCache = PulseDeckLibraryCache()
@@ -297,7 +297,7 @@ final class CacheSchemaTests: XCTestCase {
         negativeDurCache.tracks[entryNegDur.relativePath] = entryNegDur
         let negDurURL = tempDir.appendingPathComponent("negative_duration.json")
         try encoder.encode(negativeDurCache).write(to: negDurURL)
-        XCTAssertNil(CachePersistence.load(from: negDurURL), "Negative duration must fail validation and return nil")
+        try assertInvalidTrackDropped(at: negDurURL)
 
         // 6. Empty libraryRoot must fail validation and return nil
         let emptyRootCache = PulseDeckLibraryCache(libraryRoot: "   ")
@@ -306,9 +306,40 @@ final class CacheSchemaTests: XCTestCase {
         XCTAssertNil(CachePersistence.load(from: emptyRootURL), "Empty libraryRoot must fail validation and return nil")
     }
 
-    private func makeSampleEntry(fingerprint: String, analyzer: String, duration: Double = 210.0) -> TrackCacheEntry {
+    /// An invalid track is dropped on load and the original bytes survive in a backup.
+    private func assertInvalidTrackDropped(at url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+        let original = try Data(contentsOf: url)
+        let loaded = try XCTUnwrap(CachePersistence.load(from: url), file: file, line: line)
+        XCTAssertTrue(loaded.tracks.isEmpty, file: file, line: line)
+        let backupURL = CachePersistence.invalidTrackBackupURL(for: original, besides: url)
+        XCTAssertEqual(try Data(contentsOf: backupURL), original, file: file, line: line)
+    }
+
+    func testInvalidTrackDropKeepsValidTracksAndOneBackupPerContent() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("PulseDeckDropTest_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        var cache = PulseDeckLibraryCache()
+        let good = makeSampleEntry(fingerprint: "good", analyzer: "v1", relativePath: "01_House/good.mp3")
+        let bad = makeSampleEntry(fingerprint: "bad", analyzer: "v1", duration: -1, relativePath: "01_House/bad.mp3")
+        cache.tracks = [good.relativePath: good, bad.relativePath: bad]
+        let url = tempDir.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        try JSONEncoder().encode(cache).write(to: url)
+
+        XCTAssertEqual(CachePersistence.load(from: url)?.tracks.keys.sorted(), ["01_House/good.mp3"])
+        XCTAssertNotNil(CachePersistence.load(from: url))
+        let backups = try FileManager.default.contentsOfDirectory(atPath: tempDir.path).filter { $0.hasSuffix(".bak") }
+        XCTAssertEqual(backups.count, 1, "Reloading the same file must reuse its backup")
+    }
+
+    private func makeSampleEntry(
+        fingerprint: String,
+        analyzer: String,
+        duration: Double = 210.0,
+        relativePath: String = "00_Test_Tracks_Dev/sample.mp3"
+    ) -> TrackCacheEntry {
         TrackCacheEntry(
-            relativePath: "00_Test_Tracks_Dev/sample.mp3",
+            relativePath: relativePath,
             fileFingerprint: fingerprint,
             fileSizeBytes: 5_242_880,
             fileModificationTime: "2026-10-14T12:00:00Z",

@@ -546,7 +546,8 @@ class PulseDeckLibraryCache:
         try:
             with open(temp_fd, "w", encoding="utf-8") as f:
                 json_dict = self.to_dict()
-                json.dump(json_dict, f, indent=2)
+                # NaN/Infinity are not JSON; Swift's decoder would reject the whole cache.
+                json.dump(json_dict, f, indent=2, allow_nan=False)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_path, file_path)

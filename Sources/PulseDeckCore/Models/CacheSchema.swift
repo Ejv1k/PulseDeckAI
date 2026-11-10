@@ -423,15 +423,20 @@ public struct PulseDeckLibraryCache: Codable, Sendable, Equatable {
             throw CacheValidationError.emptyLibraryRoot
         }
         for (path, track) in tracks {
-            guard track.duration.isFinite && track.duration >= 0.0 else {
-                throw CacheValidationError.invalidDuration(track: path, duration: track.duration)
-            }
-            guard track.confidence.isFinite && track.confidence >= 0.0 && track.confidence <= 1.0 else {
-                throw CacheValidationError.invalidConfidence(track: path, confidence: track.confidence)
-            }
-            guard track.cueMarkers.isValid(forDuration: track.duration) else {
-                throw CacheValidationError.invalidCueMarkers(track: path, duration: track.duration)
-            }
+            try Self.validate(track: track, path: path)
+        }
+    }
+
+    /// Validates one track entry's duration, confidence, and cue marker bounds.
+    public static func validate(track: TrackCacheEntry, path: String) throws {
+        guard track.duration.isFinite && track.duration >= 0.0 else {
+            throw CacheValidationError.invalidDuration(track: path, duration: track.duration)
+        }
+        guard track.confidence.isFinite && track.confidence >= 0.0 && track.confidence <= 1.0 else {
+            throw CacheValidationError.invalidConfidence(track: path, confidence: track.confidence)
+        }
+        guard track.cueMarkers.isValid(forDuration: track.duration) else {
+            throw CacheValidationError.invalidCueMarkers(track: path, duration: track.duration)
         }
     }
 

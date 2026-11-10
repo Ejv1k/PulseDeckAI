@@ -63,3 +63,4 @@ dist/
 
 # Claude Code personal settings
 .claude/settings.local.json
+graphify-out/

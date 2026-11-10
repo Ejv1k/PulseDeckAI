@@ -75,13 +75,32 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         return NSScreen.main ?? screens.first
     }
 
+    /// Full screen on an external display; a lone display is shared with the studio, so use a window.
+    static func presentationFrame(on screen: NSScreen) -> NSRect {
+        NSScreen.screens.count > 1 ? screen.frame : windowedFrame(in: screen.visibleFrame)
+    }
+
+    /// A 16:9 window at half the available width, centered, for single-display setups.
+    static func windowedFrame(in visible: NSRect) -> NSRect {
+        let width = (visible.width / 2).rounded()
+        let height = min((width * 9 / 16).rounded(), visible.height)
+        return NSRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height)
+    }
+
     // MARK: - Window Lifecycle
 
     /// Opens or brings the projector window to the front on the designated display.
     public func showProjectorWindow(appState: AppState) {
         guard let viewModel else { return }
 
-        if let existing = window, existing.isVisible {
+        // A minimized projector is still ours; bring it back instead of opening a second window.
+        if let existing = window {
+            if existing.isMiniaturized {
+                // deminiaturize makes the projector key; hand keys back to the studio.
+                let studio = NSApp.keyWindow
+                existing.deminiaturize(nil)
+                if let studio, studio !== existing { studio.makeKeyAndOrderFront(nil) }
+            }
             existing.orderFront(nil)
             viewModel.isWindowOpen = true
             return
@@ -90,7 +109,7 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         let targetScreen = Self.selectPresentationScreen()
         let initialFrame: NSRect
         if let screen = targetScreen {
-            initialFrame = screen.frame
+            initialFrame = Self.presentationFrame(on: screen)
         } else {
             initialFrame = NSRect(x: 100, y: 100, width: 1280, height: 720)
         }
@@ -185,7 +204,8 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
 
     /// Handles hot-plug or disconnect of external projectors safely.
     public func handleScreenParametersChanged() {
-        guard let win = window, win.isVisible else { return }
+        // Minimized windows are repositioned too, so restoring never lands on a missing display.
+        guard let win = window else { return }
 
         let currentScreens = NSScreen.screens
         guard !currentScreens.isEmpty else { return }
@@ -193,7 +213,7 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         // If the window's screen was disconnected, safely reposition to an available display
         if let windowScreen = win.screen, !currentScreens.contains(windowScreen) {
             let fallback = NSScreen.main ?? currentScreens[0]
-            win.setFrame(fallback.frame, display: true)
+            win.setFrame(Self.presentationFrame(on: fallback), display: true)
         }
     }
 }

@@ -407,6 +407,15 @@ final class ProjectorTests: XCTestCase {
 
     // MARK: - 10. Display Enumeration & Fallback Abstraction
 
+    func testSingleDisplayProjectorFrameLeavesStudioVisible() {
+        let visible = NSRect(x: 0, y: 25, width: 1440, height: 875)
+        let frame = ProjectorWindowController.windowedFrame(in: visible)
+        XCTAssertEqual(frame.width, 720)
+        XCTAssertEqual(frame.height, 405)
+        XCTAssertTrue(visible.contains(frame))
+        XCTAssertEqual(frame.midX, visible.midX)
+    }
+
     func testDisplayEnumerationAndFallbackAbstraction() {
         let displays = ProjectorWindowController.enumerateDisplays()
         if !NSScreen.screens.isEmpty {

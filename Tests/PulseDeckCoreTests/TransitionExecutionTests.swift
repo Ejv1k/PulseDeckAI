@@ -153,6 +153,8 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24)
         XCTAssertLessThanOrEqual(coordinator.deckAGraph.eqParameters.midGainDB, -3)
         XCTAssertEqual(coordinator.deckBGraph.eqParameters.lowGainDB, -24, "The incoming deck still follows the plan")
+        _ = await service.cancelTransition()
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24, "Cancel (the panic path) must not slam the bass back")
     }
 
     // MARK: - 2. Filter Echo Wash & Initial Gains

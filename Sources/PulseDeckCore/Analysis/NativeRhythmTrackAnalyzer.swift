@@ -8,7 +8,7 @@ import Foundation
 public struct NativeRhythmTrackAnalyzer: Sendable {
     /// Distinct version identifier explicitly documenting the model, checkpoint,
     /// fixed 1500-frame context padding adaptation, and FP32 precision.
-    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32"
+    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1"
 
     private let waveformBinLimit = 4_096
     // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
@@ -205,7 +205,11 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
 
         // 4. Estimate cues from active envelope bounds (fallback to duration bounds)
         let activeRange = activeBounds(envelope, featureRate: featureRate)
-        let cues = estimateCues(duration: duration, active: activeRange)
+        let downbeats = rhythmAnalysis.downbeats.filter { $0.isFinite && $0 >= 0.0 && $0 <= duration }
+        let cues = Self.phraseAlignedCues(
+            downbeats: downbeats,
+            fallback: estimateCues(duration: duration, active: activeRange)
+        )
         let cueMarkers = CueMarkers(
             startTrimCue: cues.start,
             vocalEntryCue: cues.vocal,
@@ -276,6 +280,41 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let vocal = start + min(playable * 0.15, max(0, playable - 0.1))
         let mixOut = max(vocal, end - min(playable * 0.20, max(0, playable - 0.1)))
         return (start, vocal, mixOut, end)
+    }
+}
+
+extension NativeRhythmTrackAnalyzer {
+    public typealias Cues = (start: Double, vocal: Double, mixOut: Double, end: Double)
+
+    /// Bars per phrase. Most dance and pop music moves in 8-bar phrases.
+    static let barsPerPhrase = 8
+    /// Bars left after `mixOut` for the transition itself.
+    static let transitionBars = 16
+
+    /// Snaps cues onto an 8-bar phrase grid counted from the first downbeat at or after the audible start.
+    /// There is no vocal detection: `vocal` is the phrase boundary closest to the proportional estimate.
+    /// Returns `fallback` unchanged when fewer than two phrases of downbeats are available.
+    public static func phraseAlignedCues(downbeats: [Double], fallback: Cues) -> Cues {
+        let bars = downbeats.sorted().filter { $0 >= fallback.start - 0.05 && $0 <= fallback.end }
+        guard bars.count >= barsPerPhrase * 2 else { return fallback }
+
+        let boundaries = stride(from: 0, to: bars.count, by: barsPerPhrase).map { bars[$0] }
+        let barLengths = zip(bars.dropFirst(), bars).map { $0 - $1 }.sorted()
+        let barLength = barLengths[barLengths.count / 2]
+        // Snap the start only to a nearby downbeat; a late first downbeat means the model missed a quiet intro.
+        let start = bars[0] - fallback.start <= 2 * barLength ? max(fallback.start, bars[0]) : fallback.start
+        let end = fallback.end
+
+        func nearest(to time: Double, in candidates: [Double]) -> Double {
+            candidates.min { abs($0 - time) < abs($1 - time) } ?? time
+        }
+        let latestMixOut = end - Double(transitionBars) * barLength
+        let roomy = boundaries.filter { $0 > start && $0 <= latestMixOut }
+        let mixOut = roomy.last ?? nearest(to: fallback.mixOut, in: boundaries.filter { $0 > start })
+        let vocalCandidates = boundaries.filter { $0 > start && $0 < mixOut }
+        let vocal = vocalCandidates.isEmpty ? start : nearest(to: fallback.vocal, in: vocalCandidates)
+
+        return (start, vocal, max(vocal, mixOut), max(mixOut, end))
     }
 }
 

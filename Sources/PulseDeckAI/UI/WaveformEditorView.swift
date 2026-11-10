@@ -39,10 +39,10 @@ public struct WaveformEditorView: View {
             case .complete:
                 return "Analysis ready · Loading waveform…"
             case .failed(let reason):
-                return "Analysis failed: \(reason) · Click ANALYZE to retry"
+                return "Analysis failed: \(reason)"
             }
         }
-        return "Waveform pending · Click ANALYZE in crate row"
+        return "Not analyzed yet"
     }
 
     private func pendingCanvasPrompt(for path: String) -> String {
@@ -53,10 +53,10 @@ public struct WaveformEditorView: View {
             case .complete:
                 return "Analysis complete. Waveform is preparing to render."
             case .failed(let reason):
-                return "Analysis error: \(reason). Click ANALYZE in the crate row to retry."
+                return "Analysis failed: \(reason). Use Analyze in the track list to retry."
             }
         }
-        return "Selected track has pending waveform data. Click ANALYZE in the crate row to generate waveform, beat grid, and cues."
+        return "Analyze this track in the list below to see its waveform, beat grid and cues."
     }
 
     @ViewBuilder
@@ -87,10 +87,6 @@ public struct WaveformEditorView: View {
                 }
                 .foregroundColor(.orange)
             }
-        } else {
-            Text("Click Analyze in crate to inspect cues")
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundColor(DJTheme.deckA)
         }
     }
 
@@ -98,14 +94,14 @@ public struct WaveformEditorView: View {
         if let status = analysisStatus {
             switch status {
             case .running:
-                return "Selected '\(path)' · Analysis in progress… waveform and cues will appear automatically"
+                return "Analyzing… waveform and cues appear automatically"
             case .complete:
-                return "Selected '\(path)' · Analysis complete · Loading waveform and cue points…"
+                return "Loading waveform and cue points…"
             case .failed(let reason):
-                return "Selected '\(path)' · Analysis error: \(reason) · Click ANALYZE in crate to retry"
+                return "Analysis failed: \(reason)"
             }
         }
-        return "Selected '\(path)' · Click ANALYZE in crate row to inspect cue points"
+        return "Cue points appear after analysis"
     }
 
     public var body: some View {
@@ -213,7 +209,7 @@ public struct WaveformEditorView: View {
                             .foregroundColor(DJTheme.deckA)
 
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(selected)
+                            Text(LibraryTrackTitle.display((selected as NSString).lastPathComponent))
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
                                 .lineLimit(1)
@@ -358,10 +354,6 @@ public struct WaveformEditorView: View {
                         Image(systemName: "waveform.badge.magnifyingglass")
                             .font(.system(size: 20))
                             .foregroundColor(DJTheme.deckA)
-                        Text("Selected: \(selected)")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundColor(DJTheme.textPrimary)
-                            .lineLimit(1)
                         Text(pendingCanvasPrompt(for: selected))
                             .font(.system(size: 9.5))
                             .foregroundColor(DJTheme.textSecondary)

@@ -559,7 +559,7 @@ public final class AppState: ObservableObject {
                 }
                 self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
             } else {
-                self.statusMessage = "Selected \(relativePath). LOAD works now; Analyze locally adds waveform and beat tools."
+                self.statusMessage = "Selected \(relativePath)"
             }
         }
     }
@@ -916,8 +916,9 @@ public final class AppState: ObservableObject {
         deckLoadedSourceIdentities[deck] = load.identity
         measureLoudness(deck: deck, file: file)
         if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
-        deckLoadMessages[deck] = "Loaded \(relativePath)" + (entry.analyzerVersion == "unanalysed-playback" ? " · Analyze locally for waveform and beat tools." : "")
-        statusMessage = deckLoadMessages[deck] ?? "Loaded"
+        // Success needs no banner: the deck shows the title. Only failures and pending work speak up.
+        deckLoadMessages[deck] = nil
+        statusMessage = "\(deck.rawValue): loaded \(relativePath)"
         if durationMatches, let cached, LibraryTrackSource.isSHA256(cached.fileFingerprint) {
             validateSHAAnalysis(cached, file: file, identity: load.identity, deck: deck)
         }
@@ -930,7 +931,7 @@ public final class AppState: ObservableObject {
         let request = UUID()
         let root = libraryRootURL.standardizedFileURL
         deckAnalysisValidationIDs[deck] = request
-        deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Validating cached analysis… Playback is available."
+        deckLoadMessages[deck] = "Validating cached analysis… Playback is ready."
         let beforeValidation = beforeCachedFingerprintValidationForTesting
         deckAnalysisValidationTasks[deck] = Task { [weak self] in
             defer {
@@ -964,15 +965,15 @@ public final class AppState: ObservableObject {
                           cache: self.loadedCache, libraryRootURL: root),
                       latest.fileFingerprint == cached.fileFingerprint,
                       abs(latest.duration - (displayed?.duration ?? 0)) < 0.01 else {
-                    self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis is stale. Analyze locally for waveform and beat tools."
+                    self.deckLoadMessages[deck] = "Cached analysis is stale. Analyze to restore waveform and beat tools."
                     return
                 }
                 if deck == .deckA { self.deckATrack = latest } else { self.deckBTrack = latest }
-                self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis verified."
+                self.deckLoadMessages[deck] = nil
             } catch {
                 guard let self, self.deckAnalysisValidationIDs[deck] == request,
                       self.libraryRootURL.standardizedFileURL == root else { return }
-                self.deckLoadMessages[deck] = "Loaded \(cached.relativePath) · Cached analysis unavailable: \(error.localizedDescription). Analyze locally to retry."
+                self.deckLoadMessages[deck] = "Cached analysis unavailable: \(error.localizedDescription). Analyze to retry."
             }
         }
     }
@@ -1138,7 +1139,7 @@ public final class AppState: ObservableObject {
                         self.deckAnalysisValidationTasks[deck] = nil
                         self.deckAnalysisValidationIDs[deck] = nil
                         if deck == .deckA { self.deckATrack = current } else { self.deckBTrack = current }
-                        self.deckLoadMessages[deck] = "Loaded \(relativePath) · \(methodToUse.displayName) analysis ready."
+                        self.deckLoadMessages[deck] = nil
                     }
                 }
                 if self.selectedTrackPath == relativePath,

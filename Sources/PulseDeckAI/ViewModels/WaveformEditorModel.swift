@@ -167,6 +167,7 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
     /// distinguishing authorized analysis updates from arbitrary external mutations.
     private var authorizedAnalysisCues: [String: CueMarkers] = [:]
     private var authorizedAnalysisBypass: [String: Bool] = [:]
+    private var authorizedAnalysisBPM: [String: Double] = [:]
 
     public init() {}
 
@@ -226,6 +227,7 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
         let key = trackKey(root: libraryRootURL, relativePath: track.relativePath)
         authorizedAnalysisCues[key] = track.cueMarkers
         authorizedAnalysisBypass[key] = track.aiTrimBypass
+        authorizedAnalysisBPM[key] = track.bpm
         try Task.checkCancellation()
         try CachePersistence.saveAtomic(cache: cache, to: cacheURL)
         return cache
@@ -271,7 +273,8 @@ public actor WaveformPersistenceActor: WaveformTrackPersisting {
             merged.aiTrimBypass = track.aiTrimBypass
             if !mergedFields.contains("aiTrimBypass") { mergedFields.append("aiTrimBypass") }
         case .bpm(let acceptedPreviousValues):
-            guard acceptedPreviousValues.contains(disk.bpm) else {
+            // Like cues and bypass, a re-analysis that landed before this save is not a conflict.
+            guard acceptedPreviousValues.contains(disk.bpm) || authorizedAnalysisBPM[key] == disk.bpm else {
                 throw WaveformEditorError.conflictingEdit(relativePath: track.relativePath, field: "BPM")
             }
             merged.bpm = track.bpm
@@ -592,7 +595,7 @@ public final class WaveformEditorModel: ObservableObject {
         let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: entry.relativePath)]
         self.errorMessage = local?.failureMessage
         if local?.failureMessage != nil {
-            self.statusMessage = "Unsaved cue changes"
+            self.statusMessage = "Unsaved changes"
         } else if local?.hasPendingEdits == true {
             self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
         } else {
@@ -622,7 +625,7 @@ public final class WaveformEditorModel: ObservableObject {
         let local = localEdits[TrackIdentity(root: libraryRootURL, relativePath: entry.relativePath)]
         self.errorMessage = local?.failureMessage
         if local?.failureMessage != nil {
-            self.statusMessage = "Unsaved cue changes"
+            self.statusMessage = "Unsaved changes"
         } else if local?.hasPendingEdits == true {
             self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
         } else {
@@ -744,7 +747,8 @@ public final class WaveformEditorModel: ObservableObject {
     /// and persists it as a manual "bpm" override that re-analysis keeps. The beat grid is unchanged.
     public func scaleBPM(by factor: Double) {
         guard factor == 0.5 || factor == 2, var track = currentTrack, track.bpm > 0 else { return }
-        let newBPM = (track.bpm * factor * 10).rounded() / 10
+        // Exact halving/doubling so ×½ then ×2 returns the original value; the UI rounds for display.
+        let newBPM = track.bpm * factor
         guard (40.0...250.0).contains(newBPM) else {
             statusMessage = String(format: "%.1f BPM is outside the supported 40-250 range", newBPM)
             return
@@ -948,7 +952,7 @@ public final class WaveformEditorModel: ObservableObject {
            currentTrack?.relativePath == identity.relativePath,
            libraryRootURL.standardizedFileURL == identity.root {
             errorMessage = error.localizedDescription
-            statusMessage = "Unsaved cue changes"
+            statusMessage = "Unsaved changes"
         }
         // Earlier completions may update the shared cache, but cannot overwrite a newer edit's UI status.
         guard currentTrack?.relativePath == identity.relativePath,
@@ -959,8 +963,8 @@ public final class WaveformEditorModel: ObservableObject {
             let local = localEdits[identity]
             errorMessage = local?.failureMessage
             statusMessage = local?.failureMessage == nil
-                ? "Saved cues to .pulsedeck_ai_cache.json"
-                : "Unsaved cue changes"
+                ? "Saved edits to .pulsedeck_ai_cache.json"
+                : "Unsaved changes"
             guard interactionRevision == submittedInteractionRevision || hasActiveDrag else { return }
             if let savedTrack = cache.tracks[identity.relativePath] {
                 let displayedTrack = local.map { applying($0, to: savedTrack) } ?? savedTrack

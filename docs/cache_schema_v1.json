@@ -236,6 +236,10 @@
         "beatTimestamps": {
           "type": "array",
           "items": { "type": "number", "minimum": 0 }
+        },
+        "downbeatTimestamps": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 }
         }
       }
     },

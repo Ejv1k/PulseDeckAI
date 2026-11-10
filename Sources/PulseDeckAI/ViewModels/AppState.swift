@@ -1001,10 +1001,15 @@ public final class AppState: ObservableObject {
     func analyzeCrate(_ crate: LibraryCrateInfo) {
         guard crateAnalysisTask == nil else { return }
         let method = selectedAnalysisMethod
-        let current = method == .nativeModel ? NativeRhythmTrackAnalyzer.analyzerVersion : nil
         let paths = crate.audioFiles.map { "\(crate.folderName)/\($0)" }.filter { path in
             guard let entry = loadedCache?.tracks[path], entry.analyzerVersion != "unanalysed-playback" else { return true }
-            return current.map { entry.analyzerVersion != $0 } ?? false
+            switch method {
+            case .nativeModel:
+                return entry.analyzerVersion != NativeRhythmTrackAnalyzer.analyzerVersion
+            case .dsp:
+                // Refresh older DSP results (e.g. pre-key ones); never downgrade a model analysis to DSP.
+                return entry.analyzerVersion.hasPrefix("local-dsp") && entry.analyzerVersion != LocalTrackAnalyzer.analyzerVersion
+            }
         }
         guard !paths.isEmpty else {
             statusMessage = "Every track in \(crate.title) is already analyzed."

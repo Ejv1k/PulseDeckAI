@@ -403,6 +403,35 @@ extension AppStateNativeRhythmIntegrationTests {
 }
 
 extension AppStateNativeRhythmIntegrationTests {
+    func testDSPAnalyzeAllRefreshesOlderDSPResultsButNeverDowngradesModelOnes() async throws {
+        let fixture = try makeLibrary()
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+        func entry(_ name: String, version: String) throws -> TrackCacheEntry {
+            let fresh = try LocalTrackAnalyzer().analyze(url: fixture.crate.appendingPathComponent(name), libraryRoot: fixture.root)
+            let json = try XCTUnwrap(String(data: JSONEncoder().encode(fresh), encoding: .utf8))
+                .replacingOccurrences(of: LocalTrackAnalyzer.analyzerVersion, with: version)
+            return try JSONDecoder().decode(TrackCacheEntry.self, from: Data(json.utf8))
+        }
+        let cache = PulseDeckLibraryCache(tracks: [
+            "01_House/a.wav": try entry("a.wav", version: "local-dsp-1"),              // pre-key DSP result
+            "01_House/b.wav": try entry("b.wav", version: NativeRhythmTrackAnalyzer.analyzerVersion),
+        ])
+        try CachePersistence.saveAtomic(cache: cache, to: fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: WaveformEditorModel(libraryRootURL: fixture.root),
+                           loadedCache: cache)
+        app.selectedAnalysisMethod = .dsp
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 3, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav", "c.wav"])
+        app.analyzeCrate(crate)
+        XCTAssertEqual(app.crateAnalysisProgress?.total, 2, "Outdated DSP a and missing c; model-analyzed b stays")
+        await app.crateAnalysisTask?.value
+        XCTAssertEqual(app.loadedCache?.tracks["01_House/a.wav"]?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
+        XCTAssertEqual(app.loadedCache?.tracks["01_House/b.wav"]?.analyzerVersion, NativeRhythmTrackAnalyzer.analyzerVersion)
+    }
+
     func testManualAnalyzeDuringCrateBatchStopsBatchAndKeepsUserRun() async throws {
         let fixture = try makeLibrary()
         let editor = WaveformEditorModel(libraryRootURL: fixture.root)

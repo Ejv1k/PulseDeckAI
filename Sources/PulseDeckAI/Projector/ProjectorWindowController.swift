@@ -82,7 +82,7 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         guard let viewModel else { return }
 
         if let existing = window, existing.isVisible {
-            existing.makeKeyAndOrderFront(nil)
+            existing.orderFront(nil)
             viewModel.isWindowOpen = true
             return
         }
@@ -117,7 +117,8 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         newWindow.contentView = NSHostingView(rootView: rootView)
 
         self.window = newWindow
-        newWindow.makeKeyAndOrderFront(nil)
+        // Keep the studio window key so Space, T and F1-F8 keep working while the projector shows.
+        newWindow.orderFront(nil)
         viewModel.isWindowOpen = true
     }
 

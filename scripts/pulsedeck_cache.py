@@ -157,6 +157,17 @@ class BeatGrid:
     firstBeatOffsetSeconds: float
     beatIntervalSeconds: float
     beatTimestamps: List[float]
+    downbeatTimestamps: Optional[List[float]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "firstBeatOffsetSeconds": self.firstBeatOffsetSeconds,
+            "beatIntervalSeconds": self.beatIntervalSeconds,
+            "beatTimestamps": self.beatTimestamps,
+        }
+        if self.downbeatTimestamps is not None:
+            d["downbeatTimestamps"] = self.downbeatTimestamps
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BeatGrid":
@@ -164,10 +175,14 @@ class BeatGrid:
         for r in required:
             if r not in data:
                 raise KeyError(f"BeatGrid missing required field: '{r}'")
+        downbeats: Optional[List[float]] = None
+        if "downbeatTimestamps" in data and data["downbeatTimestamps"] is not None:
+            downbeats = [float(x) for x in data["downbeatTimestamps"]]
         return cls(
             firstBeatOffsetSeconds=float(data["firstBeatOffsetSeconds"]),
             beatIntervalSeconds=float(data["beatIntervalSeconds"]),
             beatTimestamps=[float(x) for x in data["beatTimestamps"]],
+            downbeatTimestamps=downbeats,
         )
 
 
@@ -329,6 +344,16 @@ class TrackCacheEntry:
 
         return merged
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(
+            self,
+            dict_factory=lambda items: {
+                k: val
+                for k, val in items
+                if not (k == "downbeatTimestamps" and val is None)
+            },
+        )
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TrackCacheEntry":
         required_fields = [
@@ -477,6 +502,37 @@ class PulseDeckLibraryCache:
                     f"CueMarkers violate ordering/bounds for duration {entry.duration}: {entry.cueMarkers}"
                 )
 
+    def to_dict(self) -> Dict[str, Any]:
+        def _serialize_track(v: Any) -> Any:
+            if hasattr(v, "to_dict"):
+                return v.to_dict()
+            if hasattr(v, "__dataclass_fields__"):
+                return asdict(
+                    v,
+                    dict_factory=lambda items: {
+                        k: val
+                        for k, val in items
+                        if not (k == "downbeatTimestamps" and val is None)
+                    },
+                )
+            if isinstance(v, dict):
+                d = copy.deepcopy(v)
+                if isinstance(d.get("beatGrid"), dict) and d["beatGrid"].get("downbeatTimestamps") is None:
+                    d["beatGrid"].pop("downbeatTimestamps", None)
+                return d
+            return v
+
+        return {
+            "$schema": self.schema,
+            "schemaVersion": self.schemaVersion,
+            "generatedAt": self.generatedAt,
+            "libraryRoot": self.libraryRoot,
+            "tracks": {
+                k: _serialize_track(v)
+                for k, v in self.tracks.items()
+            },
+        }
+
     def save_atomic(self, file_path: str) -> None:
         """
         Serialize atomically: writes to temporary file in destination directory,
@@ -489,16 +545,7 @@ class PulseDeckLibraryCache:
         temp_fd, temp_path = tempfile.mkstemp(dir=target_dir, prefix=".cache_tmp_")
         try:
             with open(temp_fd, "w", encoding="utf-8") as f:
-                json_dict = {
-                    "$schema": self.schema,
-                    "schemaVersion": self.schemaVersion,
-                    "generatedAt": self.generatedAt,
-                    "libraryRoot": self.libraryRoot,
-                    "tracks": {
-                        k: asdict(v) if hasattr(v, "__dataclass_fields__") else v
-                        for k, v in self.tracks.items()
-                    },
-                }
+                json_dict = self.to_dict()
                 json.dump(json_dict, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())

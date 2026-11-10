@@ -754,6 +754,59 @@ class TestAtomicSaveAndRoundTrip(unittest.TestCase):
         temp_files = [f for f in files if f.startswith(".cache_tmp_")]
         self.assertEqual(len(temp_files), 0, "No temporary files should be left behind on rejected save")
 
+    def test_beat_grid_downbeats_round_trip(self):
+        track_dict = json.loads(json.dumps(create_sample_entry(), default=lambda o: o.__dict__))
+        track_dict["beatGrid"]["downbeatTimestamps"] = [0.5, 2.5]
+        cache_data = {
+            "schemaVersion": SCHEMA_VERSION,
+            "libraryRoot": "PulseDeck_Library",
+            "tracks": {"Test_Track.mp3": track_dict},
+        }
+        init_path = os.path.join(self.temp_dir.name, "initial_downbeats.json")
+        with open(init_path, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+
+        loaded_cache = PulseDeckLibraryCache.load(init_path)
+        self.assertEqual(
+            loaded_cache.tracks["Test_Track.mp3"].beatGrid.downbeatTimestamps,
+            [0.5, 2.5],
+        )
+
+        save_path = os.path.join(self.temp_dir.name, "saved_downbeats.json")
+        loaded_cache.save_atomic(save_path)
+
+        reloaded_cache = PulseDeckLibraryCache.load(save_path)
+        self.assertEqual(
+            reloaded_cache.tracks["Test_Track.mp3"].beatGrid.downbeatTimestamps,
+            [0.5, 2.5],
+        )
+
+    def test_beat_grid_without_downbeats_omits_key(self):
+        track_dict = json.loads(json.dumps(create_sample_entry(), default=lambda o: o.__dict__))
+        if "downbeatTimestamps" in track_dict["beatGrid"]:
+            del track_dict["beatGrid"]["downbeatTimestamps"]
+        cache_data = {
+            "schemaVersion": SCHEMA_VERSION,
+            "libraryRoot": "PulseDeck_Library",
+            "tracks": {"Test_Track.mp3": track_dict},
+        }
+        init_path = os.path.join(self.temp_dir.name, "initial_no_downbeats.json")
+        with open(init_path, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+
+        loaded_cache = PulseDeckLibraryCache.load(init_path)
+        self.assertIsNone(loaded_cache.tracks["Test_Track.mp3"].beatGrid.downbeatTimestamps)
+
+        save_path = os.path.join(self.temp_dir.name, "saved_no_downbeats.json")
+        loaded_cache.save_atomic(save_path)
+
+        with open(save_path, "r", encoding="utf-8") as f:
+            saved_json = json.load(f)
+        self.assertNotIn(
+            "downbeatTimestamps",
+            saved_json["tracks"]["Test_Track.mp3"]["beatGrid"],
+        )
+
 
 
 if __name__ == "__main__":

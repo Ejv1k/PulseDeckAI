@@ -148,6 +148,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
 
     func testPlayingDeckResumesAfterTheSystemRestartsItsEngine() throws {
         let f = try Fixture(duration: 3); defer { f.cleanup() }
+        f.audio.masterAudioEngine.limiterNode.bypass = true // Sample-accurate silence checks: the master limiter's lookahead tail is out of scope here.
         XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
         f.app.updateCrossfader(position: 0)
         f.app.toggleDeckPlay(deck: .deckA)
@@ -230,6 +231,19 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(graph.masterEQNode.globalGain, 3, accuracy: 1e-4)
         graph.trimGainDB = 0 // A direct set cancels any ramp still in flight.
         XCTAssertEqual(graph.trimGainDB, 0)
+    }
+
+    func testMasterLimiterStopsEQAndGainBoostsFromClipping() throws {
+        let f = try Fixture(duration: 3, clicks: true); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        f.app.updateCrossfader(position: 0)
+        // 0.9-amplitude clicks with a +12 dB trim: about 3.6 (11 dB over full scale) without a limiter.
+        f.audio.deckAGraph.trimGainDB = 12
+        f.app.toggleDeckPlay(deck: .deckA)
+        var peak: Float = 0
+        for _ in 0..<24 { peak = max(peak, try f.peak()) } // ~2.2 s: several clicks.
+        XCTAssertGreaterThan(peak, 0.5, "Still loud")
+        XCTAssertLessThanOrEqual(peak, 1.05, "Output must stay at full scale (lookahead limiter, not a hard brickwall)")
     }
 
     func testActualLoadButtonWithoutSelectionShowsReason() async throws {

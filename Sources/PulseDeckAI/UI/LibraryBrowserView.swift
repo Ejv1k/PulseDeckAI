@@ -218,47 +218,13 @@ public struct LibraryBrowserView: View {
                                     .foregroundColor(DJTheme.textMuted)
                             }
 
-                            Picker("Order", selection: $order) {
-                                ForEach(LibraryOrder.allCases, id: \.self) { option in
-                                    Text(option.rawValue)
-                                        .tag(option)
-                                        .disabled(option == .bestMatch && appState.referenceTrack == nil)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                            .controlSize(.small)
-                            .fixedSize()
-                            .help("Folder order, best match with the reference deck, or a warm-up → peak → cool-down set")
+                            orderPicker
 
                             Divider()
                                 .frame(height: 12)
                                 .background(DJTheme.border)
 
-                            if let progress = appState.crateAnalysisProgress {
-                                HStack(spacing: 4) {
-                                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
-                                        .frame(width: 50)
-                                    Text("\(progress.done)/\(progress.total)")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                        .monospacedDigit()
-                                        .foregroundColor(DJTheme.textSecondary)
-                                    Button("Stop") { appState.cancelCrateAnalysis() }
-                                        .controlSize(.small)
-                                }
-                            } else {
-                                Button {
-                                    appState.analyzeCrate(selected)
-                                } label: {
-                                    Label("Analyze All", systemImage: "waveform.badge.magnifyingglass")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                        .foregroundColor(DJTheme.deckA)
-                                }
-                                .buttonStyle(.borderless)
-                                .controlSize(.small)
-                                .disabled(!selected.isReadable || selected.audioFiles.isEmpty || appState.isAnalyzingLibraryTrack)
-                                .help("Analyze every track in this crate that has no current analysis, one at a time")
-                            }
+                            analyzeAllControl(for: selected)
 
                             HStack(spacing: 4) {
                                 Text("Engine:")
@@ -753,6 +719,50 @@ public struct LibraryBrowserView: View {
         }
 
         return .ignored
+    }
+
+    // Split out of `body` so the type checker stays within its time limit on slower CI machines.
+    private var orderPicker: some View {
+            Picker("Order", selection: $order) {
+                ForEach(LibraryOrder.allCases, id: \.self) { option in
+                    Text(option.rawValue)
+                        .tag(option)
+                        .disabled(option == .bestMatch && appState.referenceTrack == nil)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("Folder order, best match with the reference deck, or a warm-up → peak → cool-down set")
+    }
+
+    @ViewBuilder
+    private func analyzeAllControl(for selected: LibraryCrateInfo) -> some View {
+            if let progress = appState.crateAnalysisProgress {
+                HStack(spacing: 4) {
+                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                        .frame(width: 50)
+                    Text("\(progress.done)/\(progress.total)")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundColor(DJTheme.textSecondary)
+                    Button("Stop") { appState.cancelCrateAnalysis() }
+                        .controlSize(.small)
+                }
+            } else {
+                Button {
+                    appState.analyzeCrate(selected)
+                } label: {
+                    Label("Analyze All", systemImage: "waveform.badge.magnifyingglass")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(DJTheme.deckA)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!selected.isReadable || selected.audioFiles.isEmpty || appState.isAnalyzingLibraryTrack)
+                .help("Analyze every track in this crate that has no current analysis, one at a time")
+            }
     }
 
     /// Crate files, optionally ordered best match first against the reference deck.

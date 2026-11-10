@@ -261,6 +261,21 @@ final class MockAudioHardware: AudioHardwareInterface, @unchecked Sendable {
         return dev.transportType
     }
 
+    func getOutputDevice(for audioUnit: AudioUnit) throws -> AudioDeviceID {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let id = boundUnits[audioUnit] else { throw CoreAudioError.osStatus(-50, operation: "getOutputDevice") }
+        return id
+    }
+
+    /// Simulates macOS moving every output unit to the new default device behind the app's back.
+    func simulateUnitsFollowingDefault() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let id = defaultOutputDeviceID else { return }
+        for unit in boundUnits.keys { boundUnits[unit] = id }
+    }
+
     func setOutputDevice(deviceID: AudioDeviceID, for audioUnit: AudioUnit) throws {
         lock.lock()
         defer { lock.unlock() }

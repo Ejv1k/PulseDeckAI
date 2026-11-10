@@ -8,7 +8,7 @@ import Foundation
 public struct NativeRhythmTrackAnalyzer: Sendable {
     /// Distinct version identifier explicitly documenting the model, checkpoint,
     /// fixed 1500-frame context padding adaptation, and FP32 precision.
-    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1"
+    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid1"
 
     private let waveformBinLimit = 4_096
     // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
@@ -131,9 +131,13 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             throw NativeRhythmAnalysisError.modelError(error.localizedDescription)
         }
 
+        // Decode once at 22.05 kHz mono and share the samples between rhythm and key detection.
         let rhythmAnalysis: ModelRhythmAnalysis
+        let musicalKey: String
         do {
-            rhythmAnalysis = try await rhythmService.analyzeRhythm(audioURL: fileURL)
+            let samples = try SlaneyMelSpectrogram.loadAudioSamples(from: fileURL)
+            rhythmAnalysis = try await rhythmService.analyzeRhythm(samples: samples)
+            musicalKey = try KeyDetector.detectKey(samples: samples, sampleRate: SlaneyMelSpectrogram.sampleRate) ?? "Unknown"
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -196,16 +200,16 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let rawScore = regularity * coverage * 0.85
         let confidence = min(0.85, max(0.10, rawScore))
 
-        let firstBeatOffset = beats.first ?? 0.0
+        let downbeats = rhythmAnalysis.downbeats.filter { $0.isFinite && $0 >= 0.0 && $0 <= duration }
+        let gridBeats = Self.downbeatAlignedBeats(beats: beats, downbeats: downbeats)
         let beatGrid = BeatGrid(
-            firstBeatOffsetSeconds: firstBeatOffset,
+            firstBeatOffsetSeconds: gridBeats.first ?? 0.0,
             beatIntervalSeconds: beatInterval,
-            beatTimestamps: beats
+            beatTimestamps: gridBeats
         )
 
         // 4. Estimate cues from active envelope bounds (fallback to duration bounds)
         let activeRange = activeBounds(envelope, featureRate: featureRate)
-        let downbeats = rhythmAnalysis.downbeats.filter { $0.isFinite && $0 >= 0.0 && $0 <= duration }
         let cues = Self.phraseAlignedCues(
             downbeats: downbeats,
             fallback: estimateCues(duration: duration, active: activeRange)
@@ -242,7 +246,7 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
             channels: channels,
             bitDepth: bitDepth,
             bpm: bpm,
-            musicalKey: "Unknown",
+            musicalKey: musicalKey,
             confidence: confidence,
             waveformMetadata: WaveformMetadata(
                 sampleCount: Int(frameCount),
@@ -285,6 +289,16 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
 
 extension NativeRhythmTrackAnalyzer {
     public typealias Cues = (start: Double, vocal: Double, mixOut: Double, end: Double)
+
+    /// The transition planner treats stored beats 0, 4, 8, … as bar starts, so the stored grid
+    /// must begin on a downbeat. Drops pickup beats before the first detected downbeat; keeps
+    /// all beats when there is no usable downbeat.
+    public static func downbeatAlignedBeats(beats: [Double], downbeats: [Double]) -> [Double] {
+        guard let first = downbeats.min() else { return beats }
+        // Downbeats are snapped to beats, so a small tolerance absorbs float noise.
+        let aligned = beats.filter { $0 >= first - 0.02 }
+        return aligned.count >= 2 ? aligned : beats
+    }
 
     /// Bars per phrase. Most dance and pop music moves in 8-bar phrases.
     static let barsPerPhrase = 8

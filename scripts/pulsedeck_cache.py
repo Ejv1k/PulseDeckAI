@@ -175,13 +175,20 @@ class BeatGrid:
         for r in required:
             if r not in data:
                 raise KeyError(f"BeatGrid missing required field: '{r}'")
+        def finite(value: Any, field: str) -> float:
+            # Python's json accepts NaN/Infinity; the app's JSONDecoder rejects them.
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError(f"BeatGrid {field} must be finite, got: {value}")
+            return number
+
         downbeats: Optional[List[float]] = None
         if "downbeatTimestamps" in data and data["downbeatTimestamps"] is not None:
-            downbeats = [float(x) for x in data["downbeatTimestamps"]]
+            downbeats = [finite(x, "downbeatTimestamps") for x in data["downbeatTimestamps"]]
         return cls(
-            firstBeatOffsetSeconds=float(data["firstBeatOffsetSeconds"]),
-            beatIntervalSeconds=float(data["beatIntervalSeconds"]),
-            beatTimestamps=[float(x) for x in data["beatTimestamps"]],
+            firstBeatOffsetSeconds=finite(data["firstBeatOffsetSeconds"], "firstBeatOffsetSeconds"),
+            beatIntervalSeconds=finite(data["beatIntervalSeconds"], "beatIntervalSeconds"),
+            beatTimestamps=[finite(x, "beatTimestamps") for x in data["beatTimestamps"]],
             downbeatTimestamps=downbeats,
         )
 

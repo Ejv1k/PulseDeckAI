@@ -150,6 +150,13 @@ private struct AutoPilotFiredKey: Hashable, Sendable {
 /// - Generation / Epoch Invalidation: Invalidates active plans or pending AutoPilot when outgoing rate, track, or transport changes.
 /// - One-Shot AutoPilot: Fires exactly once per track generation when playhead reaches `mixOutCue`; no retry loops.
 /// - Safe Recovery: Cancellation restores full unity volume and neutral DSP to outgoing deck while muting and stopping incoming deck.
+public final class TransitionAutomationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = false
+    public var isActive: Bool { lock.lock(); defer { lock.unlock() }; return active }
+    func setActive(_ value: Bool) { lock.lock(); active = value; lock.unlock() }
+}
+
 public actor TransitionExecutionService {
 
     private weak var coordinator: (any AudioEngineCoordinatorContract)?
@@ -158,7 +165,15 @@ public actor TransitionExecutionService {
     private let controlMonitor: OutputDeviceMonitor?
     private let planner: TransitionPlanner
 
-    private var state: TransitionExecutionState = .idle
+    private var state: TransitionExecutionState = .idle {
+        didSet {
+            if case .inProgress = state { automationGate.setActive(true) } else { automationGate.setActive(false) }
+        }
+    }
+
+    /// Readable from any thread (the UI's control-queue writes): true while a running transition drives the
+    /// decks. Flipped before the first automation command, so a manual EQ write cannot slip in after it.
+    public nonisolated let automationGate = TransitionAutomationGate()
     private var stateMachine: TransitionStateMachine?
     private var activePlan: TransitionPlan?
     /// The outgoing deck's EQ when the transition started. Automation may cut further but never lifts a
@@ -374,6 +389,8 @@ public actor TransitionExecutionService {
         let recoveryCommands = sm.cancel()
         stateMachine = sm
         state = .cancelled
+        automationGate.setActive(true) // Keep manual EQ out until the recovery commands below have run.
+        defer { automationGate.setActive(false) }
 
         let plan = activePlan
         activePlan = nil

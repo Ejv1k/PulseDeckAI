@@ -53,7 +53,7 @@ PulseDeck AI is developed through a verification-driven lifecycle. The core perf
 * **Live Mix-Out Countdown:** Active playing decks display a real-time "Mix in N bars" countdown to `mixOutCue`.
 * **Smart Library Ordering & Batch Analysis:** Crates support "Best match" ordering against the reference deck (weighted harmonic key compatibility and tempo delta score), plus crate-wide "Analyze All" with progress tracking and cancellation (`Stop`).
 * **UI Refinements:** Streamlined track titles, quieter list rows, and a compact output routing row with integrated Master and Cue level meters.
-* **Test Verification:** Main branch verified with 419+ Swift tests; Python companion tests (37) are unchanged.
+* **Test Verification:** Main branch verified with 419+ Swift tests; Python companion tests: 40 passing (42 with the downbeat parity tests).
 
 ---
 

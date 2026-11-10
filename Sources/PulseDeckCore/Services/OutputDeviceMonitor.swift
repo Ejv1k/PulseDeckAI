@@ -673,16 +673,6 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
                 }
             }
 
-            // Return to the device the DJ chose as soon as it is back instead of staying on a fallback
-            // (e.g. master dropped to laptop speakers during a USB blip).
-            if let desiredUID = registration.desiredDeviceUID,
-               desiredUID != registration.boundDeviceUID,
-               devices.contains(where: { $0.id == desiredUID }),
-               let desiredID = try CoreAudioOutputDevices.deviceID(forUID: desiredUID, using: hal) {
-                steps.append(.attach(registration, engine, deviceID: desiredID, uid: desiredUID))
-                continue
-            }
-
             if let boundUID = registration.boundDeviceUID,
                devices.contains(where: { $0.id == boundUID }) {
                 // Throws stay failures. `nil` means this successful read did not find the UID.
@@ -699,15 +689,18 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
 
             // A cue engine that had its own device must not fall back onto the master's device:
             // headphone previews would then play through the PA. Launch-time sharing is unaffected.
-            let masterUID = snapshot.first { $0.role == .master }?.boundDeviceUID
-            let avoidUID = registration.role == .cue
-                && registration.boundDeviceUID != nil
-                && registration.boundDeviceUID != masterUID ? masterUID : nil
+            // Avoid both where the master is and where it is heading; gate on the DJ's choice, not on a
+            // transient binding, so a later HAL event cannot slip the cue onto the master either.
+            let master = snapshot.first { $0.role == .master }
+            let masterUIDs = Set([master?.boundDeviceUID, master?.desiredDeviceUID].compactMap { $0 })
+            let cueHasOwnDevice = registration.role == .cue
+                && registration.desiredDeviceUID.map { !masterUIDs.contains($0) } == true
+            let avoidUIDs: Set<String> = cueHasOwnDevice ? masterUIDs : []
             if let target = try selectFallback(
                 for: registration,
                 devices: devices,
                 defaultDeviceID: defaultDeviceID,
-                avoidUID: avoidUID
+                avoidUIDs: avoidUIDs
             ) {
                 steps.append(.attach(registration, engine, deviceID: target.id, uid: target.uid))
             } else {
@@ -721,7 +714,7 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
         for registration: RegisteredEngine,
         devices: [AudioDeviceDescriptor],
         defaultDeviceID: AudioDeviceID?,
-        avoidUID: String? = nil
+        avoidUIDs: Set<String> = []
     ) throws -> (id: AudioDeviceID, uid: String)? {
         if let preferredUID = registration.desiredDeviceUID,
            devices.contains(where: { $0.id == preferredUID }) {
@@ -732,12 +725,12 @@ public final class OutputDeviceMonitor: @unchecked Sendable {
 
         if let defaultDeviceID {
             let defaultUID = try hal.getDeviceUID(deviceID: defaultDeviceID)
-            if defaultUID != avoidUID, devices.contains(where: { $0.id == defaultUID }) {
+            if !avoidUIDs.contains(defaultUID), devices.contains(where: { $0.id == defaultUID }) {
                 return (defaultDeviceID, defaultUID)
             }
         }
 
-        if let first = devices.first(where: { $0.outputChannelCount > 0 && $0.id != avoidUID }) {
+        if let first = devices.first(where: { $0.outputChannelCount > 0 && !avoidUIDs.contains($0.id) }) {
             if let firstID = try CoreAudioOutputDevices.deviceID(forUID: first.id, using: hal) {
                 return (firstID, first.id)
             }

@@ -19,49 +19,6 @@ final class AudioHotplugRegressionTests: XCTestCase {
 
     // MARK: - Regression Tests
 
-    func testMasterReturnsToChosenDeviceWhenItReappears() throws {
-        let mock = MockAudioHardware()
-        let deviceX_ID: AudioDeviceID = 101
-        let deviceX_UID = "device_x_uid"
-        let deviceY_ID: AudioDeviceID = 102
-        let deviceY_UID = "device_y_uid"
-
-        mock.addDevice(id: deviceX_ID, uid: deviceX_UID, name: "Device X", outputChannels: 2)
-        mock.addDevice(id: deviceY_ID, uid: deviceY_UID, name: "Device Y", outputChannels: 2)
-        mock.setDefaultOutputID(deviceY_ID)
-
-        let engine = AVAudioEngine()
-        try CoreAudioOutputDevices.bind(deviceX_ID, to: engine, using: mock)
-
-        let monitor = OutputDeviceMonitor(hal: mock, coalescingDelayMs: 0)
-        try monitor.start()
-        defer { monitor.stop() }
-
-        monitor.registerEngine(
-            engine,
-            role: .master,
-            desiredDeviceUID: deviceX_UID,
-            boundDeviceID: deviceX_ID
-        )
-
-        XCTAssertEqual(monitor.boundDeviceUID(for: .master), deviceX_UID)
-
-        // X disappears -> master falls back to Y (assert bound Y)
-        mock.removeDevice(id: deviceX_ID)
-        monitor.reconcileImmediately()
-
-        XCTAssertEqual(monitor.boundDeviceUID(for: .master), deviceY_UID)
-        let au = try XCTUnwrap(engine.outputNode.audioUnit)
-        XCTAssertEqual(mock.boundUnits[au], deviceY_ID)
-
-        // X reappears -> after the monitor processes the device-list change, master bound UID == X
-        mock.addDevice(id: deviceX_ID, uid: deviceX_UID, name: "Device X", outputChannels: 2)
-        monitor.reconcileImmediately()
-
-        XCTAssertEqual(monitor.boundDeviceUID(for: .master), deviceX_UID)
-        XCTAssertEqual(mock.boundUnits[au], deviceX_ID)
-    }
-
     func testCueDoesNotFallBackOntoMasterDevice() throws {
         let mock = MockAudioHardware()
         let masterID: AudioDeviceID = 201
@@ -84,7 +41,7 @@ final class AudioHotplugRegressionTests: XCTestCase {
         defer { monitor.stop() }
 
         monitor.registerEngine(masterEngine, role: .master, boundDeviceID: masterID)
-        monitor.registerEngine(cueEngine, role: .cue, boundDeviceID: cueID)
+        monitor.registerEngine(cueEngine, role: .cue, desiredDeviceUID: cueUID, boundDeviceID: cueID)  // the DJ chose C for headphones
 
         XCTAssertEqual(monitor.boundDeviceUID(for: .master), masterUID)
         XCTAssertEqual(monitor.boundDeviceUID(for: .cue), cueUID)

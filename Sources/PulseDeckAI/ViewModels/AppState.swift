@@ -1349,6 +1349,9 @@ public final class AppState: ObservableObject {
         activeTransitionState = snapshot.state
         transitionProgress = min(max(snapshot.progress.isFinite ? snapshot.progress : 0.0, 0.0), 1.0)
         isAutoPilotArmed = snapshot.isAutoPilotArmed
+        if let notice = snapshot.autoPilotNotice, !snapshot.isAutoPilotArmed {
+            transitionErrorMessage = notice
+        }
         if let coordinator = audioCoordinator {
             isDeckAPlaying = coordinator.deckAGraph.isMasterPlaying
             isDeckBPlaying = coordinator.deckBGraph.isMasterPlaying

@@ -58,6 +58,9 @@ public struct TransitionExecutionSnapshot: Sendable, Equatable {
     /// Current execution generation/epoch counter.
     public let generation: UInt64
 
+    /// Why AutoPilot last disarmed itself without firing, for the UI; nil after a fresh arm or a fire.
+    public let autoPilotNotice: String?
+
     public init(
         state: TransitionExecutionState,
         activePlan: TransitionPlan? = nil,
@@ -69,7 +72,8 @@ public struct TransitionExecutionSnapshot: Sendable, Equatable {
         remainingEventCount: Int = 0,
         isAutoPilotArmed: Bool = false,
         armedRequest: TransitionRequest? = nil,
-        generation: UInt64 = 0
+        generation: UInt64 = 0,
+        autoPilotNotice: String? = nil
     ) {
         self.state = state
         self.activePlan = activePlan
@@ -82,6 +86,7 @@ public struct TransitionExecutionSnapshot: Sendable, Equatable {
         self.isAutoPilotArmed = isAutoPilotArmed
         self.armedRequest = armedRequest
         self.generation = generation
+        self.autoPilotNotice = autoPilotNotice
     }
 }
 
@@ -162,6 +167,9 @@ public actor TransitionExecutionService {
 
     private var executionGeneration: UInt64 = 0
     private var initialOutgoingRate: Float = 1.0
+    private var autoPilotNotice: String?
+    /// Outgoing rate the active plan was built for; pitch rides are bounded against this, not the last step.
+    private var planOutgoingRate: Float = 1.0
     private var lastObservedDeckGeneration: [DeckIdentifier: UInt64] = [:]
     private var autoPilotFiredHistory: Set<AutoPilotFiredKey> = []
     private var initialCrossfaderPosition: Float?
@@ -229,7 +237,8 @@ public actor TransitionExecutionService {
             remainingEventCount: remaining,
             isAutoPilotArmed: isArmed,
             armedRequest: armedRequest,
-            generation: executionGeneration
+            generation: executionGeneration,
+            autoPilotNotice: autoPilotNotice
         )
     }
 
@@ -285,6 +294,8 @@ public actor TransitionExecutionService {
 
         executionGeneration &+= 1
         initialOutgoingRate = request.outgoingPlaybackRate
+        planOutgoingRate = request.outgoingPlaybackRate
+        autoPilotNotice = nil
         armedRequest = nil
         armedTriggerPosition = nil
         lastTickedPosition = currentPos
@@ -337,6 +348,7 @@ public actor TransitionExecutionService {
         }
         executionGeneration &+= 1
         stopDriver()
+        autoPilotNotice = nil
 
         if case .armed = state {
             armedRequest = nil
@@ -406,6 +418,9 @@ public actor TransitionExecutionService {
         clearExecutionData()
         executionGeneration &+= 1
         initialOutgoingRate = request.outgoingPlaybackRate
+        autoPilotNotice = nil
+        // A cancelled or completed earlier fire must not block a deliberate re-arm of the same track.
+        autoPilotFiredHistory = autoPilotFiredHistory.filter { $0.deck != request.outgoingTrack.deck }
         armedRequest = request
         armedTriggerPosition = trigger
         state = .armed(request: request, triggerPosition: trigger)
@@ -418,7 +433,12 @@ public actor TransitionExecutionService {
 
     /// Disarms backend AutoPilot without affecting active playback.
     public func disableAutoPilot() {
+        disableAutoPilot(reason: nil)
+    }
+
+    private func disableAutoPilot(reason: String?) {
         if case .armed = state {
+            autoPilotNotice = reason
             executionGeneration &+= 1
             armedRequest = nil
             armedTriggerPosition = nil
@@ -462,7 +482,7 @@ public actor TransitionExecutionService {
             if isDeckInvalidated(deck: request.outgoingTrack.deck)
                 || isDeckInvalidated(deck: request.incomingTrack.deck)
                 || isRateInvalidated(deck: request.outgoingTrack.deck) {
-                disableAutoPilot()
+                disableAutoPilot(reason: "AutoPilot disarmed: tempo or track changed after arming. Arm again.")
                 return []
             }
 
@@ -483,7 +503,7 @@ public actor TransitionExecutionService {
                 let deckGen = deckGeneration(for: deck)
                 let key = AutoPilotFiredKey(deck: deck, generation: deckGen)
                 guard !autoPilotFiredHistory.contains(key) else {
-                    disableAutoPilot()
+                    disableAutoPilot(reason: "AutoPilot already fired for this track. Arm again.")
                     return []
                 }
                 // One-shot AutoPilot fire!
@@ -500,11 +520,26 @@ public actor TransitionExecutionService {
                 return []
             }
 
-            // Invalidation check: rate change or track change aborts stale transition safely
-            if isRateInvalidated(deck: plan.outgoingDeck)
-                || isDeckInvalidated(deck: plan.outgoingDeck)
-                || isDeckInvalidated(deck: plan.incomingDeck) {
+            // A track change on either deck aborts the stale transition safely.
+            if isDeckInvalidated(deck: plan.outgoingDeck) || isDeckInvalidated(deck: plan.incomingDeck) {
                 return cancelTransition()
+            }
+
+            // DJ riding the outgoing pitch: keep the incoming deck tempo-matched instead of snapping the
+            // mix back. A jump beyond the planner's tempo window still cancels.
+            var followCommands: [TransitionCommand] = []
+            let liveOutRate = deckGraph(for: plan.outgoingDeck).timePitchParameters.rate
+            let drift = liveOutRate / initialOutgoingRate
+            if abs(drift - 1) > 0.01 {
+                let totalDrift = liveOutRate / planOutgoingRate
+                guard drift.isFinite, totalDrift.isFinite,
+                      abs(totalDrift - 1) <= Float(TransitionPlanner.maxTempoDifferential) else {
+                    return cancelTransition()
+                }
+                let incoming = deckGraph(for: plan.incomingDeck).timePitchParameters
+                followCommands = [.setRate(deck: plan.incomingDeck, rate: incoming.rate * drift, keyLock: incoming.keyLockEnabled)]
+                executeCommands(followCommands)
+                initialOutgoingRate = liveOutRate
             }
 
             guard playheadSeconds != nil || isMasterEngineRunning() else { return [] }
@@ -540,7 +575,7 @@ public actor TransitionExecutionService {
                 state = .inProgress(style: style, progress: sm.progress)
             }
 
-            return dueCommands
+            return followCommands + dueCommands
         }
     }
 
@@ -795,7 +830,7 @@ public actor TransitionExecutionService {
         case .inProgress:
             _ = cancelTransition()
         case .armed:
-            disableAutoPilot()
+            disableAutoPilot(reason: "AutoPilot could not start the transition: \(error.localizedDescription)")
         case .idle, .completed, .cancelled:
             break
         }

@@ -298,6 +298,13 @@ final class SoundboardTests: XCTestCase {
         XCTAssertGreaterThan(peak, 0.1, "Pad should play directly from unified RAM even with file deleted from disk")
     }
 
+    func testTriggerWithStoppedEngineDoesNotLightPad() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let soundboard = coordinator.soundboardController
+        soundboard.triggerPad(index: 0)
+        XCTAssertFalse(soundboard.padSnapshots[0].isPlaying, "A pad that cannot sound must not show as playing")
+    }
+
     // MARK: - 5. Simultaneous Pads & Retrigger Policy
 
     func testSimultaneousPadsAndRetriggerPolicy() throws {
@@ -461,9 +468,14 @@ final class SoundboardTests: XCTestCase {
     // MARK: - 9. Keyboard Repeat & Routing Behavior
 
     @MainActor
-    func testKeyboardRepeatAndRoutingBehavior() {
+    func testKeyboardRepeatAndRoutingBehavior() throws {
         let tempDir = FileManager.default.temporaryDirectory
         let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        // Pads only light while the master engine can actually play them.
+        try coordinator.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.start()
+        defer { coordinator.stop() }
         let appState = AppState(
             libraryRootURL: tempDir,
             waveformEditorModel: WaveformEditorModel(libraryRootURL: tempDir),

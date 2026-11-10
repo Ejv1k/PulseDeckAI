@@ -107,7 +107,8 @@ public struct LibraryScanner: Sendable {
                 )
                 let audioFiles = files.filter { file in
                     let ext = file.pathExtension.lowercased()
-                    let isRegularFile = (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+                    // Resolve first so symlinked tracks still count.
+                    let isRegularFile = (try? file.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
                     return isRegularFile && Self.supportedAudioExtensions.contains(ext)
                 }.map { $0.lastPathComponent }.sorted()
 

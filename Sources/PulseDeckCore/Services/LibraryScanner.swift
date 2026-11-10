@@ -67,7 +67,12 @@ public struct LibraryScanner: Sendable {
 
         let items: [URL]
         do {
-            items = try fileManager.contentsOfDirectory(at: libraryURL, includingPropertiesForKeys: [.isDirectoryKey])
+            // Hidden entries (.Trashes, .Spotlight-V100, ._AppleDouble) are not crates or tracks.
+            items = try fileManager.contentsOfDirectory(
+                at: libraryURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
         } catch {
             return LibraryScanSummary(
                 libraryURL: libraryURL,
@@ -95,10 +100,15 @@ public struct LibraryScanner: Sendable {
             let hasGitkeep = fileManager.fileExists(atPath: gitkeepURL.path)
 
             do {
-                let files = try fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+                let files = try fileManager.contentsOfDirectory(
+                    at: dir,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                )
                 let audioFiles = files.filter { file in
                     let ext = file.pathExtension.lowercased()
-                    return Self.supportedAudioExtensions.contains(ext)
+                    let isRegularFile = (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+                    return isRegularFile && Self.supportedAudioExtensions.contains(ext)
                 }.map { $0.lastPathComponent }.sorted()
 
                 let info = LibraryCrateInfo(

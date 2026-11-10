@@ -61,6 +61,27 @@ final class LibraryScannerTests: XCTestCase {
     }
 
     /// Tests that scanning a non-existent path reports a distinct scan error.
+    func testScanSkipsHiddenEntriesAndNonRegularFiles() throws {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("PulseDeckHidden_\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: tempDir) }
+        let crateDir = tempDir.appendingPathComponent("01_Warmup")
+        try fileManager.createDirectory(at: crateDir, withIntermediateDirectories: true)
+        for hidden in [".Trashes", ".Spotlight-V100"] {
+            try fileManager.createDirectory(at: tempDir.appendingPathComponent(hidden), withIntermediateDirectories: true)
+        }
+        for name in ["song.mp3", "._song.mp3", ".hidden.wav"] {
+            fileManager.createFile(atPath: crateDir.appendingPathComponent(name).path, contents: Data([0x00]))
+        }
+        try fileManager.createDirectory(at: crateDir.appendingPathComponent("folder.mp3"), withIntermediateDirectories: true)
+
+        let summary = LibraryScanner().scan(libraryURL: tempDir)
+
+        XCTAssertEqual(summary.crates.map(\.folderName), ["01_Warmup"])
+        XCTAssertEqual(summary.crates.first?.audioFiles, ["song.mp3"])
+        XCTAssertEqual(summary.totalAudioTracks, 1)
+    }
+
     func testScanNonExistentLibraryRoot() {
         let scanner = LibraryScanner()
         let nonExistentURL = URL(fileURLWithPath: "/tmp/non_existent_pulsedeck_dir_\(UUID().uuidString)")

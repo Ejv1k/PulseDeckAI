@@ -2,6 +2,7 @@ import XCTest
 import AVFoundation
 import CoreAudio
 @testable import PulseDeckCore
+@testable import PulseDeckAI
 
 final class TransitionExecutionTests: XCTestCase {
 
@@ -155,6 +156,37 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(coordinator.deckBGraph.eqParameters.lowGainDB, -24, "The incoming deck still follows the plan")
         _ = await service.cancelTransition()
         XCTAssertEqual(coordinator.deckAGraph.eqParameters.lowGainDB, -24, "Cancel (the panic path) must not slam the bass back")
+    }
+
+    @MainActor
+    func testManualEQIsRefusedOnceAutomationStartsEvenBeforeTheUISeesIt() async throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let service = coordinator.transitionExecutionService
+        let urlA = try createTestWavFile(durationSeconds: 30.0)
+        let urlB = try createTestWavFile(durationSeconds: 30.0)
+        defer {
+            try? FileManager.default.removeItem(at: urlA)
+            try? FileManager.default.removeItem(at: urlB)
+        }
+        try coordinator.deckAGraph.loadTrack(url: urlA)
+        try coordinator.deckBGraph.loadTrack(url: urlB)
+        coordinator.deckAGraph.play()
+        let root = FileManager.default.temporaryDirectory
+        let app = AppState(libraryRootURL: root, waveformEditorModel: WaveformEditorModel(libraryRootURL: root),
+                           audioCoordinator: coordinator, startCoordinator: false)
+        XCTAssertTrue(app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: -6)))
+        let request = TransitionRequest(
+            outgoingTrack: makeDescriptor(deck: .deckA, duration: 30.0, bpm: 120.0, mixOutCue: 10.0),
+            incomingTrack: makeDescriptor(deck: .deckB, duration: 30.0, bpm: 120.0, mixOutCue: 25.0),
+            style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false),
+            triggerPositionSeconds: 10.0)
+        _ = try await service.startTransition(request: request) // AppState has not polled the service yet.
+        XCTAssertFalse(app.isEQAutomated, "Precondition: the UI still believes nothing is running")
+        let automated = coordinator.deckAGraph.eqParameters
+        XCTAssertFalse(app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: 6, midGainDB: 6, highGainDB: 6)))
+        XCTAssertEqual(coordinator.deckAGraph.eqParameters, automated, "Automation keeps the EQ")
+        _ = await service.cancelTransition()
+        XCTAssertTrue(app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: -3)), "Manual EQ is back after cancel")
     }
 
     // MARK: - 2. Filter Echo Wash & Initial Gains

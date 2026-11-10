@@ -1227,11 +1227,16 @@ public final class AppState: ObservableObject {
         guard eq != deckEQ(deck) else { return true }
         var applied = eq
         if let coordinator = audioCoordinator {
-            applied = coordinator.monitor.performOnControlQueue { () -> EQ3BandParameters in
+            // Decided on the control queue, the same queue that runs automation commands: a transition the UI
+            // has not observed yet still wins.
+            let gate = coordinator.transitionExecutionService.automationGate
+            guard let result = coordinator.monitor.performOnControlQueue({ () -> EQ3BandParameters? in
+                guard !gate.isActive else { return nil }
                 let graph = deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph
                 graph.eqParameters = eq
                 return graph.eqParameters // clamped
-            }
+            }) else { return false }
+            applied = result
         }
         if deck == .deckA { deckAEQ = applied } else { deckBEQ = applied }
         return true

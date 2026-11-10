@@ -825,7 +825,10 @@ public final class AppState: ObservableObject {
         let cached = waveformEditorModel.entryForSelection(relativePath: relativePath, cache: cache, libraryRootURL: libraryRootURL)
         let durationMatches = cached.map { abs($0.duration - load.basic.duration) < 0.01 } ?? false
         let entry = durationMatches && cached?.fileFingerprint == load.identity.fingerprint ? (cached ?? load.basic) : load.basic
-        let (file, masterFile, cueFile) = (load.file, load.masterFile, load.cueFile)
+        let file = load.file
+        // `sending` gave this call sole ownership; older SDKs mark AVAudioFile non-Sendable.
+        nonisolated(unsafe) let masterFile = load.masterFile
+        nonisolated(unsafe) let cueFile = load.cueFile
         // Safety and automation authorization remain atomic with both actual graph loads.
         masterSafetyLockMessage = nil
         guard performManualDeckMutation(deck: deck, action: .replace, mutation: { graph in

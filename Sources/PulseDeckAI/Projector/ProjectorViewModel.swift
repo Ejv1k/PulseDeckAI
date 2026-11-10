@@ -156,9 +156,11 @@ public final class ProjectorViewModel: ObservableObject {
 
     func advanceSlideshowIfNeeded() {
         guard isWindowOpen, currentMode == .mediaSlideshow else { return }
-        // Only advance automatically if current item is a photo (videos loop themselves)
+        // Photos advance; healthy videos loop themselves. A failed item must not freeze the show.
+        let failed: Bool
+        if case .error = mediaService.mediaState { failed = true } else { failed = false }
         if mediaService.items.indices.contains(mediaService.currentIndex),
-           mediaService.items[mediaService.currentIndex].type == .photo {
+           failed || mediaService.items[mediaService.currentIndex].type == .photo {
             mediaService.nextMediaItem()
         }
     }

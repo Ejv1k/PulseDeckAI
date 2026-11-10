@@ -904,6 +904,27 @@ final class ProjectorTests: XCTestCase {
         XCTAssertFalse(service.isScanning)
     }
 
+    func testSlideshowSkipsPastCorruptVideo() async throws {
+        let root = try temporaryRoot()
+        let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a valid video container".utf8).write(to: directory.appendingPathComponent("a-corrupt.mp4"))
+        try writePhoto(directory.appendingPathComponent("b.png"))
+        let vm = ProjectorViewModel()
+        defer { vm.teardown() }
+        vm.isWindowOpen = true
+        vm.setMode(.mediaSlideshow)
+        vm.updateLibraryRoot(root)
+        try await waitUntil {
+            if case .error = vm.mediaService.mediaState { return true }
+            return false
+        }
+        XCTAssertEqual(vm.mediaService.items[vm.mediaService.currentIndex].fileName, "a-corrupt.mp4")
+        vm.advanceSlideshowIfNeeded()
+        XCTAssertEqual(vm.mediaService.items[vm.mediaService.currentIndex].fileName, "b.png",
+                       "A failed video must not freeze the slideshow")
+    }
+
     func testLateDecodedPhotosStartAnimationOnlyAfterEachImageMounts() async throws {
         let root = try temporaryRoot()
         let directory = root.appendingPathComponent(ProjectorMediaService.mediaFolderName)

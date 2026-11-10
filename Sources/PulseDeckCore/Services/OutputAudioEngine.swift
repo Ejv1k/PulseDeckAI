@@ -193,6 +193,7 @@ public final class OutputAudioEngine: AudioEngineContract, @unchecked Sendable {
             self.rawEngine.stop()
             self.delayNode.reset()
             self.subMixer.reset()
+            self.limiterNode.reset() // Drop lookahead audio so a restart does not replay a stale tail.
             self.monitor?.setIntendedRunningState(for: self.rawEngine, running: false)
         }
     }

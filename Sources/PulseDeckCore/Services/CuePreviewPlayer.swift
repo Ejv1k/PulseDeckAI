@@ -20,6 +20,8 @@ public final class CuePreviewPlayer: @unchecked Sendable {
     private var _scheduleStartSeconds: Double = 0.0
     private var _segmentQueued: Bool = false
     private var _scheduleGeneration: UInt64 = 0
+    // Last playhead from a valid render time; survives the node reset of a system engine stop.
+    private var _lastPlayhead: (generation: UInt64, seconds: Double)?
     private var _loadGeneration: UInt64 = 0
     private var _isPlaying: Bool = false
     private var _volume: Float = 1.0
@@ -256,9 +258,12 @@ public final class CuePreviewPlayer: @unchecked Sendable {
             if sampleRate.isFinite && sampleRate > 0.0 {
                 let elapsed = Double(playerTime.sampleTime) / sampleRate
                 let current = scheduledStart + elapsed
-                return min(max(current, scheduledStart), duration)
+                let clamped = min(max(current, scheduledStart), duration)
+                _lastPlayhead = (_scheduleGeneration, clamped)
+                return clamped
             }
         }
+        if let cached = _lastPlayhead, cached.generation == _scheduleGeneration { return cached.seconds }
         return scheduledStart
     }
 

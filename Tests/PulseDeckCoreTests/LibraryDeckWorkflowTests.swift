@@ -162,6 +162,39 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertGreaterThan(try f.peak(), 0.1, "Recovery must re-queue audio from the playhead")
     }
 
+    func testEngineRestartResumesFromThePlayheadNotTheScheduleOrigin() throws {
+        let f = try Fixture(duration: 4); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        for _ in 0..<12 { _ = try f.peak() } // ~1.1 s of offline render
+        let graph = f.audio.deckAGraph
+        let before = graph.currentMasterPlayheadSeconds()
+        XCTAssertGreaterThan(before, 0.9)
+        let engine = f.audio.masterAudioEngine.rawEngine
+        engine.stop()
+        try engine.start()
+        graph.resumeAfterEngineRestart(role: .master)
+        XCTAssertEqual(graph.currentMasterPlayheadSeconds(), before, accuracy: 0.15, "The track must not jump back")
+        XCTAssertGreaterThan(try f.peak(), 0.1)
+    }
+
+    func testPausedDeckPlaysAfterTheSystemRestartedItsEngine() throws {
+        let f = try Fixture(duration: 3); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        _ = try f.peak()
+        f.audio.deckAGraph.pause() // Direct pause (the on-air safety lock guards the UI path); segment stays queued.
+        let engine = f.audio.masterAudioEngine.rawEngine
+        engine.stop()
+        try engine.start()
+        f.audio.deckAGraph.resumeAfterEngineRestart(role: .master)
+        XCTAssertFalse(f.audio.deckAGraph.isMasterPlaying, "Recovery must not start a paused deck")
+        f.audio.deckAGraph.play()
+        XCTAssertGreaterThan(try f.peak(), 0.1, "Play after the restart must not be silent")
+    }
+
     func testActualLoadButtonWithoutSelectionShowsReason() async throws {
         let f = try Fixture(); defer { f.cleanup() }
         try press(LibraryDeckLoadButton(appState: f.app, deck: .deckA, title: "DECK A", color: .blue).button)

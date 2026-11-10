@@ -168,6 +168,8 @@ public actor TransitionExecutionService {
     private var executionGeneration: UInt64 = 0
     private var initialOutgoingRate: Float = 1.0
     private var autoPilotNotice: String?
+    /// Outgoing rate the active plan was built for; pitch rides are bounded against this, not the last step.
+    private var planOutgoingRate: Float = 1.0
     private var lastObservedDeckGeneration: [DeckIdentifier: UInt64] = [:]
     private var autoPilotFiredHistory: Set<AutoPilotFiredKey> = []
     private var initialCrossfaderPosition: Float?
@@ -292,6 +294,8 @@ public actor TransitionExecutionService {
 
         executionGeneration &+= 1
         initialOutgoingRate = request.outgoingPlaybackRate
+        planOutgoingRate = request.outgoingPlaybackRate
+        autoPilotNotice = nil
         armedRequest = nil
         armedTriggerPosition = nil
         lastTickedPosition = currentPos
@@ -344,6 +348,7 @@ public actor TransitionExecutionService {
         }
         executionGeneration &+= 1
         stopDriver()
+        autoPilotNotice = nil
 
         if case .armed = state {
             armedRequest = nil
@@ -526,7 +531,9 @@ public actor TransitionExecutionService {
             let liveOutRate = deckGraph(for: plan.outgoingDeck).timePitchParameters.rate
             let drift = liveOutRate / initialOutgoingRate
             if abs(drift - 1) > 0.01 {
-                guard drift.isFinite, abs(drift - 1) <= Float(TransitionPlanner.maxTempoDifferential) else {
+                let totalDrift = liveOutRate / planOutgoingRate
+                guard drift.isFinite, totalDrift.isFinite,
+                      abs(totalDrift - 1) <= Float(TransitionPlanner.maxTempoDifferential) else {
                     return cancelTransition()
                 }
                 let incoming = deckGraph(for: plan.incomingDeck).timePitchParameters

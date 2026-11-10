@@ -231,6 +231,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(graph.masterEQNode.globalGain, 3, accuracy: 1e-4)
         graph.trimGainDB = 0 // A direct set cancels any ramp still in flight.
         XCTAssertEqual(graph.trimGainDB, 0)
+    }
 
     func testMasterLimiterStopsEQAndGainBoostsFromClipping() throws {
         let f = try Fixture(duration: 3, clicks: true); defer { f.cleanup() }

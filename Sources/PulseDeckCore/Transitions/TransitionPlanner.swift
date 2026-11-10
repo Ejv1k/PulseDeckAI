@@ -305,12 +305,16 @@ public struct TransitionPlanner: Sendable {
 
         // Outgoing beat duration in seconds
         let beatInterval = outgoing.beatGrid.beatIntervalSeconds
-        let totalBeats = bars * 4
-        let totalDuration = Double(totalBeats) * beatInterval
+        // Offset of each bar line (0...bars) from the start. Real bar lines follow 3/4 downbeats and
+        // drifting tempo; a grid that ends before the phrase does falls back to uniform 4/4 bars.
+        let barOffsets = Self.barOffsets(bars: bars, from: quantizedStart, barTimestamps: outgoing.beatGrid.barTimestamps,
+                                          beatInterval: beatInterval)
+            ?? (0...bars).map { Double($0 * 4) * beatInterval }
+        let totalDuration = barOffsets[bars]
 
         // Midpoint downbeat calculation: half of phrase bars (e.g. bar 8 downbeat for a 16-bar transition)
         let midpointBars = max(1, bars / 2)
-        let bassSwapOffsetSeconds = Double(midpointBars * 4) * beatInterval
+        let bassSwapOffsetSeconds = barOffsets[midpointBars]
 
         var events: [ScheduledTransitionEvent] = []
 
@@ -358,7 +362,7 @@ public struct TransitionPlanner: Sendable {
 
         // MARK: Intermediate Bar-Quantized Progressions
         for barIndex in 1..<bars {
-            let offset = Double(barIndex * 4) * beatInterval
+            let offset = barOffsets[barIndex]
             let progress = Double(barIndex) / Double(bars)
 
             // Continuous monotonic outgoing fader fade from 1.0 down towards 0.0
@@ -452,6 +456,18 @@ public struct TransitionPlanner: Sendable {
             events: events,
             metadata: metadata
         )
+    }
+
+    /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
+    /// or a bar is implausibly short or long (a missed or spurious downbeat).
+    static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double], beatInterval: Double) -> [Double]? {
+        let tolerance = 1e-6
+        guard let first = barTimestamps.firstIndex(where: { abs($0 - start) <= tolerance }),
+              first + bars < barTimestamps.count else { return nil }
+        let offsets = barTimestamps[first...(first + bars)].map { $0 - start }
+        let plausibleBar = (1.5 * beatInterval)...(8.5 * beatInterval)
+        guard zip(offsets, offsets.dropFirst()).allSatisfy({ $1.isFinite && plausibleBar.contains($1 - $0) }) else { return nil }
+        return offsets
     }
 
     // MARK: - Filter Echo Wash Planning

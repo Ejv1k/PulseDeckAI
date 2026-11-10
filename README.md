@@ -45,6 +45,16 @@ PulseDeck AI is developed through a verification-driven lifecycle. The core perf
 * [x] **Master Deck Safety Lock (Phase 5A):** Protects playing on-air decks on the audio control queue during playback and crossfades from accidental pauses, stops, seeks, or track loads. `Shift + Space` provides a one-shot pause override. Fully merged in PR #19.
 * [ ] **Final Documentation Polish (Phase 5B — In Progress):** Complete user manual, architectural specification, continuation tracking, and phase status.
 
+### What's New: On-Device Analysis & Library Assist (PRs #32–#41)
+* **Default Core ML Beat & Downbeat Tracking:** Bundled on-device neural model "Beat This!" (`small0`, MIT license, ~10 MB; see `THIRD_PARTY_NOTICES.md`) is now the default analysis engine. The legacy vDSP heuristic remains user-selectable ("Engine: DSP | Model" selector, or right-click any track). Analysis runs entirely locally with zero Ollama or cloud dependencies required.
+* **Phrase-Aligned Cues & Downbeat Grid:** Model analysis aligns cue points to 8-bar musical phrases starting from the first downbeat, leaving 16 bars before `endTrimCue` for `mixOutCue` (`vocalEntryCue` denotes an 8-bar musical phrase boundary rather than vocal detection). The stored beat grid begins on the first downbeat so transition macros reliably land on bar 1.
+* **On-Device Musical Key Detection:** Chromagram extraction combined with Krumhansl-Kessler key profiles estimates musical keys directly on-device and populates Camelot wheel compatibility badges (low-confidence analyses safely remain "Unknown").
+* **Waveform BPM Halving & Doubling:** The waveform editor header provides `x1/2` and `x2` buttons to quickly correct half- or double-tempo octave errors, persisted as a manual `bpm` override that re-analysis preserves.
+* **Live Mix-Out Countdown:** Active playing decks display a real-time "Mix in N bars" countdown to `mixOutCue`.
+* **Smart Library Ordering & Batch Analysis:** Crates support "Best match" ordering against the reference deck (weighted harmonic key compatibility and tempo delta score), plus crate-wide "Analyze All" with progress tracking and cancellation (`Stop`).
+* **UI Refinements:** Streamlined track titles, quieter list rows, and a compact output routing row with integrated Master and Cue level meters.
+* **Test Verification:** Main branch verified with 419+ Swift tests; Python companion tests (37) are unchanged.
+
 ---
 
 ## Architectural Highlights
@@ -106,10 +116,11 @@ $$\text{0.0} \le \text{startTrimCue} \le \text{vocalEntryCue} \le \text{mixOutCu
 When a human DJ manually adjusts cues, BPM, or musical key, the track entry records `manualOverrides.isManual = true` along with the list of overridden fields. Re-running automated DSP analysis or re-scanning the library will **never** overwrite manually adjusted fields.
 
 > [!NOTE]
-> **Analysis Limitations & Cached Key Matching:**
-> * `LocalTrackAnalyzer` and the Python companion script write `musicalKey: "Unknown"` and empty `vocalSegments: []`. They do not extract musical keys or lead-vocal onsets from raw audio. `HarmonicCompatibility` matches Camelot keys already present in cached metadata or manual overrides.
-> * `vocalEntryCue` is computed via a temporal span heuristic (`span * 0.12`).
-> * `startTrimCue` and `endTrimCue` are bounded metadata timestamps for transition planning. They do **not** automatically crop or stop ordinary deck playback in CoreAudio (`DeckAudioGraph.loadTrack` schedules from frame zero to `file.length`).
+> **Analysis Architecture & On-Device Processing:**
+> * **Analysis Engines:** On-device Core ML beat/downbeat model "Beat This!" (`small0`, bundled ~10 MB, MIT license; see `THIRD_PARTY_NOTICES.md`) is the default analysis engine; the legacy DSP heuristic remains selectable ("Engine: DSP | Model", or right-click a track). No Ollama or cloud models are required for analysis.
+> * **On-Device Key Detection:** Chromagram extraction and Krumhansl-Kessler profiles detect musical keys on-device (low-confidence keys remain "Unknown"), feeding Camelot compatibility badges. The Python companion script does not extract musical keys from raw audio.
+> * **Phrase Alignment:** Model analysis aligns cue points to 8-bar musical phrases from the first downbeat, with `mixOutCue` leaving 16 bars before `endTrimCue`. `vocalEntryCue` marks an 8-bar phrase boundary rather than vocal detection. The stored beat grid begins on the first downbeat so transitions land on bar 1.
+> * **Playback Bounds:** `startTrimCue` and `endTrimCue` are bounded metadata timestamps for transition planning. They do **not** automatically crop or stop ordinary deck playback in CoreAudio (`DeckAudioGraph.loadTrack` schedules from frame zero to `file.length`).
 
 ### 5. Interactive Waveforms & Non-Destructive Cue Editing
 The multi-band Canvas waveform visually differentiates audio frequencies:
@@ -243,7 +254,7 @@ pulsedeckai/
 │           ├── ProjectorBannerEditorView.swift # DJ control sheet for event banner editing
 │           └── ProjectorKeyboardRouter.swift # Window-scoped Keys 1-4 routing with text guard
 ├── Tests/
-│   └── PulseDeckCoreTests/                   # Swift Testing / XCTest test suite (329 tests)
+│   └── PulseDeckCoreTests/                   # Swift Testing / XCTest test suite (419+ tests)
 └── PulseDeck_Library/                        # Standard DJ crate hierarchy (Media git-ignored)
     ├── .pulsedeck_ai_cache.json              # Versioned audio analysis cache
     ├── 00_Test_Tracks_Dev/                   # Verified test audio files (7 songs, MP3)
@@ -270,7 +281,7 @@ swift build
 
 ### 2. Execute the Test Suite
 ```bash
-# Run 329 Swift unit & integration tests
+# Run 419+ Swift unit & integration tests
 swift test
 ```
 
@@ -335,6 +346,7 @@ PulseDeck AI standardizes music library organization into **10 structured crates
 | **4** | **Transitions, Talkover & Soundboard** | Bass Swap, Filter Echo Wash, Hard Cut, Auto-Pilot, Talkover ducking (`T`, 800ms linear ramp to 0.15 gain), RAM Soundboard (`F1`–`F8`) | **Merged** (PR #15, PR #16, PR #17; transition timing & SFX RAM tests) |
 | **5A** | **Projector Display & Safety Locks** | Secondary presentation window (`Cmd + Shift + P`, Modes 1–4, Keys 1–4), Master deck safety lock | **Merged** (PR #18, PR #20, PR #19; 329 Swift / 40 Python CI green) |
 | **5B** | **Final Documentation & Product Polish** | Complete Event DJ User Manual, Technical Architecture, Phase Status, and Continuation tracking | **In Progress** (Phase 5B documentation PR) |
+| **Post-5B** | **On-Device Analysis & Library Assist** | Core ML Beat This! rhythm model, on-device key detection, 8-bar phrase cues, mix-out countdown, best match, crate batch analysis | **Merged** (PRs #32–#41; 419+ Swift tests) |
 
 > [!NOTE]
 > **Hardware Verification Scope:** Automated CI tests verify CoreAudio graphs, PCM math, vDSP analysis, transition curves, RAM soundboard preloading, and secondary window event routing offline. Physical output audio devices, HDMI display scaling, Bluetooth latency/clock drift, live cloud provider endpoints, and physical pointer automation remain unverified.

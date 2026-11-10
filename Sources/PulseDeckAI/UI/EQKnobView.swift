@@ -14,7 +14,7 @@ struct EQKnob: View {
     private static let sweepDegrees: Double = 270
     private static let dragPointsForFullTurn: CGFloat = 160
 
-    @State private var dragStart: Double?
+    @GestureState private var dragStart: Double? // Resets itself even when a drag is cancelled.
 
     /// Unequal halves, like real mixers: the cut side gets as much travel as the boost side.
     static func position(for gain: Float) -> Double {
@@ -77,16 +77,17 @@ struct EQKnob: View {
 
     private var drag: some Gesture {
         DragGesture(minimumDistance: 1)
+            .updating($dragStart) { _, start, _ in
+                if start == nil { start = position }
+            }
             .onChanged { value in
                 guard isEnabled else { return }
                 let start = dragStart ?? position
-                if dragStart == nil { dragStart = start }
                 let next = start - Double(value.translation.height / Self.dragPointsForFullTurn)
                 var gain = Self.gain(for: next)
                 if abs(gain) < 0.4 { gain = 0 } // Detent at 0 dB, like the centre click of a mixer knob.
                 onChange(gain)
             }
-            .onEnded { _ in dragStart = nil }
     }
 
     private func arc(from start: Double, to end: Double) -> Path {
@@ -107,7 +108,7 @@ struct DeckEQStrip: View {
 
     var body: some View {
         let eq = appState.deckEQ(deck)
-        let enabled = !appState.isTransitionBusy
+        let enabled = !appState.isEQAutomated
         HStack(spacing: 14) {
             EQKnob(label: "HI", gainDB: eq.highGainDB, color: color, isEnabled: enabled) { value in
                 var next = appState.deckEQ(deck); next.highGainDB = value

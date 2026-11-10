@@ -1144,10 +1144,17 @@ public final class AppState: ObservableObject {
 
     public func deckEQ(_ deck: DeckIdentifier) -> EQ3BandParameters { deck == .deckA ? deckAEQ : deckBEQ }
 
+    /// True while transition automation drives the EQ. An armed AutoPilot leaves the knobs to the DJ.
+    public var isEQAutomated: Bool {
+        if case .inProgress = activeTransitionState { return true }
+        return false
+    }
+
     /// Manual channel EQ (HI / MID / LOW). Refused while a transition runs: its automation owns the EQ.
     @discardableResult
     public func setDeckEQ(deck: DeckIdentifier, eq: EQ3BandParameters) -> Bool {
-        guard !isTransitionBusy else { return false }
+        guard !isEQAutomated else { return false }
+        guard eq != deckEQ(deck) else { return true }
         var applied = eq
         if let coordinator = audioCoordinator {
             applied = coordinator.monitor.performOnControlQueue { () -> EQ3BandParameters in

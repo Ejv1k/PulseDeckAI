@@ -54,6 +54,7 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
     private var _isCueActive: Bool = false
     private var _eqParameters = EQ3BandParameters()
     private var _trimGainDB: Float = 0
+    private var _trimRampGeneration: UInt64 = 0
     private var _filterParameters = ResonantFilterParameters()
     private var _timePitchParameters = TimePitchParameters()
 
@@ -432,12 +433,48 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             return _trimGainDB
         }
         set {
-            let clamped = newValue.isFinite ? min(max(newValue, -24), 12) : 0
             stateLock.lock()
-            _trimGainDB = clamped
+            _trimRampGeneration &+= 1 // A direct set wins over any ramp in flight.
             stateLock.unlock()
-            masterEQNode.globalGain = clamped
-            cueEQNode.globalGain = clamped
+            applyTrim(newValue)
+        }
+    }
+
+    private func applyTrim(_ value: Float) {
+        let clamped = value.isFinite ? min(max(value, -24), 12) : 0
+        stateLock.lock()
+        _trimGainDB = clamped
+        stateLock.unlock()
+        masterEQNode.globalGain = clamped
+        cueEQNode.globalGain = clamped
+    }
+
+    /// Moves the trim smoothly while the deck is audible (a jump mid-song is the very thing auto gain is
+    /// meant to prevent); a silent deck takes the new value at once.
+    public func rampTrimGain(to target: Float, duration: TimeInterval = 1.5) {
+        let steps = 30
+        stateLock.lock()
+        _trimRampGeneration &+= 1
+        let generation = _trimRampGeneration
+        let start = _trimGainDB
+        let audible = _isMasterPlaying || _isCuePlaying
+        stateLock.unlock()
+        guard audible, duration > 0, target.isFinite, abs(target - start) > 0.05 else {
+            executeOnControlQueue { self.applyTrim(target) }
+            return
+        }
+        for step in 1...steps {
+            let fraction = Float(step) / Float(steps)
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + duration * Double(fraction)) { [weak self] in
+                guard let self else { return }
+                self.executeOnControlQueue {
+                    self.stateLock.lock()
+                    let current = self._trimRampGeneration == generation
+                    self.stateLock.unlock()
+                    guard current else { return }
+                    self.applyTrim(start + (target - start) * fraction)
+                }
+            }
         }
     }
 

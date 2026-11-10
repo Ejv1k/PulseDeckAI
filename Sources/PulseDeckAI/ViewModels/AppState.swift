@@ -883,7 +883,7 @@ public final class AppState: ObservableObject {
         guard let coordinator = audioCoordinator else { return }
         let gain = Float(isAutoGainEnabled ? (autoGainDB(deck) ?? 0) : 0)
         coordinator.monitor.performOnControlQueue {
-            (deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph).trimGainDB = gain
+            (deck == .deckA ? coordinator.deckAGraph : coordinator.deckBGraph).rampTrimGain(to: gain)
         }
     }
 

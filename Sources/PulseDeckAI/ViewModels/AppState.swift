@@ -1011,6 +1011,10 @@ public final class AppState: ObservableObject {
             do {
                 if let cueError = try coordinator.start(requireCue: false) {
                     self.coordinatorErrorMessage = Self.cueUnavailableMessage(cueError)
+                    // Master is up, so an earlier start error in the status line is stale.
+                    if statusMessage.hasPrefix("Audio Start Error:") || statusMessage.hasPrefix("Audio Startup Error:") {
+                        statusMessage = "Audio engines running"
+                    }
                 }
             } catch {
                 self.coordinatorErrorMessage = "Failed to start audio engine: \(error.localizedDescription)"

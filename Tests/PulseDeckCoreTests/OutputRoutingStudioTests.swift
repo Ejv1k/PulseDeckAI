@@ -130,7 +130,9 @@ final class OutputRoutingStudioTests: XCTestCase {
     func testCueStartFailureOnPlayKeepsMasterRunningAndReportsCue() throws {
         let app = try makeOfflineApp()
         coordinator.cueAudioEngine.startErrorForTesting = CoreAudioError.osStatus(-10868, operation: "cueOnPlay")
+        app.statusMessage = "Audio Start Error: earlier failure"
         app.toggleDeckPlay(deck: .deckA)
+        XCTAssertFalse(app.statusMessage.hasPrefix("Audio Start Error:"))
         XCTAssertTrue(coordinator.masterAudioEngine.isRunning)
         XCTAssertTrue(coordinator.monitor.isMonitoringActive)
         XCTAssertTrue(app.isDeckAPlaying)

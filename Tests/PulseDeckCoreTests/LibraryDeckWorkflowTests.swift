@@ -196,8 +196,8 @@ final class LibraryDeckWorkflowTests: XCTestCase {
     }
 
     func testAutoGainLevelsALoadedTrackAndCanBeSwitchedOff() async throws {
-        let f = try Fixture(duration: 2); defer { f.cleanup(); f.app.isAutoGainEnabled = true }
-        f.app.isAutoGainEnabled = true
+        let f = try Fixture(duration: 2); defer { f.cleanup() }
+        f.app.isAutoGainEnabled = true // Injected app states start with auto gain off.
         XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
         XCTAssertTrue(f.app.isMeasuringLoudness(.deckA))
         await f.app.waitForPendingLoudness(deck: .deckA)

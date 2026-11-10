@@ -102,6 +102,8 @@ public final class AppState: ObservableObject {
     private var deckAnalysisValidationIDs: [DeckIdentifier: UUID] = [:]
     private var deckLoadTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var deckLoadRequestIDs: [DeckIdentifier: UUID] = [:]
+    /// App preferences; nil for injected (test) instances so they never touch the user's settings.
+    private var preferences: UserDefaults?
     private var loudnessTasks: [DeckIdentifier: Task<Void, Never>] = [:]
     private var loudnessRequestIDs: [DeckIdentifier: UUID] = [:]
     /// Auto gain per deck once measured (dB toward -14 LUFS); nil while measuring or for silent/unreadable audio.
@@ -110,10 +112,10 @@ public final class AppState: ObservableObject {
     @Published public private(set) var deckAAutoGainMeasuring = false
     @Published public private(set) var deckBAutoGainMeasuring = false
     /// Every track plays at a similar loudness (EBU R128). Persisted; on by default.
-    @Published public var isAutoGainEnabled: Bool = UserDefaults.standard.object(forKey: "autoGainEnabled") as? Bool ?? true {
+    @Published public var isAutoGainEnabled: Bool = true {
         didSet {
             guard oldValue != isAutoGainEnabled else { return }
-            UserDefaults.standard.set(isAutoGainEnabled, forKey: "autoGainEnabled")
+            preferences?.set(isAutoGainEnabled, forKey: "autoGainEnabled")
             for deck in [DeckIdentifier.deckA, .deckB] { applyAutoGain(deck: deck) }
         }
     }
@@ -293,6 +295,9 @@ public final class AppState: ObservableObject {
             statusMessage = "Audio Startup Error: \(error.localizedDescription)"
         }
 
+        self.preferences = .standard
+        self.isAutoGainEnabled = UserDefaults.standard.object(forKey: "autoGainEnabled") as? Bool ?? true
+
         let locationStore = LibraryLocationStore.applicationStore()
         let location = LibraryLocation.resolve(
             arguments: ProcessInfo.processInfo.arguments,
@@ -328,9 +333,11 @@ public final class AppState: ObservableObject {
         libraryLocationStore: LibraryLocationStore? = nil,
         libraryLaunchIssue: LibraryLaunchLocation.Issue? = nil,
         beforeSoundboardPreloadForTesting: (@MainActor (URL) -> Void)? = nil,
-        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() }
+        chooseLibraryDirectory: @escaping @MainActor () -> URL? = { LibraryLocationPicker.chooseDirectory() },
+        autoGainEnabled: Bool = false
     ) {
         // Explicitly injected roots win; this initializer never restores normal app preferences.
+        self.isAutoGainEnabled = autoGainEnabled
         self.libraryLocationStore = libraryLocationStore
         self.libraryLaunchIssue = libraryLaunchIssue
         self.beforeSoundboardPreloadForTesting = beforeSoundboardPreloadForTesting

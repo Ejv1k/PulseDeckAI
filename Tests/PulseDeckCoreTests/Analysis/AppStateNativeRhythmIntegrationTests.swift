@@ -347,3 +347,31 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         XCTAssertEqual(editor.cues.mixOutCue, 7.25, accuracy: 0.001)
     }
 }
+
+extension AppStateNativeRhythmIntegrationTests {
+    func testManualBPMHalvingPersistsAndSurvivesReanalysis() async throws {
+        let fixture = try makeLibrary()
+        let editor = WaveformEditorModel(libraryRootURL: fixture.root)
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: editor)
+        try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent("trackT.wav"), durationSeconds: 10.0, bpm: 120.0)
+        let relPath = "01_House/trackT.wav"
+
+        _ = await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        _ = await app.selectTrack(relativePath: relPath).value
+        let analyzedBPM = try XCTUnwrap(editor.currentTrack?.bpm)
+        XCTAssertGreaterThan(analyzedBPM, 0)
+
+        editor.scaleBPM(by: 0.5)
+        await editor.waitForPendingSaves()
+
+        let cacheURL = fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
+        let saved = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
+        XCTAssertEqual(saved.bpm, (analyzedBPM * 0.5 * 10).rounded() / 10, accuracy: 0.001)
+        XCTAssertTrue(saved.manualOverrides.overriddenFields.contains("bpm"))
+
+        // Re-analysis must keep the DJ's tempo.
+        _ = await app.analyzeTrack(relativePath: relPath, method: .dsp).value
+        let reanalyzed = try XCTUnwrap(CachePersistence.load(from: cacheURL)?.tracks[relPath])
+        XCTAssertEqual(reanalyzed.bpm, saved.bpm, accuracy: 0.001)
+    }
+}

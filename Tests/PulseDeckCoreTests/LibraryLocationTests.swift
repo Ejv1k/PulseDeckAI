@@ -215,7 +215,7 @@ final class LibraryLocationTests: XCTestCase {
         let assetPath = "08_Soundboard_SFX/01 Quiet.wav"
         await app.selectTrack(relativePath: assetPath).value
         await app.loadPreviewTrack(relativePath: assetPath).value
-        await app.analyzeTrack(relativePath: assetPath).value
+        await app.analyzeTrack(relativePath: assetPath, method: .dsp).value
         XCTAssertFalse(app.loadTrack(relativePath: assetPath, deck: .deckA))
         XCTAssertNil(app.selectedTrackPath)
         XCTAssertNil(app.previewTrackPath)

@@ -439,7 +439,7 @@ final class StudioCompositionLayoutTests: XCTestCase {
         fixture.state.selectTrack(relativePath: relPath)
         XCTAssertEqual(fixture.state.selectedTrackPath, relPath,
                        "Selected track path must point to worst-case track relative path")
-        fixture.state.analyzeTrack(relativePath: relPath)
+        fixture.state.analyzeTrack(relativePath: relPath, method: .dsp)
         XCTAssertNotNil(fixture.state.analysisStatus(for: relPath),
                         "Analysis status must be active for worst-case track")
         fixture.state.statusMessage = "Analyzing audio stems & calculating transient beat grid (local FFT heuristic)..."

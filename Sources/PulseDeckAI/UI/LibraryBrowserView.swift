@@ -143,10 +143,7 @@ public struct LibraryBrowserView: View {
                             Text(selected.title)
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
-
-                            Text("Folder: \(selected.folderName)")
-                                .font(.system(size: 10))
-                                .foregroundColor(DJTheme.textMuted)
+                                .help(selected.folderName)
                         }
 
                         Spacer()
@@ -421,10 +418,13 @@ public struct LibraryBrowserView: View {
                         .background(DJTheme.cardBackground)
                     }
 
-                    Text("Select a track, then Load A/B or drag onto a deck. Analyze locally for waveforms and beat tools; no account required.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DJTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // First-run guidance only; once a track is selected the row actions speak for themselves.
+                    if appState.selectedTrackPath == nil {
+                        Text("Select a track, then Load A/B or drag onto a deck. Analyze locally for waveforms and beat tools; no account required.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(DJTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     // Dedicated Audition Transport & Scrub Strip
                     auditionControlBar
@@ -814,10 +814,10 @@ struct LibraryTrackAnalysisButton: View {
             .contentShape(Rectangle())
         }
         .contextMenu {
-            Button("Analyze with DSP (Baseline)") {
+            Button("Analyze with DSP (Fast Heuristic)") {
                 appState.analyzeTrack(relativePath: relativePath, method: .dsp)
             }
-            Button("Analyze with Native CoreML (Experimental)") {
+            Button("Analyze with Model (Beat This!)") {
                 appState.analyzeTrack(relativePath: relativePath, method: .nativeModel)
             }
         }

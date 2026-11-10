@@ -152,7 +152,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         f.app.updateCrossfader(position: 0)
         f.app.toggleDeckPlay(deck: .deckA)
         let generation = f.audio.deckAGraph.scheduleGeneration
-        await f.app.analyzeTrack(relativePath: f.path).value
+        await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value
         XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
         let cached = try XCTUnwrap(f.app.loadedCache?.tracks[f.path])
         XCTAssertEqual(cached.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
@@ -199,7 +199,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let gate = HeldAnalysisPersistence(entered: entered, afterSave: true)
         let f = try Fixture(persistence: gate); defer { f.cleanup() }
         await f.app.selectTrack(relativePath: f.path).value
-        let job = f.app.analyzeTrack(relativePath: f.path)
+        let job = f.app.analyzeTrack(relativePath: f.path, method: .dsp)
         await fulfillment(of: [entered], timeout: 5)
         let entry = try XCTUnwrap(CachePersistence.load(from: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))?.tracks[f.path])
         f.app.waveformEditorModel.loadTrack(entry)
@@ -225,7 +225,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let entered = expectation(description: "Analysis held before persistence")
         let gate = HeldAnalysisPersistence(entered: entered, afterSave: false)
         let f = try Fixture(persistence: gate); defer { f.cleanup() }
-        let job = f.app.analyzeTrack(relativePath: f.path)
+        let job = f.app.analyzeTrack(relativePath: f.path, method: .dsp)
         await fulfillment(of: [entered], timeout: 5)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: f.root.appendingPathComponent(f.path).path)
         await gate.open()
@@ -240,7 +240,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let entered = expectation(description: "Analysis held before root change")
         let gate = HeldAnalysisPersistence(entered: entered, afterSave: false)
         let f = try Fixture(persistence: gate); defer { f.cleanup() }
-        let job = f.app.analyzeTrack(relativePath: f.path)
+        let job = f.app.analyzeTrack(relativePath: f.path, method: .dsp)
         await fulfillment(of: [entered], timeout: 5)
         let other = f.root.appendingPathComponent("another-library", isDirectory: true)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
@@ -275,7 +275,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         try press(LibraryTrackAnalysisButton(appState: f.app, relativePath: f.path).button)
         XCTAssertTrue(f.app.isAnalyzingLibraryTrack)
         XCTAssertEqual(f.app.analysisStatus(for: f.path), .running)
-        await f.app.analyzeTrack(relativePath: f.path).value
+        await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value
         XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
         XCTAssertFalse(f.app.isAnalyzingLibraryTrack)
         XCTAssertNotNil(f.app.loadedCache?.tracks[f.path])
@@ -291,7 +291,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         try CachePersistence.saveAtomic(cache: PulseDeckLibraryCache(tracks: [otherPath: other]),
                                         to: f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
         await f.app.selectTrack(relativePath: f.path).value
-        let job = f.app.analyzeTrack(relativePath: f.path)
+        let job = f.app.analyzeTrack(relativePath: f.path, method: .dsp)
         await fulfillment(of: [entered], timeout: 5)
         await f.app.selectTrack(relativePath: otherPath).value
         f.app.waveformEditorModel.zoomLevel = 2
@@ -310,7 +310,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let cache = f.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName)
         let original = Data("malformed cache must remain untouched".utf8)
         try original.write(to: cache)
-        await f.app.analyzeTrack(relativePath: f.path).value
+        await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value
         guard case .failed(let reason) = f.app.analysisStatus(for: f.path) else { return XCTFail("Expected actionable analysis error") }
         XCTAssertTrue(reason.contains("schema validation"))
         XCTAssertEqual(try Data(contentsOf: cache), original)
@@ -360,7 +360,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         // Equal bytes/mtime/size can exist in different libraries; root identity still matters.
         XCTAssertEqual(try LibraryTrackSource.fingerprint(at: copiedURL), original.fileFingerprint)
         f.app.libraryRootURL = other
-        await f.app.analyzeTrack(relativePath: f.path).value
+        await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value
         XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
         XCTAssertEqual(f.audio.deckAGraph.loadedTrackURL, originalURL)
         XCTAssertEqual(f.app.deckATrack, original, "New-root analysis must not relabel an old-root loaded deck")
@@ -452,7 +452,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
             if useSHA {
                 // Reanalysis uses the other supported fingerprint representation; adoption
                 // must still recognize the actual loaded source rather than its cache encoding.
-                await f.app.analyzeTrack(relativePath: f.path).value
+                await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value
                 XCTAssertEqual(f.app.analysisStatus(for: f.path), .complete)
                 XCTAssertEqual(f.app.deckATrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: url))
                 XCTAssertEqual(f.app.deckATrack?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
@@ -555,7 +555,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertNil(f.app.transitionReadinessMessage)
         let a = f.audio.deckAGraph.scheduleGeneration
         let b = f.audio.deckBGraph.scheduleGeneration
-        for path in [f.path, otherPath] { await f.app.analyzeTrack(relativePath: path).value }
+        for path in [f.path, otherPath] { await f.app.analyzeTrack(relativePath: path, method: .dsp).value }
         XCTAssertEqual(f.app.deckATrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: f.root.appendingPathComponent(f.path)))
         XCTAssertEqual(f.app.deckBTrack?.fileFingerprint, try LibraryTrackSource.fingerprint(at: f.root.appendingPathComponent(otherPath)))
         XCTAssertNil(f.app.transitionReadinessMessage, "An encoding change must not revoke unchanged audio's measured readiness")
@@ -584,7 +584,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
             f.app.waveformEditorModel.setCue(.mixOut, toTime: 0.7)
             f.app.waveformEditorModel.toggleAITrimBypass()
             await f.app.waveformEditorModel.waitForPendingSaves()
-            if reanalyze { await f.app.analyzeTrack(relativePath: f.path).value }
+            if reanalyze { await f.app.analyzeTrack(relativePath: f.path, method: .dsp).value }
             let latest = try XCTUnwrap(f.app.loadedCache?.tracks[f.path])
             let generation = f.audio.deckAGraph.scheduleGeneration
             await gate.open()

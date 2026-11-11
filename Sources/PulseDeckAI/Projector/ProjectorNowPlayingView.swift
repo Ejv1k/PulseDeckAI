@@ -26,7 +26,7 @@ public struct ProjectorNowPlayingView: View {
 
             VStack(spacing: 0) {
                 // Top customizable event banner
-                if !viewModel.eventBannerText.isEmpty {
+                if !viewModel.eventBannerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(viewModel.eventBannerText.uppercased())
                         .font(.system(size: max(14, width * 0.016), weight: .bold, design: .serif))
                         .foregroundColor(DJTheme.cue)

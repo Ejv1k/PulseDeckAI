@@ -8,6 +8,22 @@ import AVFoundation
 /// Optional PULSEDECK_SNAPSHOT_TRACKS: newline-separated audio files copied into a temporary library.
 @MainActor
 final class UISnapshotProbe: XCTestCase {
+    private func render<V: View>(_ view: V, size: NSSize, to url: URL) async throws {
+        let controller = NSHostingController(rootView: view)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.setContentSize(size)
+        window.orderBack(nil)
+        try await Task.sleep(nanoseconds: 600_000_000)
+        controller.view.layoutSubtreeIfNeeded()
+        let rep = try XCTUnwrap(controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))
+        controller.view.cacheDisplay(in: controller.view.bounds, to: rep)
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
+        window.contentViewController = nil
+        window.close()
+    }
+
     func testRenderStudio() async throws {
         guard let outDir = ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_DIR"] else { throw XCTSkip("snapshot only") }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("SnapshotLibrary-\(UUID().uuidString)")
@@ -32,6 +48,14 @@ final class UISnapshotProbe: XCTestCase {
         }
         let projector = ProjectorViewModel()
         defer { projector.teardown() }
+        if ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_PROJECTOR"] != nil {
+            projector.updateNowPlaying(from: app)
+            for mode in [ProjectorMode.nowPlaying, .fftVisualizer, .mediaSlideshow, .blackout] {
+                projector.setMode(mode)
+                try await render(ProjectorWindowView(viewModel: projector, appState: app), size: NSSize(width: 1280, height: 720),
+                                 to: URL(fileURLWithPath: outDir).appendingPathComponent("projector-\(mode.rawValue).png"))
+            }
+        }
         for (label, size) in [("1440x900", NSSize(width: 1440, height: 900)), ("1024x680", NSSize(width: 1024, height: 680))] {
             let controller = NSHostingController(rootView: ContentView().environmentObject(app).environmentObject(projector))
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)

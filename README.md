@@ -45,7 +45,7 @@ The full keyboard map and event tips are in the [user manual](docs/USER_MANUAL.m
 ## Known limits
 
 - Beat positions come from a model that works in 20 ms steps, so a beat can be about 10 ms off. That is fine for a bass swap, but not sample-accurate.
-- Tracks with a drifting tempo (live recordings) are not good beat-match candidates. Some slow tracks in 6/8 or 12/8 are reported at three times their feel tempo.
+- Tracks with a drifting tempo (live recordings) are not good beat-match candidates. A slow track in 12/8 can be reported at three times their feel tempo.
 - Master and Cue on one output device (for example only the built-in speakers) works, but audition is then heard in the room.
 - Replugging headphones during a set is not fully verified on real hardware (issue #60).
 - The optional cloud advisor (Gemini) is experimental and off unless you add a key in Settings.
@@ -57,7 +57,7 @@ The full keyboard map and event tips are in the [user manual](docs/USER_MANUAL.m
 | App, UI, view models, projector | `Sources/PulseDeckAI` |
 | Audio engines, analysis, transition planner, cache | `Sources/PulseDeckCore` |
 | Lock-free ring buffer for audio-thread metering (C11) | `Sources/PulseDeckAtomics` |
-| Optional Python tools to validate and batch-analyze the cache | `scripts/` |
+| Optional Python tools to validate and batch-analyze the cache (extra packages in `requirements-analysis.txt`) | `scripts/` |
 
 Design notes (dual engines, audio-thread safety, latency, cache format) are in [docs/TECHNICAL_ARCHITECTURE.md](docs/TECHNICAL_ARCHITECTURE.md).
 

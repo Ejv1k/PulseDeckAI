@@ -5,14 +5,14 @@ import XCTest
 @MainActor
 final class DeckEQTests: XCTestCase {
     func testKnobPositionMapsLikeAMixer() {
-        XCTAssertEqual(EQKnob.position(for: 0), 0.5, accuracy: 1e-9, "0 dB sits at 12 o'clock")
-        XCTAssertEqual(EQKnob.position(for: -24), 0, accuracy: 1e-9)
-        XCTAssertEqual(EQKnob.position(for: 6), 1, accuracy: 1e-9)
+        XCTAssertEqual(EQFader.position(for: 0), 0.5, accuracy: 1e-9, "0 dB sits at 12 o'clock")
+        XCTAssertEqual(EQFader.position(for: -24), 0, accuracy: 1e-9)
+        XCTAssertEqual(EQFader.position(for: 6), 1, accuracy: 1e-9)
         for gain: Float in [-24, -12, -3, 0, 2, 6] {
-            XCTAssertEqual(EQKnob.gain(for: EQKnob.position(for: gain)), gain, accuracy: 1e-4)
+            XCTAssertEqual(EQFader.gain(for: EQFader.position(for: gain)), gain, accuracy: 1e-4)
         }
-        XCTAssertEqual(EQKnob.gain(for: -1), -24, "Turning past the stop stays killed")
-        XCTAssertEqual(EQKnob.gain(for: 2), 6)
+        XCTAssertEqual(EQFader.gain(for: -1), -24, "Turning past the stop stays killed")
+        XCTAssertEqual(EQFader.gain(for: 2), 6)
     }
 
     func testDeckEQReachesBothGraphPathsAndIsClamped() throws {

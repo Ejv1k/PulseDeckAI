@@ -77,7 +77,7 @@ private struct AISettings: View {
                     Text(message).font(.caption).foregroundStyle(.red)
                 }
             } footer: {
-                Text("Optional. Without a key everything works offline. With one, PulseDeck can ask Gemini about track names, BPM and key; audio never leaves this Mac.")
+                Text("Optional. Without a key everything works offline. Ask AI sends the two track file names, BPM, key and song sections to Google; audio never leaves this Mac. On the free tier Google may use that text to improve its models.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

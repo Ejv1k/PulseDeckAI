@@ -125,6 +125,14 @@ public actor HybridAIAdvisorService: AIAdvisorServiceContract {
         }
     }
 
+    /// Gemini only: the local fallback has no song knowledge, which is the point of asking.
+    public func adviseTransition(outgoing: TrackCacheEntry, incoming: TrackCacheEntry) async throws -> TransitionAdvice {
+        guard let key = geminiClient.apiKeyProvider(), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIAdvisorError.noProviderAvailable
+        }
+        return try await geminiClient.adviseTransition(outgoing: outgoing, incoming: incoming)
+    }
+
     private func cache(_ recommendation: AdvisorRecommendation, for key: String) {
         recommendationCache[key] = recommendation
         cacheOrder.removeAll { $0 == key }

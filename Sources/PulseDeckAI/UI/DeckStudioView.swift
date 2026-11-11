@@ -436,6 +436,8 @@ public struct DeckStudioView: View {
                     ? "Disarm the one-shot transition"
                     : (appState.autoPilotReadinessMessage ?? "Arm a one-shot transition at the outgoing mix-out cue"))
 
+                AskAITransitionButton(appState: appState)
+
                 if appState.isTransitionBusy {
                     Button {
                         Task { await appState.cancelTransition() }
@@ -477,6 +479,14 @@ public struct DeckStudioView: View {
                     Text("AutoPilot Armed at Mix Out")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(DJTheme.textAccent)
+                }
+
+                if let advice = appState.transitionAdviceText, appState.transitionErrorMessage == nil {
+                    Text(advice)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(DJTheme.textSecondary)
+                        .lineLimit(1)
+                        .help(advice)
                 }
 
                 if let error = appState.transitionErrorMessage {

@@ -677,6 +677,25 @@ final class TransitionPlannerTests: XCTestCase {
         XCTAssertEqual(incomingBars, incomingBars.rounded(), accuracy: 1e-7)
     }
 
+    func testAcceptsMeasuredGridWithDriftAndRoundedBPM() throws {
+        // Like a live band read by the beat model: tempo drifts ±2 % and the label is rounded to 0.1 BPM.
+        var beats: [Double] = []
+        var time = 0.31
+        for index in 0..<440 {
+            beats.append(time)
+            time += 0.5 * (1 + 0.02 * sin(Double(index) / 30))
+        }
+        let interval = (beats.last! - beats.first!) / Double(beats.count - 1)
+        let bpm = ((60 / interval) * 10).rounded() / 10
+        let grid = BeatGrid(firstBeatOffsetSeconds: beats[0], beatIntervalSeconds: interval, beatTimestamps: beats)
+        let incoming = makeTrack(deck: .deckB, bpm: bpm, beatGrid: grid)
+        let planner = TransitionPlanner()
+        XCTAssertTrue(planner.isUsableBeatGrid(descriptor: incoming))
+        XCTAssertTrue(planner.isUsableBeatGrid(descriptor: makeTrack(deck: .deckB, bpm: bpm / 2, beatGrid: grid)))
+        let plan = try planner.plan(TransitionRequest(outgoingTrack: makeTrack(deck: .deckA), incomingTrack: incoming, style: .beatSyncedBassSwap(bars: 8)))
+        XCTAssertFalse(plan.metadata.isFallback)
+    }
+
     func testRejectsMalformedGridsAndDoesNotUseIncomingSentinelForHardCut() throws {
         let planner = TransitionPlanner()
         let outgoing = makeTrack(deck: .deckA)
@@ -685,7 +704,7 @@ final class TransitionPlannerTests: XCTestCase {
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 0]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 1]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.1, 0.6]),
-            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1, beatTimestamps: [0, 1]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.75, beatTimestamps: [0, 0.75]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 241])
         ]
         for grid in malformed {

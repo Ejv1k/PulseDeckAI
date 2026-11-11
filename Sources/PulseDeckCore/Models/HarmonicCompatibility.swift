@@ -264,10 +264,7 @@ public struct TrackCompatibility: Sendable, Equatable {
               grid.beatTimestamps.count >= 2 else {
             return false
         }
-        let tolerance = max(1e-4, grid.beatIntervalSeconds * 0.01)
-        guard abs(grid.beatIntervalSeconds - 60.0 / track.bpm) <= tolerance else {
-            return false
-        }
+        guard TransitionPlanner.bpm(track.bpm, matchesInterval: grid.beatIntervalSeconds) else { return false }
         var previous = -Double.infinity
         for timestamp in grid.beatTimestamps {
             guard timestamp.isFinite, timestamp >= 0, timestamp <= track.duration,

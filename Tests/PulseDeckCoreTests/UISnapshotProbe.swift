@@ -45,6 +45,7 @@ final class UISnapshotProbe: XCTestCase {
             await app.waitForPendingLoudness(deck: .deckB)
             await app.selectTrack(relativePath: "01_Retro/\(names[0])").value
             app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: -24, midGainDB: -4, highGainDB: 2))
+            for name in names.dropFirst(2) { app.addToUpNext("01_Retro/\(name)") }
         }
         let expandKey = "studio.soundboardExpanded"
         let wasExpanded = UserDefaults.standard.object(forKey: expandKey)

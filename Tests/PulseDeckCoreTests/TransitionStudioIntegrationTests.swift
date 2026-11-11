@@ -22,7 +22,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    private func prepareStudio(startTrimCueA: Double = 0) throws {
+    private func prepareStudio(startTrimCueA: Double = 0, analyzedExtras: [String] = []) throws {
         fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
         let trackA = fixtureRoot.appendingPathComponent("deck-a.wav")
@@ -59,7 +59,12 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         let entryA = try makeEntry(path: "deck-a.wav", startTrimCue: startTrimCueA)
         let entryB = try makeEntry(path: "deck-b.wav")
-        let cache = PulseDeckLibraryCache(tracks: [entryA.relativePath: entryA, entryB.relativePath: entryB])
+        var tracks = [entryA.relativePath: entryA, entryB.relativePath: entryB]
+        for path in analyzedExtras {
+            try createAudioFile(at: fixtureRoot.appendingPathComponent(path), duration: 30)
+            tracks[path] = try makeEntry(path: path)
+        }
+        let cache = PulseDeckLibraryCache(tracks: tracks)
         appState = AppState(
             libraryRootURL: fixtureRoot,
             waveformEditorModel: WaveformEditorModel(libraryRootURL: fixtureRoot),
@@ -380,6 +385,111 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.deckAGraph.effectiveMasterGain, 1.0, accuracy: 0.001)
         XCTAssertEqual(coordinator.deckAGraph.masterFaderNode.outputVolume, 1.0, accuracy: 0.001)
         try assertAudibleMasterPCM()
+    }
+
+    @MainActor
+    func testUpNextLoadsIntoTheDeckATransitionFreed() async throws {
+        try prepareStudio(analyzedExtras: ["deck-c.wav", "deck-d.wav"])
+        appState.addToUpNext("deck-d.wav")
+        appState.addToUpNext("deck-d.wav")
+        appState.playNext("deck-c.wav")
+        XCTAssertEqual(appState.upNext, ["deck-c.wav", "deck-d.wav"], "Play Next jumps the line; duplicates are ignored")
+        appState.addToUpNext("deck-b.wav")
+        appState.moveUpNext(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        XCTAssertEqual(appState.upNext, ["deck-b.wav", "deck-c.wav", "deck-d.wav"])
+
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
+        XCTAssertEqual(appState.upNext, ["deck-c.wav", "deck-d.wav"], "A track leaves Up Next once it loads into a deck")
+
+        appState.transitionMacroStyle = .hardCutOnDrop
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+        await appState.executeTransition()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while appState.deckATrack?.relativePath != "deck-c.wav", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            await appState.waitForPendingDeckLoad(deck: .deckA)
+        }
+
+        XCTAssertEqual(appState.deckATrack?.relativePath, "deck-c.wav", "The freed outgoing deck takes the first queued track")
+        XCTAssertEqual(appState.deckBTrack?.relativePath, "deck-b.wav", "The deck on air is never touched")
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+        XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(appState.upNext, ["deck-d.wav"])
+
+        // The service keeps reporting `.completed`; later refreshes must not consume another track.
+        await appState.toggleAutoPilot()
+        await appState.toggleAutoPilot()
+        await appState.cancelTransition()
+        try await Task.sleep(for: .milliseconds(200))
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        XCTAssertEqual(appState.deckATrack?.relativePath, "deck-c.wav")
+        XCTAssertEqual(appState.upNext, ["deck-d.wav"])
+
+        // A second instant transition (B out, A in) must feed the queue again.
+        await appState.executeTransition()
+        let second = ContinuousClock.now.advanced(by: .seconds(3))
+        while appState.deckBTrack?.relativePath != "deck-d.wav", ContinuousClock.now < second {
+            try await Task.sleep(for: .milliseconds(20))
+            await appState.waitForPendingDeckLoad(deck: .deckB)
+        }
+        XCTAssertNil(appState.transitionErrorMessage)
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+        XCTAssertEqual(appState.deckBTrack?.relativePath, "deck-d.wav")
+        XCTAssertEqual(appState.upNext, [])
+    }
+
+    @MainActor
+    func testUnloadableQueuedTrackIsSkippedNotStuck() async throws {
+        try prepareStudio()
+        try createAudioFile(at: fixtureRoot.appendingPathComponent("deck-d.wav"), duration: 30)
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
+        appState.addToUpNext("gone.wav")
+        appState.addToUpNext("deck-d.wav")
+        appState.transitionMacroStyle = .hardCutOnDrop
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+        await appState.executeTransition()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while appState.upNext.first == "gone.wav", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(appState.upNext, ["deck-d.wav"], "A missing file leaves the queue instead of blocking it")
+        XCTAssertEqual(appState.deckATrack?.relativePath, "deck-a.wav")
+        XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
+    }
+
+    @MainActor
+    func testCancelledTransitionLeavesUpNextAlone() async throws {
+        try prepareStudio()
+        try createAudioFile(at: fixtureRoot.appendingPathComponent("deck-c.wav"), duration: 30)
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
+        appState.addToUpNext("deck-c.wav")
+        appState.transitionMacroStyle = .filterEchoWash
+        appState.transitionPhraseBars = 8
+        appState.toggleDeckPlay(deck: .deckA)
+        await appState.executeTransition()
+        XCTAssertTrue(appState.isTransitionRunning)
+        await appState.cancelTransition()
+        try await Task.sleep(for: .milliseconds(200))
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        XCTAssertEqual(appState.deckATrack?.relativePath, "deck-a.wav", "A cancelled transition hands the deck back, not to the queue")
+        XCTAssertEqual(appState.upNext, ["deck-c.wav"])
     }
 
     @MainActor

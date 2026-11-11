@@ -133,6 +133,9 @@ public struct LibraryBrowserView: View {
                     }
                     .padding(4)
                 }
+
+                Divider().background(DJTheme.border)
+                UpNextView(appState: appState)
             }
             .frame(width: 260)
             .background(DJTheme.cardBackground)
@@ -394,6 +397,8 @@ public struct LibraryBrowserView: View {
                                             }
                                         }
 
+                                        UpNextToggleButton(appState: appState, relativePath: relPath)
+
                                         LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
 
                                         // Headphone Audition Cue Button
@@ -428,6 +433,7 @@ public struct LibraryBrowserView: View {
                                     .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                     .cornerRadius(DJTheme.controlRadius)
                                     .contentShape(Rectangle())
+                                    .contextMenu { UpNextMenu(appState: appState, relativePath: relPath) }
                                     .draggable(transfer)
                                 }
                             }

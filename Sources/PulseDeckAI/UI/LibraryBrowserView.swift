@@ -53,7 +53,7 @@ public struct LibraryBrowserView: View {
                                         if !crate.isReadable {
                                             Image(systemName: "exclamationmark.triangle.fill")
                                                 .font(.system(size: 12))
-                                                .foregroundColor(.orange)
+                                                .foregroundColor(DJTheme.statusWarning)
                                         } else {
                                             Image(systemName: crate.trackCount > 0 ? "music.note.list" : "folder")
                                                 .font(.system(size: 12))
@@ -70,7 +70,7 @@ public struct LibraryBrowserView: View {
                                             if !crate.isReadable {
                                                 Text("Unreadable")
                                                     .font(.system(size: 9.5, weight: .semibold))
-                                                    .foregroundColor(.orange)
+                                                    .foregroundColor(DJTheme.statusWarning)
                                             }
                                         }
 
@@ -79,7 +79,7 @@ public struct LibraryBrowserView: View {
                                         if !crate.isReadable {
                                             Image(systemName: "exclamationmark.triangle")
                                                 .font(.system(size: 10))
-                                                .foregroundColor(.orange)
+                                                .foregroundColor(DJTheme.statusWarning)
                                         } else {
                                             Text("\(crate.trackCount)")
                                                 .font(.system(size: 10.5, weight: .bold))
@@ -114,7 +114,7 @@ public struct LibraryBrowserView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Label("Scan Error", systemImage: "exclamationmark.triangle.fill")
                                     .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundColor(.orange)
+                                    .foregroundColor(DJTheme.statusWarning)
                                 Text(error)
                                     .font(.system(size: 9.5))
                                     .foregroundColor(DJTheme.textSecondary)
@@ -295,7 +295,7 @@ public struct LibraryBrowserView: View {
                             Spacer()
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 32))
-                                .foregroundColor(.orange)
+                                .foregroundColor(DJTheme.statusWarning)
                             Text("Crate Unreadable")
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
@@ -395,8 +395,8 @@ public struct LibraryBrowserView: View {
                                                         .font(.system(size: 8.5, weight: .bold))
                                                         .padding(.horizontal, 5)
                                                         .padding(.vertical, 2)
-                                                        .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : Color.orange.opacity(0.2)))
-                                                        .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : .orange))
+                                                        .background(comp.tempo.isCompatible ? DJTheme.deckA.opacity(0.2) : (comp.tempo == .unknown ? DJTheme.cardHeader : DJTheme.statusWarning.opacity(0.2)))
+                                                        .foregroundColor(comp.tempo.isCompatible ? DJTheme.deckA : (comp.tempo == .unknown ? DJTheme.textMuted : DJTheme.statusWarning))
                                                         .cornerRadius(DJTheme.chipRadius)
                                                 }
                                             }
@@ -470,7 +470,7 @@ public struct LibraryBrowserView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 28))
-                                .foregroundColor(.orange)
+                                .foregroundColor(DJTheme.statusWarning)
                             Text("Library Scan Error")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(DJTheme.textPrimary)
@@ -947,7 +947,7 @@ struct LibraryTrackAnalysisButton: View {
             case .complete:
                 return DJTheme.textSecondary
             case .failed:
-                return .orange
+                return DJTheme.statusWarning
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue : DJTheme.textSecondary
@@ -964,7 +964,7 @@ struct LibraryTrackAnalysisButton: View {
             case .complete:
                 return DJTheme.cardHeader
             case .failed:
-                return Color.orange.opacity(0.15)
+                return DJTheme.statusWarning.opacity(0.15)
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.12) : DJTheme.cardHeader
@@ -982,7 +982,7 @@ struct LibraryTrackAnalysisButton: View {
             case .complete:
                 return DJTheme.border
             case .failed:
-                return Color.orange
+                return DJTheme.statusWarning
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
             return entry.analyzerVersion.contains("model") ? DJTheme.cue.opacity(0.5) : DJTheme.border

@@ -35,20 +35,20 @@ public struct OutputRoutingView: View {
                masterUID == cueUID {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                     Text("Master and Cue use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone audition is heard on Master.")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                         .lineLimit(1)
                     Spacer()
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.12))
+                .background(DJTheme.statusWarning.opacity(0.12))
                 .cornerRadius(DJTheme.controlRadius)
                 .overlay(
                     RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                        .stroke(DJTheme.statusWarning.opacity(0.4), lineWidth: 1)
                 )
             }
 

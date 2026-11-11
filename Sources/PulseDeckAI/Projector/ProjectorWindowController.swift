@@ -132,7 +132,9 @@ public final class ProjectorWindowController: NSObject, NSWindowDelegate {
         newWindow.collectionBehavior = [.fullScreenPrimary, .canJoinAllSpaces]
         newWindow.delegate = self
 
+        newWindow.appearance = NSAppearance(named: .darkAqua) // The projector is always dark, whatever the studio uses.
         let rootView = ProjectorWindowView(viewModel: viewModel, appState: appState)
+            .preferredColorScheme(.dark)
         newWindow.contentView = NSHostingView(rootView: rootView)
 
         self.window = newWindow

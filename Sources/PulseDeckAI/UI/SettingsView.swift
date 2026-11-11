@@ -19,9 +19,14 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @ObservedObject var appState: AppState
+    @AppStorage("appearance") private var appearance = AppAppearance.system
 
     var body: some View {
         Form {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+            }
+
             LabeledContent("Music library") {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(appState.resolvedLibraryRootURL?.path(percentEncoded: false) ?? "Not chosen")

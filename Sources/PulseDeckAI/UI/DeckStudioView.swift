@@ -548,7 +548,7 @@ public struct DeckStudioView: View {
                     Spacer()
 
                     Circle()
-                        .fill(pad.error != nil ? Color.orange : Color.clear) // Warn only for a file that failed; a playing pad lights up whole.
+                        .fill(pad.error != nil ? DJTheme.statusWarning : Color.clear) // Warn only for a file that failed; a playing pad lights up whole.
                         .frame(width: 5, height: 5)
                 }
 
@@ -579,7 +579,7 @@ public struct DeckStudioView: View {
             .cornerRadius(DJTheme.controlRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                    .stroke(pad.isPlaying ? Color.yellow : (pad.error != nil ? Color.orange.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
+                    .stroke(pad.isPlaying ? Color.yellow : (pad.error != nil ? DJTheme.statusWarning.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

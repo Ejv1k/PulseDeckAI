@@ -8,10 +8,20 @@ import AVFoundation
 /// Optional PULSEDECK_SNAPSHOT_TRACKS: newline-separated audio files copied into a temporary library.
 @MainActor
 final class UISnapshotProbe: XCTestCase {
-    private func render<V: View>(_ view: V, size: NSSize, to url: URL) async throws {
+    /// PULSEDECK_SNAPSHOT_APPEARANCE=light|dark forces the studio look; unset follows macOS.
+    private var studioAppearance: NSAppearance? {
+        switch ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_APPEARANCE"] {
+        case "light": return NSAppearance(named: .aqua)
+        case "dark": return NSAppearance(named: .darkAqua)
+        default: return nil
+        }
+    }
+
+    private func render<V: View>(_ view: V, size: NSSize, to url: URL, appearance: NSAppearance? = nil) async throws {
         let controller = NSHostingController(rootView: view)
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = appearance ?? studioAppearance
         window.contentViewController = controller
         window.setContentSize(size)
         window.orderBack(nil)
@@ -63,7 +73,8 @@ final class UISnapshotProbe: XCTestCase {
             for mode in [ProjectorMode.nowPlaying, .fftVisualizer, .mediaSlideshow, .blackout] {
                 projector.setMode(mode)
                 try await render(ProjectorWindowView(viewModel: projector, appState: app), size: NSSize(width: 1280, height: 720),
-                                 to: URL(fileURLWithPath: outDir).appendingPathComponent("projector-\(mode.rawValue).png"))
+                                 to: URL(fileURLWithPath: outDir).appendingPathComponent("projector-\(mode.rawValue).png"),
+                                 appearance: NSAppearance(named: .darkAqua))
             }
         }
         try await render(LibrarySearchResultsView(appState: app, query: "the").frame(width: 900, height: 300), size: NSSize(width: 900, height: 300),
@@ -74,6 +85,7 @@ final class UISnapshotProbe: XCTestCase {
             let controller = NSHostingController(rootView: ContentView().environmentObject(app).environmentObject(projector))
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            window.appearance = studioAppearance
             window.contentViewController = controller
             window.setContentSize(size)
             window.orderBack(nil)

@@ -32,17 +32,17 @@ public struct StatusHeaderView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                     Text(error)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(Color.orange.opacity(0.12))
+                .background(DJTheme.statusWarning.opacity(0.12))
                 .cornerRadius(DJTheme.chipRadius)
-                .overlay(RoundedRectangle(cornerRadius: DJTheme.chipRadius).stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: DJTheme.chipRadius).stroke(DJTheme.statusWarning.opacity(0.3), lineWidth: 1))
                 .help("Library folder issue: \(error). Use Open Library to choose a valid directory.")
             }
 
@@ -62,11 +62,11 @@ public struct StatusHeaderView: View {
                         HStack(spacing: 2) {
                             Text(appState.libraryRootURL.lastPathComponent)
                                 .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundColor(.orange)
+                                .foregroundColor(DJTheme.statusWarning)
                                 .lineLimit(1)
                             Text("(Unresolved)")
                                 .font(.system(size: 9.5, weight: .medium))
-                                .foregroundColor(.orange)
+                                .foregroundColor(DJTheme.statusWarning)
                         }
                     }
                 }

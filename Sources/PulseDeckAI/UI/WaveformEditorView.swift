@@ -335,7 +335,7 @@ public struct WaveformEditorView: View {
                     .fill(Color(red: 0.05, green: 0.06, blue: 0.08))
 
                 if let track = model.currentTrack {
-                    // Multiband waveform; it redraws when the model changes, not on a timer (the playhead is its own view).
+                    // Multiband waveform; it redraws when the model changes, not on a timer. If live playback is ever written to playheadPosition, move the playhead marker into its own view first.
                     Canvas { context, size in
                         drawWaveform(in: &context, size: size, track: track)
                     }

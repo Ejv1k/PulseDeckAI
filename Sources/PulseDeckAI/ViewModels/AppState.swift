@@ -145,8 +145,14 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isDeckACueActive: Bool = false
     @Published public private(set) var isDeckBCueActive: Bool = false
     @Published public var crossfaderPosition: Float = 0.5
-    @Published public var transitionMacroStyle: TransitionMacroStyle = .beatSyncedBassSwap
-    @Published public var transitionPhraseBars: Int = 16
+    // A manual change makes the AI line stale, so it goes.
+    @Published public var transitionMacroStyle: TransitionMacroStyle = .beatSyncedBassSwap {
+        didSet { if !isApplyingAdvice { transitionAdviceText = nil } }
+    }
+    @Published public var transitionPhraseBars: Int = 16 {
+        didSet { if !isApplyingAdvice { transitionAdviceText = nil } }
+    }
+    private var isApplyingAdvice = false
     @Published public private(set) var transitionProgress: Double = 0.0
     @Published public private(set) var activeTransitionState: TransitionExecutionState = .idle
     /// Channel EQ per deck as the DJ set it (or as automation left it after a transition).
@@ -160,6 +166,14 @@ public final class AppState: ObservableObject {
     /// Deck a running transition fades out; after completion it is free for the next queued track.
     private var transitionOutgoingDeck: DeckIdentifier?
     private var upNextLoadTask: Task<Void, Never>?
+    /// Last advisor verdict for the loaded pair, shown under the transition controls.
+    @Published public private(set) var transitionAdviceText: String?
+    @Published public private(set) var isAskingTransitionAdvice = false
+    /// One shared advisor keeps Gemini's rate limit across requests. Tests replace the closure.
+    private static let sharedAdvisor = HybridAIAdvisorService()
+    var transitionAdvisor: @Sendable (TrackCacheEntry, TrackCacheEntry) async throws -> TransitionAdvice = { outgoing, incoming in
+        try await AppState.sharedAdvisor.adviseTransition(outgoing: outgoing, incoming: incoming)
+    }
     /// Service generation whose completion already fed the queue; `.completed` is reported until the next start.
     private var queueHandledGeneration: UInt64?
 
@@ -924,6 +938,7 @@ public final class AppState: ObservableObject {
         // Success needs no banner: the deck shows the title. Only failures and pending work speak up.
         deckLoadMessages[deck] = nil
         upNext.removeAll { $0 == relativePath }
+        transitionAdviceText = nil
         statusMessage = "\(deck.rawValue): loaded \(relativePath)"
         // The deck no longer prints a success banner, so VoiceOver gets the confirmation explicitly.
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
@@ -1612,6 +1627,51 @@ public final class AppState: ObservableObject {
     private func stopTransitionObservation() {
         transitionObservationTask?.cancel()
         transitionObservationTask = nil
+    }
+
+    // MARK: - AI transition advice
+
+    /// Asks Gemini which built-in transition fits the loaded pair and pre-selects it. Never starts anything.
+    public func askTransitionAdvice() async {
+        guard !isAskingTransitionAdvice, !isTransitionBusy else { return }
+        let outgoingDeck: DeckIdentifier = isDeckAPlaying ? .deckA : (isDeckBPlaying ? .deckB : focusedMasterDeck)
+        let incomingDeck: DeckIdentifier = outgoingDeck == .deckA ? .deckB : .deckA
+        guard let outgoing = trackEntry(for: outgoingDeck), let incoming = trackEntry(for: incomingDeck) else {
+            transitionAdviceText = "Load and analyze a track on both decks first."
+            return
+        }
+        isAskingTransitionAdvice = true
+        defer { isAskingTransitionAdvice = false }
+        do {
+            let advice = try await transitionAdvisor(outgoing, incoming)
+            // The DJ may have started a transition, another deck or another track while Gemini was thinking.
+            let outgoingNow: DeckIdentifier = isDeckAPlaying ? .deckA : (isDeckBPlaying ? .deckB : focusedMasterDeck)
+            guard !isTransitionBusy, outgoingNow == outgoingDeck,
+                  trackEntry(for: outgoingDeck)?.relativePath == outgoing.relativePath,
+                  trackEntry(for: incomingDeck)?.relativePath == incoming.relativePath else { return }
+            isApplyingAdvice = true
+            transitionMacroStyle = Self.macroStyle(for: advice.style)
+            transitionPhraseBars = advice.bars
+            isApplyingAdvice = false
+            transitionAdviceText = "AI: \(transitionMacroStyle.rawValue.capitalized), \(advice.bars) bars. \(advice.reason)"
+        } catch AIAdvisorError.noProviderAvailable {
+            transitionAdviceText = "Add a Gemini API key in Settings (⌘,) to ask the AI."
+        } catch AIAdvisorError.httpStatus(_, let status) where status == 429 {
+            transitionAdviceText = "Gemini is rate-limited right now. Try again in a minute."
+        } catch AIAdvisorError.httpStatus(_, let status) where [400, 401, 403].contains(status) {
+            transitionAdviceText = "Gemini refused the request. Check the API key in Settings (⌘,)."
+        } catch is CancellationError {
+        } catch {
+            transitionAdviceText = "Gemini didn't answer. Pick the transition yourself."
+        }
+    }
+
+    static func macroStyle(for style: TransitionAdviceStyle) -> TransitionMacroStyle {
+        switch style {
+        case .bassSwap: return .beatSyncedBassSwap
+        case .echoOut: return .filterEchoWash
+        case .dropCut: return .hardCutOnDrop
+        }
     }
 
     // MARK: - Up Next

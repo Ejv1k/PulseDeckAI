@@ -276,6 +276,78 @@ final class AIAdvisorServiceTests: XCTestCase {
         ))
     }
 
+    func testTransitionAdviceReadsFencedAnswerAfterThoughtPart() async throws {
+        let clock = ManualAdvisorClock()
+        let transport = StubAdvisorTransport(
+            responses: [Self.geminiText([
+                ["text": "thinking", "thought": true],
+                ["text": "```json\n{\"style\":\"dropCut\",\"bars\":32,\"reason\":\"Lift into the chorus.\"}\n```"]
+            ])],
+            clock: clock
+        )
+        let advice = try await Self.service(transport: transport, clock: clock, key: "k")
+            .adviseTransition(outgoing: Self.track("a.mp3"), incoming: Self.track("b.mp3"))
+
+        XCTAssertEqual(advice, TransitionAdvice(style: .dropCut, bars: 32, reason: "Lift into the chorus."))
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.url?.path, "/v1beta/models/gemini-3.8-flash:generateContent")
+    }
+
+    func testTransitionAdviceRejectsOffMenuAnswers() async throws {
+        let texts = [
+            "{\"style\":\"scratch\",\"bars\":16,\"reason\":\"x\"}",
+            "{\"style\":\"bassSwap\",\"bars\":12,\"reason\":\"x\"}",
+            "{\"style\":\"bassSwap\",\"bars\":true,\"reason\":\"x\"}",
+            "{\"style\":\"echoOut\",\"bars\":8,\"reason\":\"   \"}",
+            "no json here"
+        ]
+        for text in texts {
+            let clock = ManualAdvisorClock()
+            let transport = StubAdvisorTransport(responses: [Self.geminiText([["text": text]])], clock: clock)
+            do {
+                _ = try await Self.service(transport: transport, clock: clock, key: "k")
+                    .adviseTransition(outgoing: Self.track("a.mp3"), incoming: Self.track("b.mp3"))
+                XCTFail("Expected malformedProviderResponse")
+            } catch {
+                XCTAssertEqual(error as? AIAdvisorError, .malformedProviderResponse)
+            }
+        }
+    }
+
+    func testTransitionAdviceNeedsAKey() async throws {
+        let clock = ManualAdvisorClock()
+        let transport = StubAdvisorTransport(responses: [], clock: clock)
+        do {
+            _ = try await Self.service(transport: transport, clock: clock, key: nil)
+                .adviseTransition(outgoing: Self.track("a.mp3"), incoming: Self.track("b.mp3"))
+            XCTFail("Expected noProviderAvailable")
+        } catch {
+            XCTAssertEqual(error as? AIAdvisorError, .noProviderAvailable)
+        }
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testTransitionAdviceTruncatesLongReason() async throws {
+        let reason = String(repeating: "a", count: 300)
+        let text = "{\"style\":\"bassSwap\",\"bars\":16,\"reason\":\"\(reason)\"}"
+        let clock = ManualAdvisorClock()
+        let transport = StubAdvisorTransport(responses: [Self.geminiText([["text": text]])], clock: clock)
+        let advice = try await Self.service(transport: transport, clock: clock, key: "k")
+            .adviseTransition(outgoing: Self.track("a.mp3"), incoming: Self.track("b.mp3"))
+
+        XCTAssertEqual(advice.reason.count, 200)
+        XCTAssertTrue(advice.reason.hasSuffix("…"))
+        XCTAssertEqual(advice.style, .bassSwap)
+        XCTAssertEqual(advice.bars, 16)
+    }
+
+    private static func geminiText(_ parts: [[String: Any]]) -> AdvisorHTTPResponse {
+        let data = try! JSONSerialization.data(withJSONObject: ["candidates": [["content": ["parts": parts]]]])
+        return AdvisorHTTPResponse(statusCode: 200, headers: [:], body: data)
+    }
+
     private static func service(
         transport: any AdvisorHTTPTransport,
         clock: any AdvisorClock,

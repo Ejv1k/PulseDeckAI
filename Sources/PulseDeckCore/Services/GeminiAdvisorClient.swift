@@ -11,24 +11,45 @@ struct GeminiAdvisorClient: Sendable {
         currentTrack: TrackCacheEntry,
         availableTracks: [TrackCacheEntry]
     ) async throws -> AdvisorRecommendation {
+        let prompt = try AdvisorPromptBuilder.make(currentTrack: currentTrack, availableTracks: availableTracks)
+        let text = try await generateText(prompt: prompt, schema: AdvisorPromptBuilder.recommendationJSONSchema())
+        guard let recommendation = try? AdvisorPromptBuilder.decodeRecommendation(Data(text.utf8)) else {
+            throw AIAdvisorError.malformedProviderResponse
+        }
+        return try AdvisorRecommendationValidator.validate(
+            recommendation,
+            currentTrack: currentTrack,
+            availableTracks: availableTracks
+        )
+    }
+
+    /// Asks which built-in transition fits two tracks; the answer is validated before anyone sees it.
+    func adviseTransition(outgoing: TrackCacheEntry, incoming: TrackCacheEntry) async throws -> TransitionAdvice {
+        let text = try await generateText(prompt: TransitionAdvicePrompt.make(outgoing: outgoing, incoming: incoming),
+                                          schema: TransitionAdvicePrompt.schema())
+        return try TransitionAdvicePrompt.parse(text)
+    }
+
+    /// One generateContent call with rate limiting and retries; returns the model's text part.
+    private func generateText(prompt: String, schema: [String: Any]) async throws -> String {
         guard let rawKey = apiKeyProvider(),
               !rawKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let endpoint = requestURL() else {
             throw AIAdvisorError.invalidConfiguration
         }
         let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = try AdvisorPromptBuilder.make(currentTrack: currentTrack, availableTracks: availableTracks)
         let payload: [String: Any] = [
             "contents": [["parts": [["text": prompt]]]],
             "generationConfig": [
                 "responseFormat": [
                     "text": [
                         "mimeType": "application/json",
-                        "schema": AdvisorPromptBuilder.recommendationJSONSchema()
+                        "schema": schema
                     ]
                 ],
                 "temperature": 0.2,
-                "maxOutputTokens": 1024
+                // Thinking models count thought tokens against this cap; the answer itself is small.
+                "maxOutputTokens": 2048
             ]
         ]
         guard JSONSerialization.isValidJSONObject(payload) else {
@@ -80,12 +101,7 @@ struct GeminiAdvisorClient: Sendable {
                 throw AIAdvisorError.httpStatus(provider: "Gemini", status: response.statusCode)
             }
 
-            let recommendation = try Self.parseRecommendation(response.body)
-            return try AdvisorRecommendationValidator.validate(
-                recommendation,
-                currentTrack: currentTrack,
-                availableTracks: availableTracks
-            )
+            return try Self.parseText(response.body)
         }
         throw AIAdvisorError.httpStatus(provider: "Gemini", status: lastStatus ?? 0)
     }
@@ -111,16 +127,16 @@ struct GeminiAdvisorClient: Sendable {
         return components.url
     }
 
-    private static func parseRecommendation(_ data: Data) throws -> AdvisorRecommendation {
+    private static func parseText(_ data: Data) throws -> String {
+        // Thinking models may return thought parts first; the answer is the last non-thought text part.
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = root["candidates"] as? [[String: Any]],
               let content = candidates.first?["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
-              let text = parts.compactMap({ $0["text"] as? String }).first,
-              let recommendation = try? AdvisorPromptBuilder.decodeRecommendation(Data(text.utf8)) else {
+              let text = parts.filter({ ($0["thought"] as? Bool) != true }).compactMap({ $0["text"] as? String }).last else {
             throw AIAdvisorError.malformedProviderResponse
         }
-        return recommendation
+        return text
     }
 
     private static func isRetryableStatus(_ status: Int) -> Bool {

@@ -493,6 +493,46 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAskAIPreselectsTheTransitionButNeverStartsIt() async throws {
+        try prepareStudio()
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        appState.selectedTrackPath = "deck-b.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckB)
+        await appState.waitForPendingDeckLoad(deck: .deckB)
+        appState.toggleDeckPlay(deck: .deckA)
+        appState.transitionMacroStyle = .beatSyncedBassSwap
+        appState.transitionPhraseBars = 16
+
+        let asked = AdviceRecorder()
+        appState.transitionAdvisor = { outgoing, incoming in
+            await asked.record(outgoing.relativePath, incoming.relativePath)
+            return TransitionAdvice(style: .echoOut, bars: 8, reason: "Key clash; wash it out.")
+        }
+        await appState.askTransitionAdvice()
+        let pair = await asked.pair
+        XCTAssertEqual(pair?.0, "deck-a.wav", "The playing deck is the outgoing one")
+        XCTAssertEqual(pair?.1, "deck-b.wav")
+        XCTAssertEqual(appState.transitionMacroStyle, .filterEchoWash)
+        XCTAssertEqual(appState.transitionPhraseBars, 8)
+        XCTAssertEqual(appState.transitionAdviceText, "AI: Filter Echo, 8 bars. Key clash; wash it out.")
+        XCTAssertFalse(appState.isTransitionBusy, "Advice only pre-selects")
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying)
+
+        appState.transitionAdvisor = { _, _ in throw AIAdvisorError.noProviderAvailable }
+        await appState.askTransitionAdvice()
+        XCTAssertEqual(appState.transitionAdviceText, "Add a Gemini API key in Settings (⌘,) to ask the AI.")
+        XCTAssertEqual(appState.transitionMacroStyle, .filterEchoWash, "A failed ask changes nothing")
+
+        appState.transitionAdvisor = { _, _ in TransitionAdvice(style: .dropCut, bars: 32, reason: "Lift.") }
+        await appState.askTransitionAdvice()
+        XCTAssertNotNil(appState.transitionAdviceText)
+        appState.transitionPhraseBars = 16
+        XCTAssertNil(appState.transitionAdviceText, "A manual change makes the AI line stale")
+    }
+
+    @MainActor
     private func assertAudibleMasterPCM(file: StaticString = #filePath, line: UInt = #line) throws {
         try assertAudiblePCM(coordinator.masterAudioEngine.rawEngine, file: file, line: line)
     }
@@ -567,4 +607,9 @@ final class TransitionStudioIntegrationTests: XCTestCase {
             analysisTimestamp: "2026-10-23T00:00:00Z"
         )
     }
+}
+
+private actor AdviceRecorder {
+    private(set) var pair: (String, String)?
+    func record(_ outgoing: String, _ incoming: String) { pair = (outgoing, incoming) }
 }

@@ -14,18 +14,18 @@ public struct OutputRoutingView: View {
             if let startupError = appState.coordinatorErrorMessage {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(Color.red)
+                        .foregroundColor(DJTheme.statusError)
                     Text("Audio Engine Notice: \(startupError)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.red)
+                        .foregroundColor(DJTheme.statusError)
                     Spacer()
                 }
                 .padding(6)
-                .background(Color.red.opacity(0.12))
+                .background(DJTheme.statusError.opacity(0.12))
                 .cornerRadius(DJTheme.controlRadius)
                 .overlay(
                     RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                        .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                        .stroke(DJTheme.statusError.opacity(0.3), lineWidth: 1)
                 )
             }
 
@@ -35,20 +35,20 @@ public struct OutputRoutingView: View {
                masterUID == cueUID {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                     Text("Master and Cue use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone audition is heard on Master.")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                         .lineLimit(1)
                     Spacer()
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.12))
+                .background(DJTheme.statusWarning.opacity(0.12))
                 .cornerRadius(DJTheme.controlRadius)
                 .overlay(
                     RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                        .stroke(DJTheme.statusWarning.opacity(0.4), lineWidth: 1)
                 )
             }
 
@@ -172,7 +172,7 @@ public struct OutputRoutingView: View {
             if let error {
                 Text(error)
                     .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(Color.red)
+                    .foregroundColor(DJTheme.statusError)
                     .lineLimit(1)
             } else if let warning {
                 Text(warning)

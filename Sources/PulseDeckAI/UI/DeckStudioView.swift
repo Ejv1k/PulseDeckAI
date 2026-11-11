@@ -347,7 +347,7 @@ public struct DeckStudioView: View {
                     Text("Talkover")
                 }
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundColor(appState.isTalkoverActive ? DJTheme.background : DJTheme.textPrimary)
+                .foregroundColor(appState.isTalkoverActive ? Color.black : DJTheme.textPrimary)
                 .frame(maxWidth: .infinity, minHeight: DJTheme.minTouchTarget)
                 .background(appState.isTalkoverActive ? Color.yellow : DJTheme.cardHeader)
                 .cornerRadius(DJTheme.controlRadius)
@@ -482,7 +482,7 @@ public struct DeckStudioView: View {
                 if let error = appState.transitionErrorMessage {
                     Text(error)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundColor(.red)
+                        .foregroundColor(DJTheme.statusError)
                         .lineLimit(1)
                         .help(error)
                 }
@@ -543,18 +543,18 @@ public struct DeckStudioView: View {
                 HStack {
                     Text("[\(pad.keyLabel)]")
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textSecondary)
+                        .foregroundColor(pad.isPlaying ? Color.black : DJTheme.textSecondary)
 
                     Spacer()
 
                     Circle()
-                        .fill(pad.error != nil ? Color.orange : Color.clear) // Warn only for a file that failed; a playing pad lights up whole.
+                        .fill(pad.error != nil ? DJTheme.statusWarning : Color.clear) // Warn only for a file that failed; a playing pad lights up whole.
                         .frame(width: 5, height: 5)
                 }
 
                 Text(pad.title)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(pad.isPlaying ? DJTheme.background : DJTheme.textPrimary)
+                    .foregroundColor(pad.isPlaying ? Color.black : DJTheme.textPrimary)
                     .lineLimit(1)
 
                 HStack {
@@ -562,7 +562,7 @@ public struct DeckStudioView: View {
                     if pad.isFallback {
                         Text(pad.error != nil ? "File failed · tone" : "Built-in tone")
                             .font(.system(size: 8, weight: .medium))
-                            .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+                            .foregroundColor(pad.isPlaying ? Color.black.opacity(0.8) : DJTheme.textMuted)
                     }
 
                     Spacer()
@@ -570,7 +570,7 @@ public struct DeckStudioView: View {
                     Text(formatDuration(pad.durationSeconds))
                         .font(.system(size: 8, weight: .medium))
                         .monospacedDigit()
-                        .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+                        .foregroundColor(pad.isPlaying ? Color.black.opacity(0.8) : DJTheme.textMuted)
                 }
             }
             .padding(6)
@@ -579,7 +579,7 @@ public struct DeckStudioView: View {
             .cornerRadius(DJTheme.controlRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                    .stroke(pad.isPlaying ? Color.yellow : (pad.error != nil ? Color.orange.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
+                    .stroke(pad.isPlaying ? Color.yellow : (pad.error != nil ? DJTheme.statusWarning.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

@@ -19,9 +19,14 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @ObservedObject var appState: AppState
+    @AppStorage("appearance") private var appearance = AppAppearance.system
 
     var body: some View {
         Form {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+            }
+
             LabeledContent("Music library") {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(appState.resolvedLibraryRootURL?.path(percentEncoded: false) ?? "Not chosen")
@@ -56,7 +61,7 @@ private struct AISettings: View {
                     LabeledContent("Gemini API key") {
                         HStack {
                             Label("Saved in Keychain", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(DJTheme.statusSuccess)
                             Button("Remove", role: .destructive) {
                                 if keychain.delete() { hasKey = false; message = nil }
                             }
@@ -74,7 +79,7 @@ private struct AISettings: View {
                     }
                 }
                 if let message {
-                    Text(message).font(.caption).foregroundStyle(.red)
+                    Text(message).font(.caption).foregroundStyle(DJTheme.statusError)
                 }
             } footer: {
                 Text("Optional. Without a key everything works offline. With one, PulseDeck can ask Gemini about track names, BPM and key; audio never leaves this Mac.")

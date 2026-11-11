@@ -69,7 +69,7 @@ struct UpNextView: View {
                 } label: {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(DJTheme.statusWarning)
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }

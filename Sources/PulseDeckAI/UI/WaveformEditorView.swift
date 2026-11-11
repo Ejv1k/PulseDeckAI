@@ -85,7 +85,7 @@ public struct WaveformEditorView: View {
                     Text("Retry in Crate")
                         .font(.system(size: 9.5, weight: .semibold))
                 }
-                .foregroundColor(.orange)
+                .foregroundColor(DJTheme.statusWarning)
             }
         }
     }
@@ -115,6 +115,7 @@ public struct WaveformEditorView: View {
             } else {
             // Main Waveform Canvas & Cue Handles
             waveformContainer
+                .environment(\.colorScheme, .dark) // The canvas is always dark, so its text uses the dark palette.
                 .frame(height: isDetailedEditorExpanded ? 160 : 64)
 
             if isDetailedEditorExpanded {
@@ -925,10 +926,10 @@ public struct WaveformEditorView: View {
         HStack(spacing: 4) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 8.5))
-                .foregroundColor(.red)
+                .foregroundColor(DJTheme.statusError)
             Text(error)
                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                .foregroundColor(.red)
+                .foregroundColor(DJTheme.statusError)
                 .lineLimit(1)
         }
         .accessibilityIdentifier("waveformCompactErrorMessage")
@@ -964,7 +965,7 @@ public struct WaveformEditorView: View {
             } else if let error = model.errorMessage {
                 Text(error)
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.red)
+                    .foregroundColor(DJTheme.statusError)
             } else {
                 Text(model.statusMessage)
                     .font(.system(size: 9, design: .monospaced))

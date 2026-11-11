@@ -155,10 +155,10 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
     /// Tracks lined up to play next, as library-relative paths. A track leaves the list once it loads into a deck.
-    /// shortcut: in memory only, lost on quit; persist it when one set spans app restarts.
-    @Published public private(set) var upNext: [String] = []
-    /// Tracks started on a deck since the app opened (not saved between launches). Crossfader position is ignored.
-    @Published public private(set) var playedTonight: Set<String> = []
+    /// Saved with the played history so a set survives a restart (see `saveSet`).
+    @Published public private(set) var upNext: [String] = [] { didSet { saveSet() } }
+    /// Tracks started on a deck in this set; saved between launches until "New Set". Crossfader position is ignored.
+    @Published public private(set) var playedTonight: Set<String> = [] { didSet { saveSet() } }
     /// Deck a running transition fades out; after completion it is free for the next queued track.
     private var transitionOutgoingDeck: DeckIdentifier?
     private var upNextLoadTask: Task<Void, Never>?
@@ -328,8 +328,30 @@ public final class AppState: ObservableObject {
         connectEditorPersistence()
         connectAudioCoordinator()
         refreshOutputDevices()
+        restoreSet()
         refreshLibrary()
     }
+
+    private struct SavedSet: Codable { var root: String; var upNext: [String]; var played: [String] }
+    private static let savedSetKey = "savedSet"
+
+    private func saveSet() {
+        guard let preferences else { return }
+        let set = SavedSet(root: libraryRootURL.standardizedFileURL.path, upNext: upNext, played: playedTonight.sorted())
+        preferences.set(try? JSONEncoder().encode(set), forKey: Self.savedSetKey)
+    }
+
+    /// Paths are library-relative, so a set saved for another folder is ignored.
+    private func restoreSet() {
+        guard let data = preferences?.data(forKey: Self.savedSetKey),
+              let set = try? JSONDecoder().decode(SavedSet.self, from: data),
+              set.root == libraryRootURL.standardizedFileURL.path else { return }
+        upNext = set.upNext
+        playedTonight = Set(set.played)
+    }
+
+    /// Forgets what already played, so Best match and bridges treat every track as fresh again. Up Next stays.
+    public func startNewSet() { playedTonight = [] }
 
     /// Initializes library/editor state with optional injected audio coordinator.
     init(

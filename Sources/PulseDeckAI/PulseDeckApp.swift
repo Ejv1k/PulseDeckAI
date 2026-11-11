@@ -18,6 +18,15 @@ public struct PulseDeckApp: App {
 
     public init() {}
 
+    @MainActor private static func confirmNewSet(_ state: AppState) {
+        let alert = NSAlert()
+        alert.messageText = "Start a new set?"
+        alert.informativeText = "The list of tracks already played tonight is cleared. Up Next stays."
+        alert.addButton(withTitle: "New Set")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { state.startNewSet() }
+    }
+
     /// Shared by the actual startup/root-change hooks; never register an unresolved fallback with the media service.
     @MainActor
     static func updateProjectorLibrary(
@@ -63,6 +72,9 @@ public struct PulseDeckApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(appState.isScanning)
+
+                Button("New Set…") { Self.confirmNewSet(appState) }
+                    .disabled(appState.playedTonight.isEmpty)
             }
             CommandGroup(after: .textEditing) {
                 Button("Find Track…") {

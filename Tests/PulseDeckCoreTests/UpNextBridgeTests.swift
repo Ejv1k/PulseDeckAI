@@ -61,4 +61,14 @@ final class UpNextBridgeTests: XCTestCase {
         state.addToUpNext(next.relativePath)
         XCTAssertFalse(state.insertBridge(before: next.relativePath))
     }
+
+    func testNewSetClearsPlayedButKeepsUpNext() {
+        let a = track("a", bpm: 120, key: "8A")
+        let state = app([a])
+        state.markPlayedForTesting("x.mp3")
+        state.addToUpNext(a.relativePath)
+        state.startNewSet()
+        XCTAssertTrue(state.playedTonight.isEmpty)
+        XCTAssertEqual(state.upNext, [a.relativePath])
+    }
 }

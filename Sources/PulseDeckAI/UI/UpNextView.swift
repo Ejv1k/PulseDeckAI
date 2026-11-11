@@ -63,6 +63,20 @@ struct UpNextView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
+            if appState.upNextNeedsBridge(at: index) {
+                Button {
+                    appState.insertBridge(before: path)
+                } label: {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Clashes in key or tempo with the track before it. Click to insert a bridge track that fits both.")
+                .accessibilityLabel("Insert a bridge track before \(title)")
+            }
             if let bpm = entry?.bpm, bpm > 0 {
                 Text(String(format: "%.0f", bpm))
                     .font(.system(size: 9.5, weight: .medium))

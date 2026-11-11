@@ -389,7 +389,7 @@ public struct LibraryBrowserView: View {
                                                         .cornerRadius(DJTheme.chipRadius)
 
                                                     // Tempo Badge
-                                                    Text(comp.tempo.badgeLabel)
+                                                    Text(comp.tempoBadgeLabel)
                                                         .font(.system(size: 8.5, weight: .bold))
                                                         .padding(.horizontal, 5)
                                                         .padding(.vertical, 2)

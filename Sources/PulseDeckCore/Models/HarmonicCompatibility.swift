@@ -171,10 +171,22 @@ public enum TempoCompatibility: Sendable, Equatable {
 public struct TrackCompatibility: Sendable, Equatable {
     public let key: KeyCompatibility
     public let tempo: TempoCompatibility
+    /// Candidate BPM multiplier used for the tempo match: 2 for a half-time candidate, 0.5 for double time, else 1.
+    public let tempoFactor: Double
 
-    public init(key: KeyCompatibility, tempo: TempoCompatibility) {
+    public init(key: KeyCompatibility, tempo: TempoCompatibility, tempoFactor: Double = 1) {
         self.key = key
         self.tempo = tempo
+        self.tempoFactor = tempoFactor
+    }
+
+    /// Tempo badge text, marking half-time ("½×") and double-time ("2×") matches.
+    public var tempoBadgeLabel: String {
+        switch tempoFactor {
+        case 2: return "½× " + tempo.badgeLabel
+        case 0.5: return "2× " + tempo.badgeLabel
+        default: return tempo.badgeLabel
+        }
     }
 
     public var isOverallCompatible: Bool {
@@ -204,8 +216,11 @@ public struct TrackCompatibility: Sendable, Equatable {
         let refGridValid = isAuthenticMeasuredGrid(track: reference)
 
         let tempoComp: TempoCompatibility
+        var tempoFactor = 1.0
         if candGridValid && refGridValid && reference.bpm > 0 {
-            let delta = (candidate.bpm - reference.bpm) / reference.bpm
+            let candidateBPM = TransitionPlanner.foldedTempo(candidate.bpm, toward: reference.bpm)
+            let delta = (candidateBPM - reference.bpm) / reference.bpm
+            tempoFactor = candidateBPM / candidate.bpm
             if abs(delta) < TransitionPlanner.maxTempoDifferential {
                 tempoComp = .compatible(deltaPercent: delta * 100.0)
             } else {
@@ -215,7 +230,7 @@ public struct TrackCompatibility: Sendable, Equatable {
             tempoComp = .unknown
         }
 
-        return TrackCompatibility(key: keyComp, tempo: tempoComp)
+        return TrackCompatibility(key: keyComp, tempo: tempoComp, tempoFactor: tempoFactor)
     }
 
     /// Computes the deterministic Camelot harmonic relationship.
@@ -283,6 +298,7 @@ extension TrackCompatibility {
         switch tempo {
         case .compatible(let deltaPercent):
             tempoScore = 2 - min(1, abs(deltaPercent) / (TransitionPlanner.maxTempoDifferential * 100))
+                - (tempoFactor == 1 ? 0 : 0.25) // a native-tempo match outranks an equal half/double-time one
         case .mismatch:
             tempoScore = 0
         case .unknown:

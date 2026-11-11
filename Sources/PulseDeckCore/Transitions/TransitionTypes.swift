@@ -5,7 +5,7 @@ import Foundation
 /// Supported automated DJ transition styles.
 public enum TransitionStyle: Sendable, Equatable {
     /// Beat-synced bass swap across 8, 16, or 32 bars.
-    /// Requires effective tempo difference strictly below 6.0% and valid beat grids on both decks.
+    /// Requires effective tempo difference strictly below 6.0% (after ½×/2× half/double-time folding) and valid beat grids on both decks.
     /// On the midpoint downbeat, cuts outgoing low shelf to -24 dB and restores incoming low shelf to 0 dB.
     case beatSyncedBassSwap(bars: Int = 16, allowFallbackToFilter: Bool = false)
 

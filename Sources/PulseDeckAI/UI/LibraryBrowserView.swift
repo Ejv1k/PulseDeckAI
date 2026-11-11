@@ -219,7 +219,7 @@ public struct LibraryBrowserView: View {
                                     .foregroundColor(DJTheme.textMuted)
                                     .help("Analyze the reference deck's track to rank tracks by BPM and key")
                             } else if let ref = appState.referenceTrack {
-                                Text("\(ref.bpm > 0 ? String(format: "%.1f BPM", ref.bpm) : "BPM —") • \(ref.musicalKey.isEmpty || ref.musicalKey.caseInsensitiveCompare("Unknown") == .orderedSame ? "Key —" : ref.musicalKey)")
+                                Text("\(ref.bpm > 0 ? ref.tempoLabel : "BPM —") • \(ref.musicalKey.isEmpty || ref.musicalKey.caseInsensitiveCompare("Unknown") == .orderedSame ? "Key —" : ref.musicalKey)")
                                     .font(.system(size: 9.5, weight: .semibold))
                                     .monospacedDigit()
                                     .foregroundColor(DJTheme.textSecondary)
@@ -361,7 +361,7 @@ public struct LibraryBrowserView: View {
                                         if let track = trackEntry {
                                             HStack(spacing: 6) {
                                                 if track.bpm > 0 {
-                                                    Text(String(format: "%.1f BPM", track.bpm))
+                                                    Text(track.tempoLabel)
                                                         .font(.system(size: 9.5, weight: .semibold))
                                                         .monospacedDigit()
                                                         .foregroundColor(DJTheme.deckA)

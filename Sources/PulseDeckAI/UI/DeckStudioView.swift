@@ -139,7 +139,7 @@ public struct DeckStudioView: View {
                             .foregroundColor(DJTheme.textSecondary)
 
                         if track.bpm > 0 {
-                            Text(String(format: "%.1f BPM", track.bpm))
+                            Text(track.tempoLabel)
                                 .font(.system(size: 9.5, weight: .bold))
                                 .monospacedDigit()
                                 .foregroundColor(color)

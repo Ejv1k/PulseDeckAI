@@ -254,6 +254,17 @@ public struct TransitionPlanner: Sendable {
             )
         }
 
+        // A 6-beat bar never lines up with a 4-beat bar over a long blend.
+        if outgoing.beatGrid.isCompoundMeter != incoming.beatGrid.isCompoundMeter {
+            if allowFallback {
+                return try planFilterEchoWash(
+                    outgoing: outgoing, incoming: incoming, triggerPosition: triggerPosition,
+                    durationSeconds: 8, echoSend: 0.5, style: request.style, isFallback: true
+                )
+            }
+            throw TransitionPlanningError.meterMismatch
+        }
+
         // 2. Validate BPM tempo differential (must be strictly < 6.0%)
         let effectiveTempo = 60.0 / outgoing.beatGrid.beatIntervalSeconds * Double(request.outgoingPlaybackRate)
         let incomingTempo = Self.foldedTempo(60.0 / incoming.beatGrid.beatIntervalSeconds, toward: effectiveTempo)

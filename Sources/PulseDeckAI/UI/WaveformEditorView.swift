@@ -174,7 +174,7 @@ public struct WaveformEditorView: View {
                                 .monospacedDigit()
                                 .foregroundColor(DJTheme.textSecondary)
 
-                            Text(String(format: "%.1f BPM", track.bpm))
+                            Text(track.tempoLabel)
                                 .font(.system(size: 10, weight: .bold))
                                 .monospacedDigit()
                                 .foregroundColor(DJTheme.deckA)

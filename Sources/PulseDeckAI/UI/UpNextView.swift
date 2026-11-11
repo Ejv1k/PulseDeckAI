@@ -77,7 +77,7 @@ struct UpNextView: View {
                 .help("Clashes in key or tempo with the track before it. Click to insert a bridge track that fits both.")
                 .accessibilityLabel("Insert a bridge track before \(title)")
             }
-            if let bpm = entry?.bpm, bpm > 0 {
+            if let bpm = entry?.displayBPM, bpm > 0 {
                 Text(String(format: "%.0f", bpm))
                     .font(.system(size: 9.5, weight: .medium))
                     .monospacedDigit()

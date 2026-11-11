@@ -322,6 +322,7 @@ public enum TransitionPlanningError: LocalizedError, Sendable, Equatable {
     case nonFiniteParameter(String)
     case invalidPlaybackRate(Float)
     case insufficientPlayableContent(deck: DeckIdentifier)
+    case meterMismatch
 
     public var errorDescription: String? {
         switch self {
@@ -345,6 +346,8 @@ public enum TransitionPlanningError: LocalizedError, Sendable, Equatable {
             return "Transition playback rate must be finite and within the supported range: \(rate)"
         case .insufficientPlayableContent(let deck):
             return "The complete transition does not fit the playable cue interval on \(deck.rawValue)"
+        case .meterMismatch:
+            return "Bass Swap can't blend a 6/8 track with a 4/4 track. Use Filter Echo Wash or Hard Cut."
         }
     }
 }

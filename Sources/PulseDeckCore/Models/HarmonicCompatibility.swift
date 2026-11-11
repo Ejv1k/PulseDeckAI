@@ -148,6 +148,8 @@ public enum KeyCompatibility: Sendable, Equatable {
 public enum TempoCompatibility: Sendable, Equatable {
     case compatible(deltaPercent: Double)
     case mismatch(deltaPercent: Double)
+    /// One track is in 6/8, the other in 4/4: their beats never line up in a beat-matched mix.
+    case meterMismatch
     case unknown
 
     public var isCompatible: Bool {
@@ -161,6 +163,8 @@ public enum TempoCompatibility: Sendable, Equatable {
             return String(format: "%+.1f%%", delta)
         case .mismatch(let delta):
             return String(format: "%+.1f%% MISMATCH", delta)
+        case .meterMismatch:
+            return "6/8 VS 4/4"
         case .unknown:
             return "BPM UNKNOWN"
         }
@@ -217,7 +221,9 @@ public struct TrackCompatibility: Sendable, Equatable {
 
         let tempoComp: TempoCompatibility
         var tempoFactor = 1.0
-        if candGridValid && refGridValid && reference.bpm > 0 {
+        if candGridValid && refGridValid && candidate.beatGrid.isCompoundMeter != reference.beatGrid.isCompoundMeter {
+            tempoComp = .meterMismatch
+        } else if candGridValid && refGridValid && reference.bpm > 0 {
             let candidateBPM = TransitionPlanner.foldedTempo(candidate.bpm, toward: reference.bpm)
             let delta = (candidateBPM - reference.bpm) / reference.bpm
             tempoFactor = candidateBPM / candidate.bpm
@@ -279,7 +285,7 @@ extension TrackCompatibility {
         case .compatible(let deltaPercent):
             tempoScore = 2 - min(1, abs(deltaPercent) / (TransitionPlanner.maxTempoDifferential * 100))
                 - (tempoFactor == 1 ? 0 : 0.25) // a native-tempo match outranks an equal half/double-time one
-        case .mismatch:
+        case .mismatch, .meterMismatch:
             tempoScore = 0
         case .unknown:
             tempoScore = 0.5

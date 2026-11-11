@@ -150,6 +150,21 @@ public struct BeatGrid: Codable, Sendable, Equatable {
         if onBeat.count >= 2 { return onBeat }
         return stride(from: 0, to: beatTimestamps.count, by: 4).map { beatTimestamps[$0] }
     }
+
+    /// 6/8 or 12/8 feel: most measured bars hold 6 beats, so the beat model counted eighth notes
+    /// and the felt beat is every 3rd one. Needs 8+ bars of downbeats; one pass over both lists.
+    public var isCompoundMeter: Bool {
+        guard let downbeats = downbeatTimestamps, downbeats.count >= 9 else { return false }
+        var beatIndex = 0
+        var sixBeatBars = 0
+        for (start, end) in zip(downbeats, downbeats.dropFirst()) {
+            while beatIndex < beatTimestamps.count, beatTimestamps[beatIndex] < start - 0.02 { beatIndex += 1 }
+            var count = 0
+            while beatIndex + count < beatTimestamps.count, beatTimestamps[beatIndex + count] < end - 0.02 { count += 1 }
+            if count == 6 { sixBeatBars += 1 }
+        }
+        return sixBeatBars * 2 > downbeats.count - 1
+    }
 }
 
 /// Structural musical section (Intro, Verse, Chorus, Breakdown, Drop, Outro).
@@ -443,5 +458,16 @@ public struct PulseDeckLibraryCache: Codable, Sendable, Equatable {
     /// Convenience property returning true if the cache satisfies all schema and track bounds invariants.
     public var isValid: Bool {
         (try? validate()) != nil
+    }
+}
+
+extension TrackCacheEntry {
+    /// Tempo a listener feels: a third of the stored eighth-note BPM for 6/8 tracks. The stored `bpm`
+    /// stays unchanged because it must keep matching the beat grid interval.
+    public var displayBPM: Double { beatGrid.isCompoundMeter ? bpm / 3 : bpm }
+
+    /// "125.0 BPM", or "62.5 BPM · 6/8" for compound meter.
+    public var tempoLabel: String {
+        String(format: "%.1f BPM", displayBPM) + (beatGrid.isCompoundMeter ? " · 6/8" : "")
     }
 }

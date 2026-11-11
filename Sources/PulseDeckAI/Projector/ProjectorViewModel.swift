@@ -198,7 +198,7 @@ public final class ProjectorViewModel: ObservableObject {
             title: parsed.title,
             artist: parsed.artist,
             deck: deck,
-            bpm: entry.bpm > 0 ? entry.bpm : nil,
+            bpm: entry.bpm > 0 ? entry.displayBPM : nil,
             musicalKey: entry.musicalKey.isEmpty ? nil : entry.musicalKey,
             durationSeconds: entry.duration > 0 ? entry.duration : nil,
             isMasterPlaying: isPlaying

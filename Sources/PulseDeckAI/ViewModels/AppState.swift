@@ -155,10 +155,10 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
     /// Tracks lined up to play next, as library-relative paths. A track leaves the list once it loads into a deck.
-    /// shortcut: in memory only, lost on quit; persist it when one set spans app restarts.
-    @Published public private(set) var upNext: [String] = []
-    /// Tracks started on a deck since the app opened (not saved between launches). Crossfader position is ignored.
-    @Published public private(set) var playedTonight: Set<String> = []
+    /// Saved with the played history so a set survives a restart (see `saveSet`).
+    @Published public private(set) var upNext: [String] = [] { didSet { saveSet() } }
+    /// Tracks started on a deck in this set; saved between launches until "New Set". Crossfader position is ignored.
+    @Published public private(set) var playedTonight: Set<String> = [] { didSet { saveSet() } }
     /// Deck a running transition fades out; after completion it is free for the next queued track.
     private var transitionOutgoingDeck: DeckIdentifier?
     private var upNextLoadTask: Task<Void, Never>?
@@ -328,8 +328,36 @@ public final class AppState: ObservableObject {
         connectEditorPersistence()
         connectAudioCoordinator()
         refreshOutputDevices()
+        restoreSet()
         refreshLibrary()
     }
+
+    private struct SavedSet: Codable { var upNext: [String]; var played: [String] }
+    private static let savedSetKey = "savedSets"
+    private var isRestoringSet = false
+
+    /// Sets are kept per library folder (paths are library-relative), so switching folders never overwrites another one's set.
+    private func savedSets() -> [String: SavedSet] {
+        preferences?.data(forKey: Self.savedSetKey).flatMap { try? JSONDecoder().decode([String: SavedSet].self, from: $0) } ?? [:]
+    }
+
+    private func saveSet() {
+        guard let preferences, !isRestoringSet else { return }
+        var all = savedSets()
+        all[libraryRootURL.standardizedFileURL.path] = SavedSet(upNext: upNext, played: playedTonight.sorted())
+        preferences.set(try? JSONEncoder().encode(all), forKey: Self.savedSetKey)
+    }
+
+    private func restoreSet() {
+        guard let set = savedSets()[libraryRootURL.standardizedFileURL.path] else { return }
+        isRestoringSet = true
+        upNext = set.upNext
+        playedTonight = Set(set.played)
+        isRestoringSet = false
+    }
+
+    /// Forgets what already played, so Best match and bridges treat every track as fresh again. Up Next stays.
+    public func startNewSet() { playedTonight = [] }
 
     /// Initializes library/editor state with optional injected audio coordinator.
     init(
@@ -1980,8 +2008,11 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)
         upNextLoadTask?.cancel()
+        isRestoringSet = true // clearing must not overwrite the new folder's saved set
         upNext = []
         playedTonight = []
+        isRestoringSet = false
+        restoreSet()
         refreshLibrary()
     }
 }

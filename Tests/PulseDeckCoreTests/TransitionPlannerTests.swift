@@ -677,6 +677,22 @@ final class TransitionPlannerTests: XCTestCase {
         XCTAssertEqual(incomingBars, incomingBars.rounded(), accuracy: 1e-7)
     }
 
+    func testLocalBeatIntervalIgnoresFrameJitterAndMissedOrExtraBeats() throws {
+        // 124.6 BPM read on 20 ms frames, with one beat missed and one spurious off-beat hit.
+        let truth = 60.0 / 124.6
+        var beats = (0..<64).map { (10 + Double($0) * truth) / 0.02 }.map { $0.rounded() * 0.02 }
+        beats.remove(at: 20)
+        beats.insert(beats[40] + truth * 0.45, at: 41)
+        let interval = try XCTUnwrap(TransitionPlanner.localBeatInterval(beats, from: 10, through: 10 + 63 * truth))
+        XCTAssertEqual(interval / truth, 1, accuracy: 0.0003)
+        // 122 BPM: every gap reads 0.48 or 0.50 s, so the median is 2 % off the true 0.4918 s.
+        let slow = 60.0 / 122
+        let slowBeats = (0..<64).map { ((5 + Double($0) * slow) / 0.02).rounded() * 0.02 }
+        let slowInterval = try XCTUnwrap(TransitionPlanner.localBeatInterval(slowBeats, from: 5, through: 5 + 63 * slow))
+        XCTAssertEqual(slowInterval / slow, 1, accuracy: 0.0003)
+        XCTAssertNil(TransitionPlanner.localBeatInterval(Array(beats.prefix(5)), from: 0, through: 100))
+    }
+
     func testAcceptsMeasuredGridWithDriftAndRoundedBPM() throws {
         // Like a live band read by the beat model: tempo drifts ±2 % and the label is rounded to 0.1 BPM.
         var beats: [Double] = []

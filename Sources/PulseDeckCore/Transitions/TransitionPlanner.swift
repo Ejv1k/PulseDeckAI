@@ -312,11 +312,6 @@ public struct TransitionPlanner: Sendable {
             throw TransitionPlanningError.missingBeatGrid(deck: incoming.deck, reason: "No downbeat fits the incoming trim interval")
         }
 
-        // 5. Compute pitch-locked tempo adjustment rate for incoming deck
-        let rate = Float(effectiveTempo / incomingTempo)
-        guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
-            throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
-        }
 
         // Outgoing beat duration in seconds
         let beatInterval = outgoing.beatGrid.beatIntervalSeconds
@@ -326,6 +321,22 @@ public struct TransitionPlanner: Sendable {
                                           beatInterval: beatInterval)
             ?? (0...bars).map { Double($0 * 4) * beatInterval }
         let totalDuration = barOffsets[bars]
+
+        // 5. Pitch-locked incoming rate from the tempo both decks hold inside the mix window, so a
+        // track whose tempo wanders still meets the other on the beat; whole-track tempo is the fallback.
+        let averageRate = effectiveTempo / incomingTempo
+        let foldFactor = incomingTempo * incoming.beatGrid.beatIntervalSeconds / 60.0
+        let localRate = Self.localBeatInterval(outgoing.beatGrid.beatTimestamps, from: quantizedStart, through: quantizedStart + totalDuration)
+            .flatMap { outInterval in
+                Self.localBeatInterval(incoming.beatGrid.beatTimestamps, from: incomingSeekPos,
+                                       through: incomingSeekPos + totalDuration * averageRate / Double(request.outgoingPlaybackRate))
+                    .map { $0 * Double(request.outgoingPlaybackRate) / (outInterval * foldFactor) }
+            }
+            .flatMap { abs($0 / averageRate - 1) < 0.01 ? $0 : nil }
+        let rate = Float(localRate ?? averageRate)
+        guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
+            throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
+        }
 
         // Midpoint downbeat calculation: half of phrase bars (e.g. bar 8 downbeat for a 16-bar transition)
         let midpointBars = max(1, bars / 2)
@@ -471,6 +482,33 @@ public struct TransitionPlanner: Sendable {
             events: events,
             metadata: metadata
         )
+    }
+
+    /// Beat spacing between two times: least-squares slope of beat time against beat number. Each beat is
+    /// numbered from the last kept beat, so a median off by a frame never accumulates; hits far from a
+    /// whole beat (spurious analyzer beats) drop out, and the 20 ms frame jitter averages out over the window.
+    /// Nil with fewer than 8 kept beats.
+    static func localBeatInterval(_ beats: [Double], from start: Double, through end: Double) -> Double? {
+        let window = beats.filter { $0 >= start - 0.02 && $0 <= end + 0.02 }
+        guard window.count >= 8, var last = window.first else { return nil }
+        let gaps = zip(window, window.dropFirst()).map { $1 - $0 }.sorted()
+        let pitch = gaps[gaps.count / 2]
+        guard pitch.isFinite, pitch > 0 else { return nil }
+        var number = 0.0
+        var points = [(0.0, last)]
+        for time in window.dropFirst() {
+            let steps = ((time - last) / pitch).rounded()
+            guard steps >= 1, abs(time - last - steps * pitch) <= 0.25 * pitch else { continue }
+            number += steps
+            points.append((number, time))
+            last = time
+        }
+        guard points.count >= 8 else { return nil }
+        let meanX = points.map(\.0).reduce(0, +) / Double(points.count)
+        let meanY = points.map(\.1).reduce(0, +) / Double(points.count)
+        let sxx = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.0 - meanX) }
+        let sxy = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.1 - meanY) }
+        return sxx > 0 ? sxy / sxx : nil
     }
 
     /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars

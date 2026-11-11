@@ -85,3 +85,42 @@ struct UpNextView: View {
         .help(index == 0 ? "\(title) — loads after the next transition" : title)
     }
 }
+
+/// Library row control: adds the track to Up Next, or removes it when already queued.
+struct UpNextToggleButton: View {
+    @ObservedObject var appState: AppState
+    let relativePath: String
+
+    var body: some View {
+        let isQueued = appState.upNext.contains(relativePath)
+        Button {
+            if isQueued { appState.removeFromUpNext(relativePath) } else { appState.addToUpNext(relativePath) }
+        } label: {
+            Image(systemName: isQueued ? "checkmark" : "plus")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(isQueued ? DJTheme.master : DJTheme.textSecondary)
+                .frame(width: 24, height: DJTheme.minTouchTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(StudioPressableStyle())
+        .help(isQueued ? "In Up Next — click to remove" : "Add to Up Next (right-click for Play Next)")
+        .accessibilityLabel(isQueued ? "Remove from Up Next" : "Add to Up Next")
+        .accessibilityIdentifier("upNextToggle-\(relativePath)")
+    }
+}
+
+/// Library row context menu entries for Up Next.
+struct UpNextMenu: View {
+    @ObservedObject var appState: AppState
+    let relativePath: String
+
+    var body: some View {
+        let isQueued = appState.upNext.contains(relativePath)
+        Button("Play Next") { appState.playNext(relativePath) }
+        Button("Add to Up Next") { appState.addToUpNext(relativePath) }
+            .disabled(isQueued)
+        if isQueued {
+            Button("Remove from Up Next") { appState.removeFromUpNext(relativePath) }
+        }
+    }
+}

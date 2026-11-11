@@ -397,20 +397,7 @@ public struct LibraryBrowserView: View {
                                             }
                                         }
 
-                                        let isQueued = appState.upNext.contains(relPath)
-                                        Button {
-                                            if isQueued { appState.removeFromUpNext(relPath) } else { appState.addToUpNext(relPath) }
-                                        } label: {
-                                            Image(systemName: isQueued ? "checkmark" : "plus")
-                                                .font(.system(size: 10, weight: .semibold))
-                                                .foregroundColor(isQueued ? DJTheme.master : DJTheme.textSecondary)
-                                                .frame(width: 24, height: DJTheme.minTouchTarget)
-                                                .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(StudioPressableStyle())
-                                        .help(isQueued ? "In Up Next — click to remove" : "Add to Up Next (right-click for Play Next)")
-                                        .accessibilityLabel(isQueued ? "Remove from Up Next" : "Add to Up Next")
-                                        .accessibilityIdentifier("upNextToggle-\(relPath)")
+                                        UpNextToggleButton(appState: appState, relativePath: relPath)
 
                                         LibraryTrackAnalysisButton(appState: appState, relativePath: relPath)
 
@@ -446,14 +433,7 @@ public struct LibraryBrowserView: View {
                                     .background(isSelected ? DJTheme.deckA.opacity(0.1) : Color.clear)
                                     .cornerRadius(DJTheme.controlRadius)
                                     .contentShape(Rectangle())
-                                    .contextMenu {
-                                        Button("Play Next") { appState.playNext(relPath) }
-                                        Button("Add to Up Next") { appState.addToUpNext(relPath) }
-                                            .disabled(appState.upNext.contains(relPath))
-                                        if appState.upNext.contains(relPath) {
-                                            Button("Remove from Up Next") { appState.removeFromUpNext(relPath) }
-                                        }
-                                    }
+                                    .contextMenu { UpNextMenu(appState: appState, relativePath: relPath) }
                                     .draggable(transfer)
                                 }
                             }

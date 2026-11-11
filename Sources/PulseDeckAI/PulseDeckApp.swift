@@ -46,6 +46,9 @@ public struct PulseDeckApp: App {
                 .environmentObject(projectorViewModel)
                 .frame(minWidth: 1024, idealWidth: 1200, minHeight: 680, idealHeight: 760)
                 .preferredColorScheme(appearance.colorScheme)
+                .onChange(of: appearance, initial: true) { _, new in
+                    NSApp.appearance = new.colorScheme.map { NSAppearance(named: $0 == .dark ? .darkAqua : .aqua) } ?? nil // Alerts and panels follow it too.
+                }
                 .onAppear {
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }

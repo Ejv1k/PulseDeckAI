@@ -386,8 +386,8 @@ public struct LibraryBrowserView: View {
                                                         .font(.system(size: 8.5, weight: .bold))
                                                         .padding(.horizontal, 5)
                                                         .padding(.vertical, 2)
-                                                        .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : Color.red.opacity(0.2)))
-                                                        .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : .red))
+                                                        .background(comp.key.isHarmonic ? DJTheme.master.opacity(0.2) : (comp.key == .unknown ? DJTheme.cardHeader : DJTheme.statusError.opacity(0.2)))
+                                                        .foregroundColor(comp.key.isHarmonic ? DJTheme.master : (comp.key == .unknown ? DJTheme.textMuted : DJTheme.statusError))
                                                         .cornerRadius(DJTheme.chipRadius)
 
                                                     // Tempo Badge
@@ -545,7 +545,7 @@ public struct LibraryBrowserView: View {
                 if let error = appState.previewErrorMessage {
                     Text(error)
                         .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(.red)
+                        .foregroundColor(DJTheme.statusError)
                         .lineLimit(1)
                 }
 

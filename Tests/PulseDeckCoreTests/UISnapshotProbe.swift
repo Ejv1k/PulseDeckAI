@@ -53,6 +53,18 @@ final class UISnapshotProbe: XCTestCase {
             app.loadTrack(relativePath: "01_Retro/\(names[1])", deck: .deckB)
             await app.waitForPendingLoudness(deck: .deckA)
             await app.waitForPendingLoudness(deck: .deckB)
+            if ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_ANALYZE"] != nil {
+                let started = Date()
+                await app.analyzeTrack(relativePath: "01_Retro/\(names[0])", method: .nativeModel).value
+                print(String(format: "SNAP analyzed A (model) in %.1fs", Date().timeIntervalSince(started)))
+                let dspStart = Date()
+                await app.analyzeTrack(relativePath: "01_Retro/\(names[1])", method: .dsp).value
+                print(String(format: "SNAP analyzed B (dsp) in %.1fs", Date().timeIntervalSince(dspStart)))
+                for deck in [DeckIdentifier.deckA, .deckB] {
+                    let t = deck == .deckA ? app.deckATrack : app.deckBTrack
+                    print("SNAP \(deck.rawValue): bpm=\(t?.bpm ?? -1) key=\(t?.musicalKey ?? "-") beats=\(t?.beatGrid.beatTimestamps.count ?? 0) cues=\(String(describing: t?.cueMarkers)) msg=\(app.deckLoadMessage(for: deck) ?? "nil")")
+                }
+            }
             await app.selectTrack(relativePath: "01_Retro/\(names[0])").value
             app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: -24, midGainDB: -4, highGainDB: 2))
             for name in names.dropFirst(2) { app.addToUpNext("01_Retro/\(name)") }

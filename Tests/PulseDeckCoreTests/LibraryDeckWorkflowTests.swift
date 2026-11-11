@@ -146,6 +146,15 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         XCTAssertEqual(f.audio.deckAGraph.scheduleGeneration, generation)
     }
 
+    func testOnlyTracksHeardOnMasterCountAsPlayedTonight() throws {
+        let f = try Fixture(duration: 3); defer { f.cleanup() }
+        XCTAssertTrue(f.app.loadTrack(relativePath: f.path, deck: .deckA))
+        XCTAssertTrue(f.app.playedTonight.isEmpty, "Loading alone is not playing")
+        f.app.updateCrossfader(position: 0)
+        f.app.toggleDeckPlay(deck: .deckA)
+        XCTAssertEqual(f.app.playedTonight, [f.path])
+    }
+
     func testPlayingDeckResumesAfterTheSystemRestartsItsEngine() throws {
         let f = try Fixture(duration: 3); defer { f.cleanup() }
         f.audio.masterAudioEngine.limiterNode.bypass = true // Sample-accurate silence checks: the master limiter's lookahead tail is out of scope here.

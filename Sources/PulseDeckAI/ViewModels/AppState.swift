@@ -157,6 +157,8 @@ public final class AppState: ObservableObject {
     /// Tracks lined up to play next, as library-relative paths. A track leaves the list once it loads into a deck.
     /// shortcut: in memory only, lost on quit; persist it when one set spans app restarts.
     @Published public private(set) var upNext: [String] = []
+    /// Tracks started on a deck since the app opened (not saved between launches). Crossfader position is ignored.
+    @Published public private(set) var playedTonight: Set<String> = []
     /// Deck a running transition fades out; after completion it is free for the next queued track.
     private var transitionOutgoingDeck: DeckIdentifier?
     private var upNextLoadTask: Task<Void, Never>?
@@ -1190,6 +1192,7 @@ public final class AppState: ObservableObject {
             case .deckB:
                 isDeckBPlaying.toggle()
             }
+            if deck == .deckA ? isDeckAPlaying : isDeckBPlaying { markPlayed(deck) }
             return
         }
 
@@ -1218,14 +1221,23 @@ public final class AppState: ObservableObject {
             acknowledgeAudioStartupRecovery()
         }
 
-        _ = performManualDeckMutation(deck: deck, action: .pause) { graph in
+        nonisolated(unsafe) var started = false
+        let applied = performManualDeckMutation(deck: deck, action: .pause) { graph in
             if graph.isMasterPlaying {
                 graph.pause()
             } else {
                 graph.volume = 1
                 graph.play()
+                started = true
             }
         }
+        if applied && started { markPlayed(deck) }
+    }
+
+    func markPlayedForTesting(_ path: String) { playedTonight.insert(path) }
+
+    private func markPlayed(_ deck: DeckIdentifier) {
+        if let path = (deck == .deckA ? deckATrack : deckBTrack)?.relativePath { playedTonight.insert(path) }
     }
 
     public func deckEQ(_ deck: DeckIdentifier) -> EQ3BandParameters { deck == .deckA ? deckAEQ : deckBEQ }
@@ -1586,6 +1598,8 @@ public final class AppState: ObservableObject {
             if let outgoing = snapshot.outgoingDeck { transitionOutgoingDeck = outgoing }
         case .completed:
             // The outgoing deck was stopped by the transition; line up the next track on it.
+            // Counted at completion, so a cancelled transition does not mark the incoming track.
+            if completedJustNow, let incoming = snapshot.incomingDeck { markPlayed(incoming) }
             if completedJustNow, let deck = transitionOutgoingDeck ?? snapshot.outgoingDeck, !upNext.isEmpty {
                 loadUpNext(into: deck)
             }
@@ -1671,7 +1685,7 @@ public final class AppState: ObservableObject {
         // By path, not row index: the queue may have changed since the row was drawn.
         guard let index = upNext.firstIndex(of: relativePath), let previous = upNextPredecessor(at: index),
               let next = loadedCache?.tracks[upNext[index]] else { return false }
-        let planned = Set(upNext + [deckATrack?.relativePath, deckBTrack?.relativePath].compactMap { $0 })
+        let planned = playedTonight.union(upNext + [deckATrack?.relativePath, deckBTrack?.relativePath].compactMap { $0 })
         let candidates = (loadedCache?.tracks.values).map { $0.filter { !planned.contains($0.relativePath) } } ?? []
         guard let bridge = BridgeFinder.bestBridge(from: previous, to: next, candidates: candidates) else {
             statusMessage = "No analyzed track fits between these two in key and tempo."
@@ -1967,6 +1981,7 @@ public final class AppState: ObservableObject {
         self.waveformEditorModel.updateLibraryRoot(newURL)
         upNextLoadTask?.cancel()
         upNext = []
+        playedTonight = []
         refreshLibrary()
     }
 }

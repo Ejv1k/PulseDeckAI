@@ -150,6 +150,25 @@ public struct BeatGrid: Codable, Sendable, Equatable {
         if onBeat.count >= 2 { return onBeat }
         return stride(from: 0, to: beatTimestamps.count, by: 4).map { beatTimestamps[$0] }
     }
+
+    /// 6/8 feel: most measured bars hold 6 beats, so the beat model counted eighth notes and the felt
+    /// beat is every 3rd one. Needs 8+ bars of downbeats; one pass over both lists.
+    /// shortcut: a 3/4 grid with a downbeat only every 2nd bar would also read as 6/8; add a
+    /// beat-strength check if such tracks show up.
+    public var isCompoundMeter: Bool {
+        guard let raw = downbeatTimestamps else { return false }
+        let downbeats = Set(raw.filter(\.isFinite)).sorted()
+        guard downbeats.count >= 9 else { return false }
+        var beatIndex = 0
+        var sixBeatBars = 0
+        for (start, end) in zip(downbeats, downbeats.dropFirst()) {
+            while beatIndex < beatTimestamps.count, beatTimestamps[beatIndex] < start - 0.02 { beatIndex += 1 }
+            var count = 0
+            while beatIndex + count < beatTimestamps.count, beatTimestamps[beatIndex + count] < end - 0.02 { count += 1 }
+            if count == 6 { sixBeatBars += 1 }
+        }
+        return sixBeatBars * 2 > downbeats.count - 1
+    }
 }
 
 /// Structural musical section (Intro, Verse, Chorus, Breakdown, Drop, Outro).
@@ -443,5 +462,19 @@ public struct PulseDeckLibraryCache: Codable, Sendable, Equatable {
     /// Convenience property returning true if the cache satisfies all schema and track bounds invariants.
     public var isValid: Bool {
         (try? validate()) != nil
+    }
+}
+
+extension TrackCacheEntry {
+    /// Tempo a listener feels: a third of the stored eighth-note BPM for 6/8 tracks. The stored `bpm`
+    /// stays unchanged because it must keep matching the beat grid interval.
+    public var displayBPM: Double { beatGrid.isCompoundMeter ? bpm / 3 : bpm }
+
+    /// Stored (grid) beats in one bar: 6 eighth notes in 6/8, else 4.
+    public var beatsPerBar: Double { beatGrid.isCompoundMeter ? 6 : 4 }
+
+    /// "125.0 BPM", or "62.5 BPM · 6/8" for compound meter.
+    public var tempoLabel: String {
+        beatGrid.isCompoundMeter ? String(format: "%.1f BPM · 6/8", bpm / 3) : String(format: "%.1f BPM", bpm)
     }
 }

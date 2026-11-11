@@ -75,7 +75,7 @@ public struct DeckStudioView: View {
     @ViewBuilder
     private func mixCountdown(deck: DeckIdentifier, track: TrackCacheEntry) -> some View {
         if let playhead = appState.deckPlayheadSeconds(deck),
-           let bars = MixCountdown.barsRemaining(playhead: playhead, mixOut: track.cueMarkers.mixOutCue, bpm: track.bpm) {
+           let bars = MixCountdown.barsRemaining(playhead: playhead, mixOut: track.cueMarkers.mixOutCue, bpm: track.bpm * 4 / track.beatsPerBar) {
             Text(bars <= 1 ? "Mix now" : "Mix in \(bars) bars")
                 .font(.system(size: 9.5, weight: .semibold))
                 .monospacedDigit()
@@ -139,7 +139,7 @@ public struct DeckStudioView: View {
                             .foregroundColor(DJTheme.textSecondary)
 
                         if track.bpm > 0 {
-                            Text(String(format: "%.1f BPM", track.bpm))
+                            Text(track.tempoLabel)
                                 .font(.system(size: 9.5, weight: .bold))
                                 .monospacedDigit()
                                 .foregroundColor(color)

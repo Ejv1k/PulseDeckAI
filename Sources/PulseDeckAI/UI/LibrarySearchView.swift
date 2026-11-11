@@ -119,8 +119,8 @@ private struct LibrarySearchRow: View {
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .combine)
             }
-            if let bpm = entry?.bpm, bpm > 0 {
-                Text(String(format: "%.1f BPM", bpm))
+            if let entry, entry.bpm > 0 {
+                Text(entry.tempoLabel)
                     .font(.system(size: 9.5, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(DJTheme.deckA)

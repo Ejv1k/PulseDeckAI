@@ -67,6 +67,17 @@ public struct ProjectorSlideshowView: View {
     }
 
     private var idleFallbackView: some View {
+        ZStack(alignment: .bottom) {
+            idleBranding
+            // Setup hint for the DJ, kept small and dim because this screen faces the audience.
+            Text("Add photos and video loops to PulseDeck_Library/09_Visual_Backgrounds_Media")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundColor(DJTheme.textMuted.opacity(0.6))
+                .padding(.bottom, 24)
+        }
+    }
+
+    private var idleBranding: some View {
         VStack(spacing: 20) {
             ZStack {
                 Circle()
@@ -89,14 +100,9 @@ public struct ProjectorSlideshowView: View {
                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                 .foregroundColor(DJTheme.textPrimary)
                 .tracking(4)
-
-            Text("Add photos and video loops to PulseDeck_Library/09_Visual_Backgrounds_Media")
-                .font(.system(size: 13, weight: .medium, design: .default))
-                .foregroundColor(DJTheme.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
         }
         .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

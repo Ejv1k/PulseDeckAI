@@ -277,7 +277,7 @@ final class ProjectorTests: XCTestCase {
 
     func testNowPlayingBannerCustomization() {
         let vm = ProjectorViewModel()
-        XCTAssertEqual(vm.eventBannerText, "Sarah & Michael's Wedding — October 14, 2026")
+        XCTAssertEqual(vm.eventBannerText, "", "No sample event name may reach a real audience")
 
         vm.eventBannerText = "Annual Gala 2026 — Grand Ballroom"
         XCTAssertEqual(vm.eventBannerText, "Annual Gala 2026 — Grand Ballroom")

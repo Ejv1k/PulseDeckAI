@@ -66,6 +66,8 @@ final class UISnapshotProbe: XCTestCase {
                                  to: URL(fileURLWithPath: outDir).appendingPathComponent("projector-\(mode.rawValue).png"))
             }
         }
+        try await render(SettingsView(appState: app), size: NSSize(width: 520, height: 360),
+                         to: URL(fileURLWithPath: outDir).appendingPathComponent("settings.png"))
         for (label, size) in [("1440x900", NSSize(width: 1440, height: 900)), ("1024x680", NSSize(width: 1024, height: 680))] {
             let controller = NSHostingController(rootView: ContentView().environmentObject(app).environmentObject(projector))
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)

@@ -140,7 +140,7 @@ final class AIAdvisorServiceTests: XCTestCase {
         let requests = await transport.requests
         XCTAssertEqual(requests.count, 1)
         let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.url?.path, "/v1beta/models/gemini-2.5-flash:generateContent")
+        XCTAssertEqual(request.url?.path, "/v1beta/models/gemini-3.8-flash:generateContent")
         XCTAssertNil(request.url?.query)
         XCTAssertEqual(request.value(forHTTPHeaderField: "x-goog-api-key"), "test-secret")
         XCTAssertEqual(request.timeoutInterval, 30)

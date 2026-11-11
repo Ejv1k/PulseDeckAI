@@ -16,7 +16,7 @@ Unlike consumer playback tools or bloated cross-platform DJ suites, PulseDeck AI
 * **Protected Human DJ Provenance:** High-precision automated DSP cue analysis that never clobbers manual user adjustments, backed by atomic file persistence.
 * **Performance Macro Automation:** Bar-aligned transitions (Bass Swap, Filter Echo Wash, Hard Cut), one-shot cue-armed Auto-Pilot, Master talkover ducking (`T`, 800ms linear ramp to 0.15 linear gain with vocal pocket EQ), and 8-pad zero-I/O RAM soundboard (`F1`–`F8`).
 * **Secondary Projector Visuals:** Dedicated presentation window (`Cmd + Shift + P`) offering 24-band FFT spectrum visualizer, Ken Burns photo slideshow and muted video loops, Now Playing card with event banner, and blackout screen.
-* **Hybrid Intelligent Advisor:** Offline-first vDSP feature extraction augmented with an optional, rate-limited Google Gemini (`gemini-2.5-flash`) cloud advisor or local Ollama (`localhost:11434`) model.
+* **Hybrid Intelligent Advisor:** Offline-first vDSP feature extraction augmented with an optional, rate-limited Google Gemini (`gemini-3.8-flash`) cloud advisor or local Ollama (`localhost:11434`) model.
 
 ---
 
@@ -174,10 +174,10 @@ The multi-band Canvas waveform visually differentiates audio frequencies:
 * **Automation & Cue Exceptions:** Automated transitions, headphone Cue audition, and non-destructive waveform cue editing are completely exempt from manual transport locking. Fully merged in PR #19.
 
 ### 11. Hybrid Advisor Safety & Rate Limiting
-* **Primary Provider:** Google Gemini API configured for `gemini-2.5-flash`.
+* **Primary Provider:** Google Gemini API configured for `gemini-3.8-flash`.
 * **Rate Limiting:** A rolling window limits cloud attempts to 12 requests in any 60 seconds with bounded exponential backoff.
 * **Local Fallback:** Optional local Ollama runs at `http://localhost:11434` for offline venues.
-* **Privacy:** API keys are read from `GEMINI_API_KEY` and transmitted exclusively via the `x-goog-api-key` header, never stored in cache files or logs.
+* **Privacy:** The API key is entered in Settings (⌘,) and kept in the macOS Keychain (`GEMINI_API_KEY` overrides it for development). It is transmitted exclusively via the `x-goog-api-key` header, never stored in cache files or logs.
 
 ---
 

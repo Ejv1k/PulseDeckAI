@@ -28,7 +28,10 @@ public actor HybridAIAdvisorService: AIAdvisorServiceContract {
             clock: clock,
             rateLimiter: limiter,
             apiKeyProvider: {
-                ProcessInfo.processInfo.environment[geminiConfig.apiKeyEnvironmentVariable]
+                // Settings stores the key in the Keychain; the environment variable stays a developer override.
+                let env = ProcessInfo.processInfo.environment[geminiConfig.apiKeyEnvironmentVariable]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return env.flatMap { $0.isEmpty ? nil : $0 } ?? GeminiKeychain().read()
             }
         )
         self.ollamaClient = OllamaAdvisorClient(config: ollamaConfig, transport: transport)

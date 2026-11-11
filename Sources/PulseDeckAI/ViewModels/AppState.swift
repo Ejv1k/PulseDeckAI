@@ -1645,6 +1645,42 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// Analysis of the track that plays right before Up Next entry `index`:
+    /// the previous queue entry, else the loaded deck waiting to play, else the deck on air.
+    /// With nothing playing, the only loaded deck counts; two idle loaded decks are ambiguous.
+    func upNextPredecessor(at index: Int) -> TrackCacheEntry? {
+        guard upNext.indices.contains(index) else { return nil }
+        if index > 0 { return loadedCache?.tracks[upNext[index - 1]] }
+        let playing: TrackCacheEntry? = isDeckAPlaying ? deckATrack : (isDeckBPlaying ? deckBTrack : nil)
+        let waiting: TrackCacheEntry? = isDeckAPlaying ? deckBTrack : (isDeckBPlaying ? deckATrack : nil)
+        let idle = [deckATrack, deckBTrack].compactMap { $0 }
+        let path = (waiting ?? playing ?? (idle.count == 1 ? idle.first : nil))?.relativePath
+        return path.flatMap { loadedCache?.tracks[$0] }
+    }
+
+    /// True when analysis proves Up Next entry `index` clashes in key or tempo with the track before it.
+    public func upNextNeedsBridge(at index: Int) -> Bool {
+        guard let previous = upNextPredecessor(at: index),
+              let next = loadedCache?.tracks[upNext[index]] else { return false }
+        return BridgeFinder.needsBridge(from: previous, to: next)
+    }
+
+    /// Inserts the best-fitting library track before a clashing entry. Searched on demand, not per frame.
+    @discardableResult
+    public func insertBridge(before relativePath: String) -> Bool {
+        // By path, not row index: the queue may have changed since the row was drawn.
+        guard let index = upNext.firstIndex(of: relativePath), let previous = upNextPredecessor(at: index),
+              let next = loadedCache?.tracks[upNext[index]] else { return false }
+        let planned = Set(upNext + [deckATrack?.relativePath, deckBTrack?.relativePath].compactMap { $0 })
+        let candidates = (loadedCache?.tracks.values).map { $0.filter { !planned.contains($0.relativePath) } } ?? []
+        guard let bridge = BridgeFinder.bestBridge(from: previous, to: next, candidates: candidates) else {
+            statusMessage = "No analyzed track fits between these two in key and tempo."
+            return false
+        }
+        upNext.insert(bridge.relativePath, at: index)
+        return true
+    }
+
     public func addToUpNext(_ relativePath: String) {
         guard !upNext.contains(relativePath) else { return }
         upNext.append(relativePath)

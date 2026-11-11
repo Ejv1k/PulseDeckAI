@@ -599,7 +599,7 @@ public final class WaveformEditorModel: ObservableObject {
         } else if local?.hasPendingEdits == true {
             self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
         } else {
-            self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
+            self.statusMessage = "Loaded \(entry.relativePath) (\(entry.tempoLabel), Key: \(entry.musicalKey))"
         }
     }
 
@@ -629,7 +629,7 @@ public final class WaveformEditorModel: ObservableObject {
         } else if local?.hasPendingEdits == true {
             self.statusMessage = "Loaded \(entry.relativePath) (Persisting...)"
         } else {
-            self.statusMessage = "Loaded \(entry.relativePath) (BPM: \(String(format: "%.1f", entry.bpm)), Key: \(entry.musicalKey))"
+            self.statusMessage = "Loaded \(entry.relativePath) (\(entry.tempoLabel), Key: \(entry.musicalKey))"
         }
     }
 

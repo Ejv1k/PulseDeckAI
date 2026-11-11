@@ -1548,8 +1548,8 @@ public final class AppState: ObservableObject {
         case .beatSyncedBassSwap:
             style = .beatSyncedBassSwap(bars: transitionPhraseBars, allowFallbackToFilter: false)
         case .filterEchoWash:
-            let bpm = outgoingEntry.bpm.isFinite && (40...240).contains(outgoingEntry.bpm) ? outgoingEntry.bpm : 120.0
-            let duration = Double(transitionPhraseBars) * 4.0 * 60.0 / bpm
+            let bpm = outgoingEntry.bpm.isFinite && (40...360).contains(outgoingEntry.bpm) ? outgoingEntry.bpm : 120.0
+            let duration = Double(transitionPhraseBars) * outgoingEntry.beatsPerBar * 60.0 / bpm
             style = .filterEchoWash(durationSeconds: duration, echoSend: 0.5)
         case .hardCutOnDrop:
             style = .hardCutOnDrop(bars: transitionPhraseBars, allowFallbackToFilter: false)

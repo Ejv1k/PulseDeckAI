@@ -27,6 +27,14 @@ final class CompoundMeterTests: XCTestCase {
         XCTAssertTrue(ballad.beatGrid.isCompoundMeter)
         XCTAssertEqual(ballad.displayBPM, 62.5, accuracy: 1e-9)
         XCTAssertEqual(ballad.tempoLabel, "62.5 BPM · 6/8")
+        XCTAssertEqual(ballad.beatsPerBar, 6)
+        // Duplicated, unsorted downbeats still read as 6/8.
+        let shuffled = BeatGrid(firstBeatOffsetSeconds: ballad.beatGrid.firstBeatOffsetSeconds, beatIntervalSeconds: ballad.beatGrid.beatIntervalSeconds,
+                                beatTimestamps: ballad.beatGrid.beatTimestamps,
+                                downbeatTimestamps: (ballad.beatGrid.downbeatTimestamps ?? []).reversed() + (ballad.beatGrid.downbeatTimestamps ?? []))
+        XCTAssertTrue(shuffled.isCompoundMeter)
+        // A 6/8 bar (6 eighths at 187.5) lasts 1.92 s: 19.2 s holds 10 bars.
+        XCTAssertEqual(MixCountdown.barsRemaining(playhead: 0, mixOut: 19.2, bpm: ballad.bpm * 4 / ballad.beatsPerBar), 10)
 
         let pop = entry("pop.mp3", bpm: 125, beatsPerBar: 4)
         XCTAssertFalse(pop.beatGrid.isCompoundMeter)

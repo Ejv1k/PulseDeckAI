@@ -25,7 +25,7 @@ public enum LocalAnalysisError: Error, LocalizedError, Equatable {
 /// Unknown tempo uses BPM 0, confidence 0 and no beat timestamps. Schema 1.0.0 requires a
 /// positive interval, so an empty grid carries a neutral 1-second interval with no rhythmic meaning.
 public struct LocalTrackAnalyzer: Sendable {
-    public static let analyzerVersion = "local-dsp-1"
+    public static let analyzerVersion = "local-dsp-1-key1"
     private let waveformBinLimit = 4_096
     private let maximumDuration = 6 * 60 * 60.0
     private let chunkFrames: AVAudioFrameCount = 8_192
@@ -131,6 +131,19 @@ public struct LocalTrackAnalyzer: Sendable {
             throw LocalAnalysisError.invalidMetadata
         }
         let fingerprint = "\(fileSize)-\(Int64(modified.timeIntervalSince1970 * 1_000))"
+        // Same chroma key estimate as the model path, on a whole-track 22.05 kHz decode. Bounded like the model
+        // path (30 min ≈ 160 MB of samples); longer mixes keep "Unknown" rather than risk gigabytes.
+        var musicalKey = "Unknown"
+        if duration <= 30 * 60 {
+            do {
+                let samples = try SlaneyMelSpectrogram.loadAudioSamples(from: fileURL)
+                musicalKey = try KeyDetector.detectKey(samples: samples, sampleRate: SlaneyMelSpectrogram.sampleRate) ?? "Unknown"
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                musicalKey = "Unknown" // An unreadable second pass must not fail the waveform and tempo result.
+            }
+        }
         let bitDepth: Int
         switch format.commonFormat {
         case .pcmFormatFloat32, .pcmFormatInt32: bitDepth = 32
@@ -151,7 +164,7 @@ public struct LocalTrackAnalyzer: Sendable {
             channels: channels,
             bitDepth: bitDepth,
             bpm: tempo.bpm,
-            musicalKey: "Unknown",
+            musicalKey: musicalKey,
             confidence: confidence,
             waveformMetadata: WaveformMetadata(sampleCount: Int(frameCount), downsampleFactor: max(1, Int(frameCount) / binCount), peakValues: waveform, lowBandPeaks: low, midBandPeaks: mid, highBandPeaks: high),
             beatGrid: BeatGrid(firstBeatOffsetSeconds: tempo.offset, beatIntervalSeconds: persistedBeatInterval, beatTimestamps: timestamps),

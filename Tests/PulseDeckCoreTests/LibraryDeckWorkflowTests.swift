@@ -266,7 +266,7 @@ final class LibraryDeckWorkflowTests: XCTestCase {
         let cached = try XCTUnwrap(f.app.loadedCache?.tracks[f.path])
         XCTAssertEqual(cached.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertFalse(cached.waveformMetadata.peakValues.isEmpty)
-        XCTAssertEqual(cached.musicalKey, "Unknown")
+        XCTAssertFalse(cached.musicalKey.isEmpty, "The DSP pass now estimates a key as well")
         XCTAssertEqual(f.app.waveformEditorModel.currentTrack?.relativePath, f.path)
         XCTAssertEqual(f.app.deckATrack?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)

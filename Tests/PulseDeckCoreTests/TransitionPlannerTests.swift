@@ -685,6 +685,11 @@ final class TransitionPlannerTests: XCTestCase {
         beats.insert(beats[40] + truth * 0.45, at: 41)
         let interval = try XCTUnwrap(TransitionPlanner.localBeatInterval(beats, from: 10, through: 10 + 63 * truth))
         XCTAssertEqual(interval / truth, 1, accuracy: 0.0003)
+        // 122 BPM: every gap reads 0.48 or 0.50 s, so the median is 2 % off the true 0.4918 s.
+        let slow = 60.0 / 122
+        let slowBeats = (0..<64).map { ((5 + Double($0) * slow) / 0.02).rounded() * 0.02 }
+        let slowInterval = try XCTUnwrap(TransitionPlanner.localBeatInterval(slowBeats, from: 5, through: 5 + 63 * slow))
+        XCTAssertEqual(slowInterval / slow, 1, accuracy: 0.0003)
         XCTAssertNil(TransitionPlanner.localBeatInterval(Array(beats.prefix(5)), from: 0, through: 100))
     }
 

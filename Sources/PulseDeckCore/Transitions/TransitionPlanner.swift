@@ -484,20 +484,24 @@ public struct TransitionPlanner: Sendable {
         )
     }
 
-    /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
-    /// or a bar is implausibly short or long (a missed or spurious downbeat).
-    /// Beat spacing between two times: least-squares slope of beat time against beat number, where each
-    /// beat's number comes from the median spacing, so missed or extra analyzer beats do not skew it and
-    /// the 20 ms frame jitter averages out over the whole window. Nil with fewer than 8 beats.
+    /// Beat spacing between two times: least-squares slope of beat time against beat number. Each beat is
+    /// numbered from the last kept beat, so a median off by a frame never accumulates; hits far from a
+    /// whole beat (spurious analyzer beats) drop out, and the 20 ms frame jitter averages out over the window.
+    /// Nil with fewer than 8 kept beats.
     static func localBeatInterval(_ beats: [Double], from start: Double, through end: Double) -> Double? {
         let window = beats.filter { $0 >= start - 0.02 && $0 <= end + 0.02 }
+        guard window.count >= 8, var last = window.first else { return nil }
         let gaps = zip(window, window.dropFirst()).map { $1 - $0 }.sorted()
-        guard window.count >= 8, let first = window.first else { return nil }
-        let median = gaps[gaps.count / 2]
-        // Keep beats that sit near a whole beat number; spurious off-beat hits drop out.
-        let points = window.compactMap { time -> (Double, Double)? in
-            let number = ((time - first) / median).rounded()
-            return abs(time - first - number * median) <= 0.25 * median ? (number, time) : nil
+        let pitch = gaps[gaps.count / 2]
+        guard pitch.isFinite, pitch > 0 else { return nil }
+        var number = 0.0
+        var points = [(0.0, last)]
+        for time in window.dropFirst() {
+            let steps = ((time - last) / pitch).rounded()
+            guard steps >= 1, abs(time - last - steps * pitch) <= 0.25 * pitch else { continue }
+            number += steps
+            points.append((number, time))
+            last = time
         }
         guard points.count >= 8 else { return nil }
         let meanX = points.map(\.0).reduce(0, +) / Double(points.count)
@@ -507,6 +511,8 @@ public struct TransitionPlanner: Sendable {
         return sxx > 0 ? sxy / sxx : nil
     }
 
+    /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
+    /// or a bar is implausibly short or long (a missed or spurious downbeat).
     static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double], beatInterval: Double) -> [Double]? {
         let tolerance = 1e-6
         guard let first = barTimestamps.firstIndex(where: { abs($0 - start) <= tolerance }),

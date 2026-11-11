@@ -25,13 +25,16 @@ public struct ProjectorSlideshowView: View {
 
             case .ready(let items):
                 if items.isEmpty {
-                    idleFallbackView
+                    idleFallbackView(showSetupHint: true)
                 } else {
                     activeMediaView
                 }
 
-            case .empty, .error:
-                idleFallbackView
+            case .empty:
+                idleFallbackView(showSetupHint: true)
+
+            case .error:
+                idleFallbackView(showSetupHint: false)
             }
         }
     }
@@ -50,7 +53,7 @@ public struct ProjectorSlideshowView: View {
                         .id(item.id)
                         .transition(.opacity)
                 } else {
-                    idleFallbackView
+                    idleFallbackView(showSetupHint: false)
                 }
 
             case .video:
@@ -58,15 +61,31 @@ public struct ProjectorSlideshowView: View {
                     MutedVideoPlayerView(player: player)
                         .transition(.opacity)
                 } else {
-                    idleFallbackView
+                    idleFallbackView(showSetupHint: false)
                 }
             }
         } else {
-            idleFallbackView
+            idleFallbackView(showSetupHint: false)
         }
     }
 
-    private var idleFallbackView: some View {
+    /// The setup hint only shows when there is truly nothing to play; a media error is not "add photos".
+    private func idleFallbackView(showSetupHint: Bool) -> some View {
+        ZStack(alignment: .bottom) {
+            idleBranding
+            if showSetupHint {
+                // Setup hint for the DJ, kept small and dim because this screen faces the audience.
+                Text("Add photos and video loops to PulseDeck_Library/09_Visual_Backgrounds_Media")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(DJTheme.textMuted.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+            }
+        }
+    }
+
+    private var idleBranding: some View {
         VStack(spacing: 20) {
             ZStack {
                 Circle()
@@ -89,14 +108,9 @@ public struct ProjectorSlideshowView: View {
                 .font(.system(size: 24, weight: .bold, design: .monospaced))
                 .foregroundColor(DJTheme.textPrimary)
                 .tracking(4)
-
-            Text("Add photos and video loops to PulseDeck_Library/09_Visual_Backgrounds_Media")
-                .font(.system(size: 13, weight: .medium, design: .default))
-                .foregroundColor(DJTheme.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
         }
         .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

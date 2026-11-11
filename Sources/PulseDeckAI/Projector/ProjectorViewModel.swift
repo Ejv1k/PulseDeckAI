@@ -24,7 +24,8 @@ public final class ProjectorViewModel: ObservableObject {
         didSet { if oldValue != isWindowOpen { synchronizeMediaActivity() } }
     }
     @Published public var isFullscreen: Bool = false
-    @Published public var eventBannerText: String = "Sarah & Michael's Wedding — October 14, 2026"
+    /// Empty until the DJ sets it: a sample event name must never reach a real audience.
+    @Published public var eventBannerText: String = ""
     @Published public var isBannerEditorPresented: Bool = false
 
     // Mode 1: Spectrum Visualizer State

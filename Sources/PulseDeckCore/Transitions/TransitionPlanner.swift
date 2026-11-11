@@ -9,6 +9,12 @@ public struct TransitionPlanner: Sendable {
     /// Maximum allowable tempo differential (6.0%) for beat-synced transitions.
     public static let maxTempoDifferential: Double = 0.06
 
+    /// The tempo scaled by ½, 1 or 2, whichever sits nearest the reference, so a 70 BPM track mixes into
+    /// 140 BPM as half-time (and analyzer octave errors stop reading as a tempo clash).
+    public static func foldedTempo(_ tempo: Double, toward reference: Double) -> Double {
+        [tempo, tempo * 2, tempo / 2].min { abs($0 - reference) < abs($1 - reference) } ?? tempo
+    }
+
     /// Discrete keyframe resolution for continuous curve transitions (e.g. Filter Echo Wash).
     public static let defaultWashKeyframes: Int = 16
 
@@ -241,7 +247,7 @@ public struct TransitionPlanner: Sendable {
 
         // 2. Validate BPM tempo differential (must be strictly < 6.0%)
         let effectiveTempo = 60.0 / outgoing.beatGrid.beatIntervalSeconds * Double(request.outgoingPlaybackRate)
-        let incomingTempo = 60.0 / incoming.beatGrid.beatIntervalSeconds
+        let incomingTempo = Self.foldedTempo(60.0 / incoming.beatGrid.beatIntervalSeconds, toward: effectiveTempo)
         let bpmDelta = abs(incomingTempo - effectiveTempo) / effectiveTempo
         if bpmDelta >= Self.maxTempoDifferential {
             if allowFallback {

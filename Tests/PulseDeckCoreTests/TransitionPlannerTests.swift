@@ -291,6 +291,19 @@ final class TransitionPlannerTests: XCTestCase {
         XCTAssertEqual(fallbackPlan.durationSeconds, 8.0)
     }
 
+    func testHalfTimeIncomingBeatSyncsAtNativeSpeed() throws {
+        let planner = TransitionPlanner()
+        let request = TransitionRequest(
+            outgoingTrack: makeTrack(deck: .deckA, bpm: 140.0),
+            incomingTrack: makeTrack(deck: .deckB, bpm: 71.0),
+            style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: false)
+        )
+        let plan = try planner.plan(request)
+        XCTAssertFalse(plan.metadata.isFallback)
+        XCTAssertEqual(Double(try XCTUnwrap(plan.metadata.tempoAdjustmentRate)), 140.0 / 142.0, accuracy: 1e-4,
+                       "71 BPM plays as half of 140, not stretched to 140")
+    }
+
     func testBeatSyncedBassSwapWithNonzeroOffsetsAndOffGridTrigger() throws {
         let planner = TransitionPlanner()
         // Outgoing track: 120 BPM, offset 0.25s, beats at 0.25, 0.75, 1.25 ...

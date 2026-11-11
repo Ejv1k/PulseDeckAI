@@ -205,7 +205,8 @@ public struct TrackCompatibility: Sendable, Equatable {
 
         let tempoComp: TempoCompatibility
         if candGridValid && refGridValid && reference.bpm > 0 {
-            let delta = (candidate.bpm - reference.bpm) / reference.bpm
+            let candidateBPM = TransitionPlanner.foldedTempo(candidate.bpm, toward: reference.bpm)
+            let delta = (candidateBPM - reference.bpm) / reference.bpm
             if abs(delta) < TransitionPlanner.maxTempoDifferential {
                 tempoComp = .compatible(deltaPercent: delta * 100.0)
             } else {

@@ -237,6 +237,17 @@ final class LibraryCuePreviewTests: XCTestCase {
         XCTAssertFalse(comp3.tempo.isCompatible)
     }
 
+    func testHalfAndDoubleTimeTempoCountsAsCompatible() {
+        let refTrack = makeTrackEntry(relativePath: "ref.wav", bpm: 140.0)
+        for (bpm, expected) in [(70.0, 0.0), (71.0, 1.43), (280.0, 0.0)] {
+            let comp = TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "h.wav", bpm: bpm), reference: refTrack)
+            guard case .compatible(let delta) = comp.tempo else { return XCTFail("\(bpm) BPM should mix with 140 as half/double time") }
+            XCTAssertEqual(delta, expected, accuracy: 0.01)
+        }
+        // 100 BPM is neither close to 140 nor to 70 or 280.
+        XCTAssertFalse(TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "m.wav", bpm: 100.0), reference: refTrack).tempo.isCompatible)
+    }
+
     func testUnknownCasesAndSentinelsNeverFabricateCompatibleValues() {
         let refValid = makeTrackEntry(relativePath: "ref.wav", bpm: 120.0, musicalKey: "8A")
 

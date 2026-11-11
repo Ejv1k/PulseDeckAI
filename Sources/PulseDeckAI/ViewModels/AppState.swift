@@ -166,7 +166,6 @@ public final class AppState: ObservableObject {
 
     // Master-only Soundboard State (F1–F8)
     @Published public private(set) var soundboardPads: [SoundboardPadSnapshot] = []
-    @Published public private(set) var soundboardTotalRAMBytes: Int = 0
     @Published public private(set) var soundboardErrorMessage: String?
 
     // Library Audition & Compatibility State
@@ -367,7 +366,6 @@ public final class AppState: ObservableObject {
             }
         }
         self.soundboardPads = self.audioCoordinator?.soundboardController.padSnapshots ?? Self.defaultSoundboardSnapshots()
-        self.soundboardTotalRAMBytes = self.audioCoordinator?.soundboardController.totalRAMBytes ?? 0
         connectEditorPersistence()
         connectAudioCoordinator()
         refreshOutputDevices()
@@ -404,11 +402,9 @@ public final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.soundboardPads = pads
-                self.soundboardTotalRAMBytes = self.audioCoordinator?.soundboardController.totalRAMBytes ?? 0
             }
         }
         self.soundboardPads = coordinator.soundboardController.padSnapshots
-        self.soundboardTotalRAMBytes = coordinator.soundboardController.totalRAMBytes
         preloadSoundboard()
     }
 

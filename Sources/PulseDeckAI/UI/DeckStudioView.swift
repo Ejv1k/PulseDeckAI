@@ -8,7 +8,7 @@ public struct DeckStudioView: View {
     @ObservedObject var appState: AppState
     @StateObject private var safetyKeyboard: MasterSafetyLockKeyboardRouter
     @FocusState private var isStudioFocused: Bool
-    @State private var isSoundboardExpanded: Bool = false
+    @AppStorage("studio.soundboardExpanded") private var isSoundboardExpanded: Bool = false
 
     public init(appState: AppState) {
         self.appState = appState
@@ -510,24 +510,17 @@ public struct DeckStudioView: View {
                     Image(systemName: "square.grid.3x3.fill")
                         .font(.system(size: 9.5))
                         .foregroundColor(DJTheme.textSecondary)
-                    Text("Soundboard (RAM Preloaded)")
+                    Text("Soundboard")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(DJTheme.textPrimary)
 
                     if !isSoundboardExpanded {
-                        Text("· 8 Pads Active [F1–F8]")
+                        Text("F1–F8")
                             .font(.system(size: 9, weight: .medium))
                             .foregroundColor(DJTheme.textMuted)
                     }
 
                     Spacer()
-
-                    if appState.soundboardTotalRAMBytes > 0 {
-                        Text("\(Double(appState.soundboardTotalRAMBytes) / 1024.0 / 1024.0, specifier: "%.1f") MB RAM")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .monospacedDigit()
-                            .foregroundColor(DJTheme.textMuted)
-                    }
                 }
             }
         }
@@ -554,7 +547,7 @@ public struct DeckStudioView: View {
                     Spacer()
 
                     Circle()
-                        .fill(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange : Color.green))
+                        .fill(pad.error != nil ? Color.orange : Color.clear) // Warn only for a file that failed; a playing pad lights up whole.
                         .frame(width: 5, height: 5)
                 }
 
@@ -564,9 +557,12 @@ public struct DeckStudioView: View {
                     .lineLimit(1)
 
                 HStack {
-                    Text(pad.isFallback ? "Fallback" : "RAM")
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+                    // No file in 08_Soundboard_SFX is the normal default, so this stays muted; orange marks a failed file.
+                    if pad.isFallback {
+                        Text(pad.error != nil ? "File failed · tone" : "Built-in tone")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(pad.isPlaying ? DJTheme.background.opacity(0.8) : DJTheme.textMuted)
+                    }
 
                     Spacer()
 
@@ -582,12 +578,16 @@ public struct DeckStudioView: View {
             .cornerRadius(DJTheme.controlRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: DJTheme.controlRadius)
-                    .stroke(pad.isPlaying ? Color.yellow : (pad.isFallback ? Color.orange.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
+                    .stroke(pad.isPlaying ? Color.yellow : (pad.error != nil ? Color.orange.opacity(0.5) : DJTheme.border.opacity(0.7)), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(StudioPressableStyle())
-        .help("Trigger Pad \(pad.index + 1) (\(pad.title)) - Hotkey: \(pad.keyLabel)")
+        .help(pad.error != nil
+              ? "Play \(pad.title) (\(pad.keyLabel)). Its sound file could not be used, so a built-in tone plays instead."
+              : pad.isFallback
+                ? "Play \(pad.title) (\(pad.keyLabel)). Add your own sounds to the 08_Soundboard_SFX folder."
+                : "Play \(pad.title) (\(pad.keyLabel))")
     }
 
     private func formatDuration(_ duration: Double) -> String {

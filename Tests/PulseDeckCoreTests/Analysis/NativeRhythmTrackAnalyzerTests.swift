@@ -224,6 +224,6 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
         _ = await dspTask.value
 
         let dspAnalyzed = appState.loadedCache?.tracks["01_House/clicks120.wav"]
-        XCTAssertEqual(dspAnalyzed?.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(dspAnalyzed?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
 }

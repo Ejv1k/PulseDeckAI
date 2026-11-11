@@ -101,7 +101,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask1 = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask1.value
         let dsp1 = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(dsp1.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(dsp1.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(dsp1.bpm, 120.0, accuracy: 2.0)
 
         // 2. Switch to Native CoreML
@@ -116,7 +116,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask2 = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask2.value
         let dsp2 = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(dsp2.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(dsp2.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
 
     // MARK: - 3. Stale Completion Cancellation Across Method Switch
@@ -141,7 +141,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Final result must be the second request (DSP), not clobbered by stale task1
         let finalEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(finalEntry.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(finalEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(app.activeAnalysisMethod[relPath], .dsp)
     }
 
@@ -200,7 +200,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         let dspTask = app.analyzeTrack(relativePath: relPath, method: .dsp)
         _ = await dspTask.value
         let initialEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(initialEntry.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(initialEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
         XCTAssertEqual(initialEntry.bpm, 120.0, accuracy: 2.0)
 
         // 2. Overwrite audio file with silent audio (yielding insufficient rhythm)
@@ -219,7 +219,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
 
         // Cache entry MUST be preserved completely intact, not erased or corrupted
         let preservedEntry = try XCTUnwrap(app.loadedCache?.tracks[relPath])
-        XCTAssertEqual(preservedEntry.analyzerVersion, "local-dsp-1", "Cache must retain previous valid analysis on failure")
+        XCTAssertEqual(preservedEntry.analyzerVersion, LocalTrackAnalyzer.analyzerVersion, "Cache must retain previous valid analysis on failure")
         XCTAssertEqual(preservedEntry.bpm, initialEntry.bpm)
     }
 
@@ -278,7 +278,7 @@ final class AppStateNativeRhythmIntegrationTests: XCTestCase {
         _ = await taskB.value
 
         XCTAssertFalse(app.isAnalyzingLibraryTrack)
-        XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, "local-dsp-1")
+        XCTAssertEqual(app.loadedCache?.tracks[relB]?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
 
     func testSupersededTrackIsMarkedCancelledAndCanBeRequestedAgain() async throws {
@@ -403,6 +403,35 @@ extension AppStateNativeRhythmIntegrationTests {
 }
 
 extension AppStateNativeRhythmIntegrationTests {
+    func testDSPAnalyzeAllRefreshesOlderDSPResultsButNeverDowngradesModelOnes() async throws {
+        let fixture = try makeLibrary()
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            try createSyntheticClickWAV(url: fixture.crate.appendingPathComponent(name), durationSeconds: 6.0, bpm: 120.0)
+        }
+        func entry(_ name: String, version: String) throws -> TrackCacheEntry {
+            let fresh = try LocalTrackAnalyzer().analyze(url: fixture.crate.appendingPathComponent(name), libraryRoot: fixture.root)
+            let json = try XCTUnwrap(String(data: JSONEncoder().encode(fresh), encoding: .utf8))
+                .replacingOccurrences(of: LocalTrackAnalyzer.analyzerVersion, with: version)
+            return try JSONDecoder().decode(TrackCacheEntry.self, from: Data(json.utf8))
+        }
+        let cache = PulseDeckLibraryCache(tracks: [
+            "01_House/a.wav": try entry("a.wav", version: "local-dsp-1"),              // pre-key DSP result
+            "01_House/b.wav": try entry("b.wav", version: NativeRhythmTrackAnalyzer.analyzerVersion),
+        ])
+        try CachePersistence.saveAtomic(cache: cache, to: fixture.root.appendingPathComponent(PulseDeckCoreConfig.cacheFileName))
+        let app = AppState(libraryRootURL: fixture.root, waveformEditorModel: WaveformEditorModel(libraryRootURL: fixture.root),
+                           loadedCache: cache)
+        app.selectedAnalysisMethod = .dsp
+        let crate = LibraryCrateInfo(id: "01_House", folderName: "01_House", displayName: "[01] House",
+                                     relativePath: "01_House", trackCount: 3, hasGitKeep: false,
+                                     audioFiles: ["a.wav", "b.wav", "c.wav"])
+        app.analyzeCrate(crate)
+        XCTAssertEqual(app.crateAnalysisProgress?.total, 2, "Outdated DSP a and missing c; model-analyzed b stays")
+        await app.crateAnalysisTask?.value
+        XCTAssertEqual(app.loadedCache?.tracks["01_House/a.wav"]?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
+        XCTAssertEqual(app.loadedCache?.tracks["01_House/b.wav"]?.analyzerVersion, NativeRhythmTrackAnalyzer.analyzerVersion)
+    }
+
     func testManualAnalyzeDuringCrateBatchStopsBatchAndKeepsUserRun() async throws {
         let fixture = try makeLibrary()
         let editor = WaveformEditorModel(libraryRootURL: fixture.root)

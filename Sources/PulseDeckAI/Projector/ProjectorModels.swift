@@ -133,7 +133,7 @@ public struct ProjectorNowPlayingMetadata: Sendable, Equatable {
 
     public static let idle = ProjectorNowPlayingMetadata(
         title: "PulseDeck AI",
-        artist: "Ready to Play",
+        artist: "",
         deck: nil,
         bpm: nil,
         musicalKey: nil,

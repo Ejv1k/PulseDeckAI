@@ -187,30 +187,11 @@ public final class ProjectorViewModel: ObservableObject {
         )
 
         let isPlaying = appState.isDeckAPlaying || appState.isDeckBPlaying
-        guard let deck = activeDeck else {
-            return ProjectorNowPlayingMetadata(
-                title: "PulseDeck AI",
-                artist: "Ready to Play",
-                deck: nil,
-                bpm: nil,
-                musicalKey: nil,
-                durationSeconds: nil,
-                isMasterPlaying: false
-            )
-        }
+        guard let deck = activeDeck else { return .idle }
 
         let track = (deck == .deckA) ? appState.deckATrack : appState.deckBTrack
-        guard let entry = track else {
-            return ProjectorNowPlayingMetadata(
-                title: "Deck \(deck.rawValue.capitalized)",
-                artist: "No Track Loaded",
-                deck: deck,
-                bpm: nil,
-                musicalKey: nil,
-                durationSeconds: nil,
-                isMasterPlaying: isPlaying
-            )
-        }
+        // Deck state is the DJ's business; guests see the idle card until a track plays.
+        guard let entry = track else { return .idle }
 
         let parsed = Self.parseArtistAndTitle(from: entry.relativePath)
         return ProjectorNowPlayingMetadata(

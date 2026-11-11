@@ -51,4 +51,14 @@ final class UpNextBridgeTests: XCTestCase {
         XCTAssertEqual(state.upNext, [prev.relativePath, next.relativePath])
         XCTAssertEqual(state.statusMessage, "No analyzed track fits between these two in key and tempo.")
     }
+
+    func testPlayedTrackIsNotOfferedAsABridge() {
+        let prev = track("prev", bpm: 120, key: "8A"), next = track("next", bpm: 122, key: "10A")
+        let fit = track("fit", bpm: 121, key: "9A")
+        let state = app([prev, next, fit])
+        state.markPlayedForTesting(fit.relativePath)
+        state.addToUpNext(prev.relativePath)
+        state.addToUpNext(next.relativePath)
+        XCTAssertFalse(state.insertBridge(before: next.relativePath))
+    }
 }

@@ -355,6 +355,8 @@ public struct LibraryBrowserView: View {
 
                                         Spacer()
 
+                                        if appState.playedTonight.contains(relPath) { PlayedLabel() }
+
                                         // Real cached BPM & Musical Key metadata
                                         if let track = trackEntry {
                                             HStack(spacing: 6) {
@@ -797,9 +799,14 @@ public struct LibraryBrowserView: View {
                   let compatibility = appState.compatibility(for: entry) else { return -1 }
             return compatibility.matchScore
         }
+        func played(_ file: String) -> Bool { appState.playedTonight.contains("\(crate.folderName)/\(file)") }
+        // Already-played tracks sink below fresh ones but stay visible: guests ask for repeats.
         return crate.audioFiles.enumerated()
-            .map { (offset: $0.offset, file: $0.element, score: score($0.element)) }
-            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.offset < $1.offset }
+            .map { (offset: $0.offset, file: $0.element, score: score($0.element), played: played($0.element)) }
+            .sorted {
+                if $0.played != $1.played { return !$0.played }
+                return $0.score != $1.score ? $0.score > $1.score : $0.offset < $1.offset
+            }
             .map(\.file)
     }
 
@@ -1038,4 +1045,13 @@ enum LibraryTrackTitle {
 extension LibraryCrateInfo {
     /// Crate name without the "[NN] " ordering prefix; folder order already sorts the list.
     var title: String { displayName.replacing(/^\[\d+\]\s*/, with: "") }
+}
+
+/// Quiet marker for a track already heard tonight.
+private struct PlayedLabel: View {
+    var body: some View {
+        Text("Played")
+            .font(.system(size: 9.5, weight: .medium))
+            .foregroundColor(DJTheme.textMuted)
+    }
 }

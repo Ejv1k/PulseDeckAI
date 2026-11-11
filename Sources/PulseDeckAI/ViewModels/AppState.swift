@@ -157,7 +157,7 @@ public final class AppState: ObservableObject {
     /// Tracks lined up to play next, as library-relative paths. A track leaves the list once it loads into a deck.
     /// shortcut: in memory only, lost on quit; persist it when one set spans app restarts.
     @Published public private(set) var upNext: [String] = []
-    /// Tracks heard on the master output since the app opened (not saved between launches).
+    /// Tracks started on a deck since the app opened (not saved between launches). Crossfader position is ignored.
     @Published public private(set) var playedTonight: Set<String> = []
     /// Deck a running transition fades out; after completion it is free for the next queued track.
     private var transitionOutgoingDeck: DeckIdentifier?

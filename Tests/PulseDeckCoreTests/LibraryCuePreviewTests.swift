@@ -244,6 +244,12 @@ final class LibraryCuePreviewTests: XCTestCase {
             guard case .compatible(let delta) = comp.tempo else { return XCTFail("\(bpm) BPM should mix with 140 as half/double time") }
             XCTAssertEqual(delta, expected, accuracy: 0.01)
         }
+        let half = TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "h.wav", bpm: 70.0), reference: refTrack)
+        let native = TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "n.wav", bpm: 140.0), reference: refTrack)
+        XCTAssertEqual(half.tempoBadgeLabel, "½× +0.0%")
+        XCTAssertEqual(native.tempoBadgeLabel, "+0.0%")
+        XCTAssertEqual(TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "d.wav", bpm: 280.0), reference: refTrack).tempoBadgeLabel, "2× +0.0%")
+        XCTAssertLessThan(half.matchScore, native.matchScore)
         // 100 BPM is neither close to 140 nor to 70 or 280.
         XCTAssertFalse(TrackCompatibility.evaluate(candidate: makeTrackEntry(relativePath: "m.wav", bpm: 100.0), reference: refTrack).tempo.isCompatible)
     }

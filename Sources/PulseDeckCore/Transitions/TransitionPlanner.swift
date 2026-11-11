@@ -312,11 +312,6 @@ public struct TransitionPlanner: Sendable {
             throw TransitionPlanningError.missingBeatGrid(deck: incoming.deck, reason: "No downbeat fits the incoming trim interval")
         }
 
-        // 5. Compute pitch-locked tempo adjustment rate for incoming deck
-        let rate = Float(effectiveTempo / incomingTempo)
-        guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
-            throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
-        }
 
         // Outgoing beat duration in seconds
         let beatInterval = outgoing.beatGrid.beatIntervalSeconds
@@ -326,6 +321,22 @@ public struct TransitionPlanner: Sendable {
                                           beatInterval: beatInterval)
             ?? (0...bars).map { Double($0 * 4) * beatInterval }
         let totalDuration = barOffsets[bars]
+
+        // 5. Pitch-locked incoming rate from the tempo both decks hold inside the mix window, so a
+        // track whose tempo wanders still meets the other on the beat; whole-track tempo is the fallback.
+        let averageRate = effectiveTempo / incomingTempo
+        let foldFactor = incomingTempo * incoming.beatGrid.beatIntervalSeconds / 60.0
+        let localRate = Self.localBeatInterval(outgoing.beatGrid.beatTimestamps, from: quantizedStart, through: quantizedStart + totalDuration)
+            .flatMap { outInterval in
+                Self.localBeatInterval(incoming.beatGrid.beatTimestamps, from: incomingSeekPos,
+                                       through: incomingSeekPos + totalDuration * averageRate / Double(request.outgoingPlaybackRate))
+                    .map { $0 * Double(request.outgoingPlaybackRate) / (outInterval * foldFactor) }
+            }
+            .flatMap { abs($0 / averageRate - 1) < 0.01 ? $0 : nil }
+        let rate = Float(localRate ?? averageRate)
+        guard rate.isFinite && rate >= 0.5 && rate <= 2.0 else {
+            throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
+        }
 
         // Midpoint downbeat calculation: half of phrase bars (e.g. bar 8 downbeat for a 16-bar transition)
         let midpointBars = max(1, bars / 2)
@@ -475,6 +486,27 @@ public struct TransitionPlanner: Sendable {
 
     /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
     /// or a bar is implausibly short or long (a missed or spurious downbeat).
+    /// Beat spacing between two times: least-squares slope of beat time against beat number, where each
+    /// beat's number comes from the median spacing, so missed or extra analyzer beats do not skew it and
+    /// the 20 ms frame jitter averages out over the whole window. Nil with fewer than 8 beats.
+    static func localBeatInterval(_ beats: [Double], from start: Double, through end: Double) -> Double? {
+        let window = beats.filter { $0 >= start - 0.02 && $0 <= end + 0.02 }
+        let gaps = zip(window, window.dropFirst()).map { $1 - $0 }.sorted()
+        guard window.count >= 8, let first = window.first else { return nil }
+        let median = gaps[gaps.count / 2]
+        // Keep beats that sit near a whole beat number; spurious off-beat hits drop out.
+        let points = window.compactMap { time -> (Double, Double)? in
+            let number = ((time - first) / median).rounded()
+            return abs(time - first - number * median) <= 0.25 * median ? (number, time) : nil
+        }
+        guard points.count >= 8 else { return nil }
+        let meanX = points.map(\.0).reduce(0, +) / Double(points.count)
+        let meanY = points.map(\.1).reduce(0, +) / Double(points.count)
+        let sxx = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.0 - meanX) }
+        let sxy = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.1 - meanY) }
+        return sxx > 0 ? sxy / sxx : nil
+    }
+
     static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double], beatInterval: Double) -> [Double]? {
         let tolerance = 1e-6
         guard let first = barTimestamps.firstIndex(where: { abs($0 - start) <= tolerance }),

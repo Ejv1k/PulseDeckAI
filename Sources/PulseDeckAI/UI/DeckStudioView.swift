@@ -204,6 +204,7 @@ public struct DeckStudioView: View {
                 .disabled(appState.isTransitionBusy)
                 .accessibilityIdentifier("deckPlayPauseButton-\(deck.rawValue)")
                 .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
+                .help("Play or pause. Keyboard: A or B picks the deck, Space plays or pauses it, Shift+Space pauses an on-air deck under Safety Lock.")
 
                 Button {
                     appState.focusMasterDeck(deck)

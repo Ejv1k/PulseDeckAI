@@ -357,6 +357,40 @@ final class MasterSafetyLockIntegrationTests: XCTestCase {
         XCTAssertTrue(f.audio.deckAGraph.isMasterPlaying)
     }
 
+    @MainActor
+    func testLetterKeysOnlyPickTheFocusedDeck() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        _ = NSApplication.shared
+        let router = MasterSafetyLockKeyboardRouter(appState: f.app)
+        let receiver = KeyReceiver(router: router)
+        let window = NSWindow(contentRect: receiver.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = receiver
+        router.attach(to: window, anchor: receiver)
+        defer { router.detach(from: receiver); window.close() }
+        XCTAssertTrue(window.makeFirstResponder(receiver))
+        func letter(_ c: String, time: TimeInterval, modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: time,
+                windowNumber: window.windowNumber, context: nil, characters: c, charactersIgnoringModifiers: c,
+                isARepeat: false, keyCode: c.lowercased() == "a" ? 0 : 11))
+        }
+        let aPlaying = f.audio.deckAGraph.isMasterPlaying
+        let bPlaying = f.audio.deckBGraph.isMasterPlaying
+        window.sendEvent(try letter("b", time: 20))
+        XCTAssertEqual(f.app.focusedMasterDeck, .deckB)
+        window.sendEvent(try letter("A", time: 21, modifiers: .shift))
+        XCTAssertEqual(f.app.focusedMasterDeck, .deckA)
+        XCTAssertEqual(f.audio.deckAGraph.isMasterPlaying, aPlaying, "Focus keys never touch transport")
+        XCTAssertEqual(f.audio.deckBGraph.isMasterPlaying, bPlaying)
+        XCTAssertFalse(router.handleStudioEvent(try letter("b", time: 22, modifiers: .command)), "Cmd+B stays a menu shortcut")
+        XCTAssertEqual(f.app.focusedMasterDeck, .deckA)
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 150, height: 22))
+        receiver.addSubview(field)
+        XCTAssertTrue(window.makeFirstResponder(field))
+        XCTAssertFalse(router.handleStudioEvent(try letter("b", time: 23)), "Typing a B in search must not switch decks")
+        XCTAssertEqual(f.app.focusedMasterDeck, .deckA)
+    }
+
     private actor CommandLatch {
         private var released = false
         private var waiter: CheckedContinuation<Void, Never>?

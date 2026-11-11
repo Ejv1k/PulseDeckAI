@@ -46,6 +46,10 @@ final class UISnapshotProbe: XCTestCase {
             await app.selectTrack(relativePath: "01_Retro/\(names[0])").value
             app.setDeckEQ(deck: .deckA, eq: EQ3BandParameters(lowGainDB: -24, midGainDB: -4, highGainDB: 2))
         }
+        let expandKey = "studio.soundboardExpanded"
+        let wasExpanded = UserDefaults.standard.object(forKey: expandKey)
+        UserDefaults.standard.set(ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_SOUNDBOARD"] != nil, forKey: expandKey)
+        defer { UserDefaults.standard.set(wasExpanded, forKey: expandKey) }
         let projector = ProjectorViewModel()
         defer { projector.teardown() }
         if ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_PROJECTOR"] != nil {

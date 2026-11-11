@@ -143,6 +143,7 @@ public struct WaveformEditorView: View {
                 .stroke(isWaveformFocused ? DJTheme.deckA.opacity(0.8) : DJTheme.border, lineWidth: 1)
         )
         .focusable()
+        .focusEffectDisabled() // The ring is redrawn on every frame while playing and cost about half of the render time.
         .focused($isWaveformFocused)
         .onKeyPress(phases: .down) { press in
             handleKeyPress(press)
@@ -334,11 +335,9 @@ public struct WaveformEditorView: View {
                     .fill(Color(red: 0.05, green: 0.06, blue: 0.08))
 
                 if let track = model.currentTrack {
-                    // 60 FPS capped Multiband Waveform Canvas
-                    TimelineView(.periodic(from: .now, by: 1.0 / 60.0)) { _ in
-                        Canvas { context, size in
-                            drawWaveform(in: &context, size: size, track: track)
-                        }
+                    // Multiband waveform; it redraws when the model changes, not on a timer (the playhead is its own view).
+                    Canvas { context, size in
+                        drawWaveform(in: &context, size: size, track: track)
                     }
 
                     // Trimmed Silence Shaded Overlays

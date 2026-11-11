@@ -55,6 +55,7 @@ public struct DeckStudioView: View {
         }
         .background(MasterSafetyLockKeyboardBridge(router: safetyKeyboard))
         .focusable()
+        .focusEffectDisabled() // The ring is redrawn on every frame while playing and cost about half of the render time.
         .focused($isStudioFocused)
         .onReceive(NotificationCenter.default.publisher(for: .pulseDeckFocusStudio)) { _ in isStudioFocused = true }
         .onKeyPress(phases: [.down, .repeat]) { press in

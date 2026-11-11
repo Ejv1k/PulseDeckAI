@@ -66,6 +66,10 @@ swift test                                   # about 490 tests, ~65 s
 python3 -m unittest discover -s scripts/tests -q   # Python companion tests
 ```
 
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Credits
 
 Beat tracking uses the Beat This! `small0` model by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -3,7 +3,7 @@ import PulseDeckCore
 
 /// Vertical EQ fader: the notch in the middle is 0 dB, the bottom is a -24 dB kill, the top +6 dB.
 /// Drag up or down from anywhere on it (it moves by the distance dragged and never jumps to the click),
-/// double-click to reset, arrow keys / VoiceOver step 1 dB.
+/// double-click to reset, VoiceOver steps 1 dB.
 struct EQFader: View {
     let label: String
     let gainDB: Float
@@ -27,7 +27,7 @@ struct EQFader: View {
     }
 
     private var position: Double { Self.position(for: gainDB) }
-    private var isKilled: Bool { gainDB <= Self.minDB + 0.5 }
+    private var isKilled: Bool { gainDB <= Self.minDB }
     private var valueText: String {
         if isKilled { return "KILL" }
         if abs(gainDB) < 0.05 { return "0" }
@@ -46,6 +46,7 @@ struct EQFader: View {
             }
             track
                 .frame(width: 48, height: Self.trackHeight + 14)
+                .allowsHitTesting(isEnabled)
                 .contentShape(Rectangle())
                 .gesture(drag)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { if isEnabled { onChange(0) } })
@@ -55,6 +56,7 @@ struct EQFader: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label) EQ")
         .accessibilityValue(isKilled ? "Killed" : String(format: "%.1f decibels", gainDB))
+        .accessibilityAction(named: "Reset to 0 dB") { if isEnabled { onChange(0) } }
         .accessibilityAdjustableAction { direction in
             guard isEnabled else { return }
             switch direction {
@@ -70,7 +72,7 @@ struct EQFader: View {
         return ZStack(alignment: .top) {
             Capsule().fill(DJTheme.border).frame(width: 4, height: Self.trackHeight).offset(y: 7)
             Rectangle().fill(DJTheme.textMuted).frame(width: 14, height: 1)
-                .offset(y: 7 + Self.trackHeight / 2) // The 0 dB notch.
+                .offset(y: 6.5 + Self.trackHeight / 2) // The 0 dB notch.
             Capsule().fill(isKilled ? DJTheme.statusError : color)
                 .frame(width: 4, height: abs(Self.trackHeight / 2 - thumbY))
                 .offset(y: 7 + min(thumbY, Self.trackHeight / 2))
@@ -82,7 +84,7 @@ struct EQFader: View {
     }
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: 1)
+        DragGesture(minimumDistance: 3)
             .updating($dragStart) { _, start, _ in
                 if start == nil { start = position }
             }
@@ -90,9 +92,8 @@ struct EQFader: View {
                 guard isEnabled else { return }
                 let start = dragStart ?? position
                 let next = start - Double(value.translation.height / Self.trackHeight)
-                var gain = Self.gain(for: next)
-                if abs(gain) < 0.4 { gain = 0 } // Detent at 0 dB, like the centre click of a mixer fader.
-                onChange(gain)
+                // Detent at 0 dB (in travel, not dB: the two halves have different dB per point).
+                onChange(abs(next - 0.5) < 0.03 ? 0 : Self.gain(for: next))
             }
     }
 }

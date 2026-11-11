@@ -67,21 +67,35 @@ final class MasterSafetyLockKeyboardRouter: ObservableObject {
 
     /// AppKit adapter also used by dispatched-key integration tests.
     func handleStudioEvent(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown, event.keyCode == 49, !isEditingText else { return false }
+        guard event.type == .keyDown, !isEditingText else { return false }
         if let window, event.window !== window { return false }
         let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control, .function])
         guard modifiers.isEmpty || modifiers == .shift else { return false }
+        guard event.keyCode == 49 else { return focusDeck(for: event.charactersIgnoringModifiers ?? "") }
         return dispatchSpace(shift: modifiers.contains(.shift), isRepeat: event.isARepeat, event: event)
     }
 
     func handleStudioKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        guard press.key == .space, !isEditingText else { return .ignored }
+        guard !isEditingText else { return .ignored }
         guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+        guard press.key == .space else { return focusDeck(for: press.characters) ? .handled : .ignored }
         let event = NSApplication.shared.currentEvent
         guard event?.modifierFlags.contains(.function) != true else { return .ignored }
         let handled = dispatchSpace(shift: press.modifiers.contains(.shift),
                                     isRepeat: press.phase == .repeat || event?.isARepeat == true, event: event)
         return handled ? .handled : .ignored
+    }
+
+    /// A / B pick the deck Space and Shift+Space act on. Focus only, never transport,
+    /// so a stray letter cannot change what the audience hears.
+    private func focusDeck(for characters: String) -> Bool {
+        guard let appState else { return false }
+        switch characters.lowercased() {
+        case "a": appState.focusMasterDeck(.deckA)
+        case "b": appState.focusMasterDeck(.deckB)
+        default: return false
+        }
+        return true
     }
 
     private func dispatchSpace(shift: Bool, isRepeat: Bool, event: NSEvent?) -> Bool {

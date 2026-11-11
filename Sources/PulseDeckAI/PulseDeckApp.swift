@@ -120,5 +120,9 @@ public struct PulseDeckApp: App {
                 }
             }
         }
+
+        Settings {
+            SettingsView(appState: appState)
+        }
     }
 }

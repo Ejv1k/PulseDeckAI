@@ -64,7 +64,7 @@ final class AudioContractsTests: XCTestCase {
 
     func testGeminiAdvisorRateLimitAndBackoff() {
         let config = GeminiAdvisorConfig()
-        XCTAssertEqual(config.model, "gemini-2.5-flash")
+        XCTAssertEqual(config.model, "gemini-3.8-flash")
         XCTAssertEqual(config.requestsPerMinute, 12)
         XCTAssertEqual(GeminiAdvisorConfig.minRequestIntervalSeconds, 5.0)
 

@@ -39,8 +39,8 @@ public struct AdvisorRecommendation: Codable, Sendable, Equatable {
 
 /// Configuration and safety limits for the Google Gemini cloud advisor.
 public struct GeminiAdvisorConfig: Sendable, Equatable {
-    /// Default advisor model: gemini-2.5-flash.
-    public static let defaultModel = "gemini-2.5-flash"
+    /// Default advisor model: gemini-3.8-flash.
+    public static let defaultModel = "gemini-3.8-flash"
 
     /// Base URL for the Gemini v1beta generateContent API.
     public static let defaultEndpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta")!

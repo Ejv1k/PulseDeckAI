@@ -36,7 +36,7 @@ final class UISnapshotProbe: XCTestCase {
 
     func testRenderStudio() async throws {
         guard let outDir = ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_DIR"] else { throw XCTSkip("snapshot only") }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SnapshotLibrary-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SnapshotRuns-\(UUID().uuidString)").appendingPathComponent("My Library")
         let crate = root.appendingPathComponent("01_Retro")
         try FileManager.default.createDirectory(at: crate, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -58,8 +58,8 @@ final class UISnapshotProbe: XCTestCase {
                 await app.analyzeTrack(relativePath: "01_Retro/\(names[0])", method: .nativeModel).value
                 print(String(format: "SNAP analyzed A (model) in %.1fs", Date().timeIntervalSince(started)))
                 let dspStart = Date()
-                await app.analyzeTrack(relativePath: "01_Retro/\(names[1])", method: .dsp).value
-                print(String(format: "SNAP analyzed B (dsp) in %.1fs", Date().timeIntervalSince(dspStart)))
+                await app.analyzeTrack(relativePath: "01_Retro/\(names[1])", method: .nativeModel).value
+                print(String(format: "SNAP analyzed B (model) in %.1fs", Date().timeIntervalSince(dspStart)))
                 for deck in [DeckIdentifier.deckA, .deckB] {
                     let t = deck == .deckA ? app.deckATrack : app.deckBTrack
                     print("SNAP \(deck.rawValue): bpm=\(t?.bpm ?? -1) key=\(t?.musicalKey ?? "-") beats=\(t?.beatGrid.beatTimestamps.count ?? 0) cues=\(String(describing: t?.cueMarkers)) msg=\(app.deckLoadMessage(for: deck) ?? "nil")")

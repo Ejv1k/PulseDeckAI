@@ -332,22 +332,28 @@ public final class AppState: ObservableObject {
         refreshLibrary()
     }
 
-    private struct SavedSet: Codable { var root: String; var upNext: [String]; var played: [String] }
-    private static let savedSetKey = "savedSet"
+    private struct SavedSet: Codable { var upNext: [String]; var played: [String] }
+    private static let savedSetKey = "savedSets"
+    private var isRestoringSet = false
 
-    private func saveSet() {
-        guard let preferences else { return }
-        let set = SavedSet(root: libraryRootURL.standardizedFileURL.path, upNext: upNext, played: playedTonight.sorted())
-        preferences.set(try? JSONEncoder().encode(set), forKey: Self.savedSetKey)
+    /// Sets are kept per library folder (paths are library-relative), so switching folders never overwrites another one's set.
+    private func savedSets() -> [String: SavedSet] {
+        preferences?.data(forKey: Self.savedSetKey).flatMap { try? JSONDecoder().decode([String: SavedSet].self, from: $0) } ?? [:]
     }
 
-    /// Paths are library-relative, so a set saved for another folder is ignored.
+    private func saveSet() {
+        guard let preferences, !isRestoringSet else { return }
+        var all = savedSets()
+        all[libraryRootURL.standardizedFileURL.path] = SavedSet(upNext: upNext, played: playedTonight.sorted())
+        preferences.set(try? JSONEncoder().encode(all), forKey: Self.savedSetKey)
+    }
+
     private func restoreSet() {
-        guard let data = preferences?.data(forKey: Self.savedSetKey),
-              let set = try? JSONDecoder().decode(SavedSet.self, from: data),
-              set.root == libraryRootURL.standardizedFileURL.path else { return }
+        guard let set = savedSets()[libraryRootURL.standardizedFileURL.path] else { return }
+        isRestoringSet = true
         upNext = set.upNext
         playedTonight = Set(set.played)
+        isRestoringSet = false
     }
 
     /// Forgets what already played, so Best match and bridges treat every track as fresh again. Up Next stays.
@@ -2002,8 +2008,11 @@ public final class AppState: ObservableObject {
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)
         upNextLoadTask?.cancel()
+        isRestoringSet = true // clearing must not overwrite the new folder's saved set
         upNext = []
         playedTonight = []
+        isRestoringSet = false
+        restoreSet()
         refreshLibrary()
     }
 }

@@ -54,11 +54,17 @@ public struct PulseDeckApp: App {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(appState.isScanning)
             }
+            CommandGroup(after: .textEditing) {
+                Button("Find Track…") {
+                    NotificationCenter.default.post(name: .pulseDeckFocusSearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
             CommandMenu("Playback") {
-                Button("Toggle Master Talkover") {
+                // No bare-key menu shortcut: menus would fire it while typing. The studio handles T itself.
+                Button("Toggle Master Talkover (T)") {
                     appState.toggleTalkover()
                 }
-                .keyboardShortcut("t", modifiers: [])
             }
             CommandMenu("Soundboard") {
                 ForEach(0..<8, id: \.self) { index in

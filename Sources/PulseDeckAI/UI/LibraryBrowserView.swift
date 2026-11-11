@@ -6,6 +6,7 @@ public struct LibraryBrowserView: View {
     @ObservedObject var appState: AppState
     @FocusState private var isAuditionFocused: Bool
     @State private var order: LibraryOrder = .folder
+    @State private var searchQuery = ""
 
     /// How the crate's track list is ordered; only changes the view, never the files.
     enum LibraryOrder: String, CaseIterable {
@@ -22,6 +23,7 @@ public struct LibraryBrowserView: View {
         HStack(spacing: 12) {
             // Left Column: Crates Navigation List
             VStack(alignment: .leading, spacing: 6) {
+                LibrarySearchField(query: $searchQuery)
                 HStack {
                     Text("Crates (\(appState.scanSummary?.totalCrates ?? 0))")
                         .font(.system(size: 11.5, weight: .semibold))
@@ -44,6 +46,7 @@ public struct LibraryBrowserView: View {
                         if let crates = appState.scanSummary?.crates, !crates.isEmpty {
                             ForEach(crates) { crate in
                                 Button(action: {
+                                    searchQuery = ""
                                     appState.selectCrate(crate)
                                 }) {
                                     HStack(spacing: 8) {
@@ -506,6 +509,7 @@ public struct LibraryBrowserView: View {
                 RoundedRectangle(cornerRadius: DJTheme.cardRadius)
                     .stroke(DJTheme.border.opacity(0.6), lineWidth: 1)
             )
+            .overlay { LibrarySearchResultsView(appState: appState, query: searchQuery) }
         }
     }
 

@@ -41,15 +41,15 @@ public struct ProjectorNowPlayingView: View {
 
                 // Center Now Playing card
                 VStack(spacing: 18) {
-                    // On-air Master badge
-                    if let deck = meta.deck {
+                    // Guests need what is playing, not which deck plays it.
+                    if meta.deck != nil && meta.isMasterPlaying {
                         HStack(spacing: 6) {
                             Circle()
-                                .fill(meta.isMasterPlaying ? DJTheme.master : DJTheme.textMuted)
+                                .fill(DJTheme.master)
                                 .frame(width: 8, height: 8)
-                            Text("ON AIR — DECK \(deck.rawValue.uppercased())")
+                            Text("NOW PLAYING")
                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(meta.isMasterPlaying ? DJTheme.master : DJTheme.textMuted)
+                                .foregroundColor(DJTheme.master)
                                 .tracking(2)
                         }
                         .padding(.horizontal, 14)
@@ -58,7 +58,7 @@ public struct ProjectorNowPlayingView: View {
                         .cornerRadius(12)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
-                                .stroke(meta.isMasterPlaying ? DJTheme.master.opacity(0.4) : DJTheme.border, lineWidth: 1)
+                                .stroke(DJTheme.master.opacity(0.4), lineWidth: 1)
                         )
                     }
 
@@ -78,38 +78,6 @@ public struct ProjectorNowPlayingView: View {
                             .tracking(2)
                             .multilineTextAlignment(.center)
                     }
-
-                    // Metadata Pill Badges (BPM / Key)
-                    HStack(spacing: 12) {
-                        if let bpm = meta.bpm {
-                            HStack(spacing: 4) {
-                                Text("BPM")
-                                    .foregroundColor(DJTheme.textMuted)
-                                Text(String(format: "%.1f", bpm))
-                                    .foregroundColor(DJTheme.textPrimary)
-                            }
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(DJTheme.cardBackground)
-                            .cornerRadius(6)
-                        }
-
-                        if let key = meta.musicalKey {
-                            HStack(spacing: 4) {
-                                Text("KEY")
-                                    .foregroundColor(DJTheme.textMuted)
-                                Text(key)
-                                    .foregroundColor(DJTheme.textPrimary)
-                            }
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(DJTheme.cardBackground)
-                            .cornerRadius(6)
-                        }
-                    }
-                    .padding(.top, 6)
                 }
                 .padding(.horizontal, 48)
                 .animation(.easeInOut(duration: 0.5), value: meta)

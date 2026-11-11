@@ -52,6 +52,11 @@ final class UISnapshotProbe: XCTestCase {
         defer { UserDefaults.standard.set(wasExpanded, forKey: expandKey) }
         let projector = ProjectorViewModel()
         defer { projector.teardown() }
+        if ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_PLAYING"] != nil {
+            app.toggleDeckPlay(deck: .deckA)
+            print("SNAPSHOT deckA playing=\(app.isDeckAPlaying)")
+        }
+        defer { if app.isDeckAPlaying { app.toggleDeckPlay(deck: .deckA) } }
         if ProcessInfo.processInfo.environment["PULSEDECK_SNAPSHOT_PROJECTOR"] != nil {
             projector.updateNowPlaying(from: app)
             for mode in [ProjectorMode.nowPlaying, .fftVisualizer, .mediaSlideshow, .blackout] {

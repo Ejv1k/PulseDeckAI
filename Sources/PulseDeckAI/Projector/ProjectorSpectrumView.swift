@@ -30,25 +30,6 @@ public struct ProjectorSpectrumView: View {
             let maxBarHeight = height * 0.72
 
             VStack(spacing: 0) {
-                // Header indicator
-                HStack {
-                    Text("MASTER SPECTRUM")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundColor(DJTheme.master)
-                    Spacer()
-                    if viewModel.visualizerFrame.isSilent {
-                        Text("SILENT")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(DJTheme.textMuted)
-                    } else {
-                        Text(String(format: "RMS: %.2f  PEAK: %.2f", viewModel.visualizerFrame.rms, viewModel.visualizerFrame.peak))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(DJTheme.textSecondary)
-                    }
-                }
-                .padding(.horizontal, 32)
-                .padding(.top, 24)
-
                 Spacer()
 
                 // Bars container
@@ -65,26 +46,10 @@ public struct ProjectorSpectrumView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, spacing)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Audio spectrum")
 
-                // Frequency band label baseline
-                HStack {
-                    Text("SUB")
-                    Spacer()
-                    Text("BASS")
-                    Spacer()
-                    Text("LOW-MID")
-                    Spacer()
-                    Text("HIGH-MID")
-                    Spacer()
-                    Text("TREBLE")
-                    Spacer()
-                    Text("AIR")
-                }
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(DJTheme.textMuted)
-                .padding(.horizontal, 40)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
+                Spacer().frame(height: 48)
             }
         }
     }

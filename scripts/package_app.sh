@@ -57,4 +57,13 @@ EOF
 codesign --force --deep --sign - "${BUNDLE_PATH}"
 codesign --verify --deep --strict "${BUNDLE_PATH}"
 
+# Disk image: the app plus an Applications shortcut, so installing is one drag.
+DMG_PATH="dist/PulseDeckAI-${VERSION//\//-}.dmg"
+STAGING="$(mktemp -d)"
+trap 'rm -rf "${STAGING}"' EXIT
+cp -R "${BUNDLE_PATH}" "${STAGING}/"
+ln -s /Applications "${STAGING}/Applications"
+hdiutil create -volname "PulseDeck AI" -srcfolder "${STAGING}" -ov -format UDZO "${DMG_PATH}" >/dev/null
+
 echo "${BUNDLE_PATH}"
+echo "${DMG_PATH}"

@@ -55,7 +55,14 @@ public struct DeckStudioView: View {
         }
         .background(MasterSafetyLockKeyboardBridge(router: safetyKeyboard))
         .focusable()
+        .focusEffectDisabled() // The ring is redrawn on every frame while playing and cost about half of the render time.
         .focused($isStudioFocused)
+        .overlay { // Static focus cue; it changes only when focus moves, unlike the system ring.
+            RoundedRectangle(cornerRadius: DJTheme.cardRadius)
+                .stroke(DJTheme.textAccent.opacity(0.6), lineWidth: 1)
+                .opacity(isStudioFocused ? 1 : 0)
+                .allowsHitTesting(false)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .pulseDeckFocusStudio)) { _ in isStudioFocused = true }
         .onKeyPress(phases: [.down, .repeat]) { press in
             if isStudioFocused, case .handled = safetyKeyboard.handleStudioKeyPress(press) {

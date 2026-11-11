@@ -706,6 +706,7 @@ public struct LibraryBrowserView: View {
                 .stroke(isAuditionFocused ? DJTheme.cue.opacity(0.8) : DJTheme.border.opacity(0.7), lineWidth: 1)
         )
         .focusable()
+        .focusEffectDisabled() // The ring is redrawn on every frame while playing and cost about half of the render time.
         .focused($isAuditionFocused)
         .onKeyPress(phases: .down) { press in
             handleAuditionKeyPress(press)
@@ -855,6 +856,7 @@ struct NonBlockingRowButtonStyle: PrimitiveButtonStyle {
                     configuration.trigger()
                 }
                 .focusable()
+                .focusEffectDisabled() // The ring is redrawn on every frame while playing and cost about half of the render time.
                 .focused($isFocused)
                 .overlay(
                     RoundedRectangle(cornerRadius: 3)

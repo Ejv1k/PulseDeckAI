@@ -1,8 +1,18 @@
 import SwiftUI
+import AppKit
 import PulseDeckCore
+
+/// A bare executable starts as a background process; macOS then lets other apps cover its window.
+final class PulseDeckAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+}
 
 @main
 public struct PulseDeckApp: App {
+    @NSApplicationDelegateAdaptor(PulseDeckAppDelegate.self) private var delegate
     @StateObject private var appState = AppState()
     @StateObject private var projectorViewModel = ProjectorViewModel()
 
@@ -20,11 +30,12 @@ public struct PulseDeckApp: App {
     }
 
     public var body: some Scene {
-        WindowGroup {
+        WindowGroup("PulseDeck AI") {
             ContentView()
                 .environmentObject(appState)
                 .environmentObject(projectorViewModel)
                 .frame(minWidth: 1024, idealWidth: 1200, minHeight: 680, idealHeight: 760)
+                .preferredColorScheme(.dark) // Until Light appearance lands, keep the title bar matching the content.
                 .onAppear {
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }
@@ -38,7 +49,6 @@ public struct PulseDeckApp: App {
                     ProjectorBannerEditorView(viewModel: projectorViewModel, appState: appState)
                 }
         }
-        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Open Library…") {

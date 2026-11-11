@@ -154,6 +154,14 @@ public final class AppState: ObservableObject {
     @Published public private(set) var deckBEQ = EQ3BandParameters()
     @Published public private(set) var isAutoPilotArmed: Bool = false
     @Published public private(set) var transitionErrorMessage: String?
+    /// Tracks lined up to play next, as library-relative paths. A track leaves the list once it loads into a deck.
+    /// shortcut: in memory only, lost on quit; persist it when one set spans app restarts.
+    @Published public private(set) var upNext: [String] = []
+    /// Deck a running transition fades out; after completion it is free for the next queued track.
+    private var transitionOutgoingDeck: DeckIdentifier?
+    private var upNextLoadTask: Task<Void, Never>?
+    /// Service generation whose completion already fed the queue; `.completed` is reported until the next start.
+    private var queueHandledGeneration: UInt64?
 
     // Manual Master transport protection; internal engine cleanup never passes through this policy.
     @Published public private(set) var isMasterSafetyLockEnabled = true
@@ -915,6 +923,7 @@ public final class AppState: ObservableObject {
         if deck == .deckA { deckATrack = entry } else { deckBTrack = entry }
         // Success needs no banner: the deck shows the title. Only failures and pending work speak up.
         deckLoadMessages[deck] = nil
+        upNext.removeAll { $0 == relativePath }
         statusMessage = "\(deck.rawValue): loaded \(relativePath)"
         // The deck no longer prints a success banner, so VoiceOver gets the confirmation explicitly.
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
@@ -1568,7 +1577,22 @@ public final class AppState: ObservableObject {
     }
 
     private func applyTransitionSnapshot(_ snapshot: TransitionExecutionSnapshot) {
+        // The service keeps reporting `.completed` until the next transition; act once per generation.
+        let completedJustNow = snapshot.state == .completed && snapshot.generation != queueHandledGeneration
+        if completedJustNow { queueHandledGeneration = snapshot.generation }
         activeTransitionState = snapshot.state
+        switch snapshot.state {
+        case .armed, .inProgress:
+            if let outgoing = snapshot.outgoingDeck { transitionOutgoingDeck = outgoing }
+        case .completed:
+            // The outgoing deck was stopped by the transition; line up the next track on it.
+            if completedJustNow, let deck = transitionOutgoingDeck ?? snapshot.outgoingDeck, !upNext.isEmpty {
+                loadUpNext(into: deck)
+            }
+            transitionOutgoingDeck = nil
+        case .cancelled, .idle:
+            transitionOutgoingDeck = nil
+        }
         transitionProgress = min(max(snapshot.progress.isFinite ? snapshot.progress : 0.0, 0.0), 1.0)
         isAutoPilotArmed = snapshot.isAutoPilotArmed
         if let notice = snapshot.autoPilotNotice, !snapshot.isAutoPilotArmed {
@@ -1588,6 +1612,61 @@ public final class AppState: ObservableObject {
     private func stopTransitionObservation() {
         transitionObservationTask?.cancel()
         transitionObservationTask = nil
+    }
+
+    // MARK: - Up Next
+
+    /// The command that observed completion still holds the automation token, so wait for it to finish.
+    private func loadUpNext(into deck: DeckIdentifier) {
+        let finishedTrack = (deck == .deckA ? deckATrack : deckBTrack)?.relativePath
+        upNextLoadTask?.cancel()
+        upNextLoadTask = Task { @MainActor [weak self] in
+            for _ in 0..<250 {
+                guard let self, !Task.isCancelled else { return }
+                if self.pendingSafetyLockAutomationCommands == 0 { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            guard let self, !Task.isCancelled, self.pendingSafetyLockAutomationCommands == 0,
+                  !self.isTransitionBusy, let next = self.upNext.first else { return }
+            // A track the DJ loaded meanwhile wins over the queue.
+            guard (deck == .deckA ? self.deckATrack : self.deckBTrack)?.relativePath == finishedTrack else { return }
+            // Automatic loads never replace a deck that plays or is audible, whatever the Safety Lock says.
+            let graph = deck == .deckA ? self.audioCoordinator?.deckAGraph : self.audioCoordinator?.deckBGraph
+            guard graph?.isMasterPlaying == false, !self.isMasterDeckOnAir(deck) else { return }
+            guard self.startTrackLoad(relativePath: next, deck: deck) else { return }
+            await self.waitForPendingDeckLoad(deck: deck)
+            // A track that failed to load must not block the queue behind it; the deck shows why.
+            // A load the DJ superseded meanwhile succeeds and clears the message, so it is not a failure.
+            if self.deckLoadRequestIDs[deck] == nil, self.deckLoadMessage(for: deck) != nil,
+               (deck == .deckA ? self.deckATrack : self.deckBTrack)?.relativePath != next, self.upNext.first == next {
+                self.upNext.removeFirst()
+                self.statusMessage = "Up Next skipped \(LibraryTrackTitle.display((next as NSString).lastPathComponent)): it could not be loaded."
+            }
+        }
+    }
+
+    public func addToUpNext(_ relativePath: String) {
+        guard !upNext.contains(relativePath) else { return }
+        upNext.append(relativePath)
+    }
+
+    /// A guest request jumps the line: it becomes the next track to load.
+    public func playNext(_ relativePath: String) {
+        upNext.removeAll { $0 == relativePath }
+        upNext.insert(relativePath, at: 0)
+    }
+
+    public func removeFromUpNext(_ relativePath: String) {
+        upNext.removeAll { $0 == relativePath }
+    }
+
+    /// Same contract as SwiftUI's `onMove`: `destination` indexes the list before removal.
+    public func moveUpNext(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let moving = source.filter { upNext.indices.contains($0) }.map { upNext[$0] }
+        var rest = upNext.enumerated().filter { !source.contains($0.offset) }.map(\.element)
+        let insertAt = destination - source.filter { $0 < destination }.count
+        rest.insert(contentsOf: moving, at: min(max(insertAt, 0), rest.count))
+        upNext = rest
     }
 
     // MARK: - Library Audition & Headphone Cue Preview
@@ -1850,6 +1929,8 @@ public final class AppState: ObservableObject {
         libraryLocationError = nil
         self.libraryRootURL = newURL
         self.waveformEditorModel.updateLibraryRoot(newURL)
+        upNextLoadTask?.cancel()
+        upNext = []
         refreshLibrary()
     }
 }

@@ -1043,7 +1043,7 @@ final class LibraryCuePreviewTests: XCTestCase {
             musicalKey: "8A",
             confidence: 0.9,
             waveformMetadata: WaveformMetadata(sampleCount: 1, downsampleFactor: 1, peakValues: [0], lowBandPeaks: [0], midBandPeaks: [0], highBandPeaks: [0]),
-            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1.0, beatTimestamps: [0.0, 1.0]),
+            beatGrid: BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.75, beatTimestamps: [0.0, 0.75]),
             structure: TrackStructure(sections: [], vocalSegments: []),
             cueMarkers: CueMarkers(startTrimCue: 0, vocalEntryCue: 1, mixOutCue: 8, endTrimCue: 10),
             aiTrimBypass: false,

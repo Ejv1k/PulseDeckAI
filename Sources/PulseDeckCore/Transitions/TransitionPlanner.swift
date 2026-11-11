@@ -15,6 +15,12 @@ public struct TransitionPlanner: Sendable {
         [tempo, tempo * 2, tempo / 2].min { abs($0 - reference) < abs($1 - reference) } ?? tempo
     }
 
+    /// True when the BPM label agrees with the grid interval within 1 %, at ×½, ×1 or ×2.
+    static func bpm(_ bpm: Double, matchesInterval interval: Double) -> Bool {
+        let gridBPM = 60 / interval
+        return [bpm, bpm * 2, bpm / 2].contains { abs($0 - gridBPM) <= gridBPM * 0.01 }
+    }
+
     /// Discrete keyframe resolution for continuous curve transitions (e.g. Filter Echo Wash).
     public static let defaultWashKeyframes: Int = 16
 
@@ -167,7 +173,7 @@ public struct TransitionPlanner: Sendable {
         }
     }
 
-    /// Validates the complete regular grid, including its phase, interval, tempo and bounds.
+    /// Validates a measured grid: ordered in-bounds beats whose phase, median spacing and BPM match the stored interval.
     /// Positive schema sentinels never establish a usable tempo without genuine timestamps.
     public func isUsableBeatGrid(descriptor: TrackTransitionDescriptor) -> Bool {
         let grid = descriptor.beatGrid
@@ -177,16 +183,19 @@ public struct TransitionPlanner: Sendable {
               grid.firstBeatOffsetSeconds.isFinite, grid.firstBeatOffsetSeconds >= 0,
               grid.beatIntervalSeconds.isFinite, grid.beatIntervalSeconds > 0,
               grid.beatTimestamps.count >= 2 else { return false }
-        let tolerance = max(1e-7, grid.beatIntervalSeconds * 1e-6)
-        guard abs(grid.beatIntervalSeconds - 60 / descriptor.bpm) <= tolerance else { return false }
+        // The planner reads real beat/bar positions, so measured grids may drift (live bands, rubato);
+        // only the stored interval must describe them. ×½/×2 covers a hand-corrected BPM label.
+        guard Self.bpm(descriptor.bpm, matchesInterval: grid.beatIntervalSeconds),
+              abs(grid.beatTimestamps[0] - grid.firstBeatOffsetSeconds) <= 0.02 else { return false }
         var previous = -Double.infinity
-        for (index, timestamp) in grid.beatTimestamps.enumerated() {
-            let expected = grid.firstBeatOffsetSeconds + Double(index) * grid.beatIntervalSeconds
-            guard timestamp.isFinite, timestamp >= 0, timestamp <= descriptor.duration,
-                  timestamp > previous, expected.isFinite, abs(timestamp - expected) <= tolerance else { return false }
+        var gaps: [Double] = []
+        for timestamp in grid.beatTimestamps {
+            guard timestamp.isFinite, timestamp >= 0, timestamp <= descriptor.duration, timestamp > previous else { return false }
+            if previous.isFinite { gaps.append(timestamp - previous) }
             previous = timestamp
         }
-        return true
+        let medianGap = gaps.sorted()[gaps.count / 2]
+        return abs(medianGap - grid.beatIntervalSeconds) <= grid.beatIntervalSeconds * 0.1
     }
 
     /// Finds the first existing downbeat (beat 0 of a 4-beat bar) on or after the requested position.

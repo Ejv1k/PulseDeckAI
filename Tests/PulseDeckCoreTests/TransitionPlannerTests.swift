@@ -705,6 +705,8 @@ final class TransitionPlannerTests: XCTestCase {
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 1]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0.1, 0.6]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.75, beatTimestamps: [0, 0.75]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 1.5, beatTimestamps: [0, 1.5]),
+            BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 0.5, 1.1, 1.7]),
             BeatGrid(firstBeatOffsetSeconds: 0, beatIntervalSeconds: 0.5, beatTimestamps: [0, 241])
         ]
         for grid in malformed {

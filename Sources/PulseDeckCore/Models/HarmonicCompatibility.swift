@@ -255,25 +255,8 @@ public struct TrackCompatibility: Sendable, Equatable {
     /// Verifies authentic measured beat grid exists (rejecting 1.0s unknown-tempo sentinels, empty grids, or invalid values).
     /// Accepts realistic audio analysis transient jitter while preserving monotonicity and bounds.
     public static func isAuthenticMeasuredGrid(track: TrackCacheEntry) -> Bool {
-        let grid = track.beatGrid
-        guard track.duration.isFinite, track.duration > 0,
-              track.bpm.isFinite, track.bpm > 0,
-              track.confidence.isFinite, (0...1).contains(track.confidence), track.confidence > 0,
-              grid.firstBeatOffsetSeconds.isFinite, grid.firstBeatOffsetSeconds >= 0, grid.firstBeatOffsetSeconds <= track.duration,
-              grid.beatIntervalSeconds.isFinite, grid.beatIntervalSeconds > 0,
-              grid.beatTimestamps.count >= 2 else {
-            return false
-        }
-        guard TransitionPlanner.bpm(track.bpm, matchesInterval: grid.beatIntervalSeconds) else { return false }
-        var previous = -Double.infinity
-        for timestamp in grid.beatTimestamps {
-            guard timestamp.isFinite, timestamp >= 0, timestamp <= track.duration,
-                  timestamp > previous else {
-                return false
-            }
-            previous = timestamp
-        }
-        return true
+        // Same rule the planner uses, so the library never promises a mix the planner refuses.
+        TransitionPlanner().isUsableBeatGrid(descriptor: TrackTransitionDescriptor(deck: .deckA, cacheEntry: track))
     }
 }
 

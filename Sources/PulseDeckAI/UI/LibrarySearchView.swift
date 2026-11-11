@@ -41,13 +41,7 @@ struct LibrarySearchField: View {
             RoundedRectangle(cornerRadius: DJTheme.controlRadius)
                 .stroke(isFocused ? DJTheme.deckA.opacity(0.7) : DJTheme.border.opacity(0.6), lineWidth: 1)
         )
-        .background {
-            // Invisible menu-less shortcut target for ⌘F.
-            Button("") { isFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-                .accessibilityHidden(true)
-        }
+        .onReceive(NotificationCenter.default.publisher(for: .pulseDeckFocusSearch)) { _ in isFocused = true }
         .help("Search every crate (⌘F). Esc clears.")
     }
 }
@@ -96,6 +90,7 @@ struct LibrarySearchResultsView: View {
 
 extension Notification.Name {
     static let pulseDeckFocusStudio = Notification.Name("PulseDeckFocusStudio")
+    static let pulseDeckFocusSearch = Notification.Name("PulseDeckFocusSearch")
 }
 
 private struct LibrarySearchRow: View {

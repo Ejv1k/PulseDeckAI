@@ -6,7 +6,11 @@ import PulseDeckCore
 final class PulseDeckAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        // Plain activate() does not take focus from the launching terminal; wait until the window exists.
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true) // deprecated, but the cooperative activate() cannot take focus from a terminal
+            NSApp.windows.first { $0.canBecomeMain && $0.isVisible }?.makeKeyAndOrderFront(nil)
+        }
     }
 }
 

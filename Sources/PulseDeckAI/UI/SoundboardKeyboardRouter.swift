@@ -15,6 +15,8 @@ public enum SoundboardKeyboardRouter {
 
     /// Processes a SwiftUI `KeyPress` event for Soundboard and Talkover hotkeys.
     public static func handleKeyPress(_ press: KeyPress, appState: AppState) -> KeyPress.Result {
+        // Typing a "t" into search must never duck the live mix.
+        guard !ProjectorKeyboardRouter.isEditingText() else { return .ignored }
         // 1. Master Talkover toggle: Hotkey 'T' / 't'
         if press.characters.lowercased() == "t" {
             if press.phase == .repeat || (NSApplication.shared.currentEvent?.isARepeat == true) {

@@ -56,6 +56,7 @@ public struct DeckStudioView: View {
         .background(MasterSafetyLockKeyboardBridge(router: safetyKeyboard))
         .focusable()
         .focused($isStudioFocused)
+        .onReceive(NotificationCenter.default.publisher(for: .pulseDeckFocusStudio)) { _ in isStudioFocused = true }
         .onKeyPress(phases: [.down, .repeat]) { press in
             if isStudioFocused, case .handled = safetyKeyboard.handleStudioKeyPress(press) {
                 return .handled

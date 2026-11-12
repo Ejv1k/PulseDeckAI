@@ -214,7 +214,7 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let cues = Self.phraseAlignedCues(
             downbeats: downbeats,
             fallback: estimateCues(duration: duration, active: activeRange),
-            singing: SingingDetector.confidence(url: fileURL),
+            singing: downbeats.count >= Self.barsPerPhrase * 2 ? try await SingingDetector.confidence(url: fileURL) : [],
             singingRate: 1 / SingingDetector.windowSeconds
         )
         let cueMarkers = CueMarkers(
@@ -308,9 +308,6 @@ extension NativeRhythmTrackAnalyzer {
     /// Bars left after `mixOut` for the transition itself.
     static let transitionBars = 16
 
-    /// Snaps cues onto an 8-bar phrase grid counted from the first downbeat at or after the audible start.
-    /// There is no vocal detection: `vocal` is the phrase boundary closest to the proportional estimate.
-    /// Returns `fallback` unchanged when fewer than two phrases of downbeats are available.
     /// Mix-out phrase start: the latest candidate, unless it falls on clear singing and an earlier one (at
     /// most 2 phrases back) has at least 30 % less singing in the phrase that follows, so the blend starts outside singing
     /// without cutting much of the track. Nil without energy data or with fewer than 2 candidates.
@@ -322,12 +319,16 @@ extension NativeRhythmTrackAnalyzer {
             let mean = singing[lower..<upper].reduce(0) { $0 + Double($1) } / Double(upper - lower)
             return mean.isFinite ? (start, mean) : nil
         }
-        guard let latest = scored.max(by: { $0.0 < $1.0 }),
-              let quietest = scored.min(by: { $0.1 < $1.1 }) else { return nil }
+        // A candidate without scores (short or failed analysis) must not let an earlier phrase win.
+        guard scored.count == candidates.count, let latest = scored.max(by: { $0.0 < $1.0 }),
+              let quietest = scored.min(by: { $0.1 != $1.1 ? $0.1 < $1.1 : $0.0 > $1.0 }) else { return nil }
         // Below 0.3 the classifier is guessing (instrumentals score 0.1-0.2), so keep the latest phrase.
         return latest.1 >= 0.3 && quietest.1 <= latest.1 * 0.7 ? quietest.0 : latest.0
     }
 
+    /// Snaps cues onto an 8-bar phrase grid counted from the first downbeat at or after the audible start.
+    /// `vocal` is the phrase boundary closest to the proportional estimate; `mixOut` steps off clear singing
+    /// when `singing` scores are given. Returns `fallback` unchanged when fewer than two phrases of downbeats are available.
     public static func phraseAlignedCues(downbeats: [Double], fallback: Cues, singing: [Float] = [], singingRate: Double = 1) -> Cues {
         let bars = downbeats.sorted().filter { $0 >= fallback.start - 0.05 && $0 <= fallback.end }
         guard bars.count >= barsPerPhrase * 2 else { return fallback }

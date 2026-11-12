@@ -226,4 +226,13 @@ final class NativeRhythmTrackAnalyzerTests: XCTestCase {
         let dspAnalyzed = appState.loadedCache?.tracks["01_House/clicks120.wav"]
         XCTAssertEqual(dspAnalyzed?.analyzerVersion, LocalTrackAnalyzer.analyzerVersion)
     }
+
+    func testSingingDetectorScoresEveryThreeSecondWindow() async throws {
+        // Guards the 3 s window: an unsupported duration would silently return no scores.
+        let url = tempDir.appendingPathComponent("clicks.wav")
+        try createSyntheticClickWAV(url: url, durationSeconds: 12)
+        let scores = try await SingingDetector.confidence(url: url)
+        XCTAssertGreaterThanOrEqual(scores.count, 3)
+        XCTAssertTrue(scores.allSatisfy { (0...1).contains($0) })
+    }
 }

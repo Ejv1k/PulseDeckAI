@@ -13,6 +13,9 @@ struct EQFader: View {
 
     static let minDB: Float = -24, maxDB: Float = 6
     private static let trackHeight: CGFloat = 38
+    /// Drag distance for the whole -24...+6 dB range, larger than the drawn track so a quick trackpad
+    /// flick cannot slam a band to +6 dB: the boost half needs 80 pt, the cut side moves 0.3 dB per point.
+    static let dragTravel: CGFloat = 160
 
     @GestureState private var dragStart: Double? // Resets itself even when a drag is cancelled.
 
@@ -24,6 +27,13 @@ struct EQFader: View {
     static func gain(for position: Double) -> Float {
         let p = min(max(position, 0), 1)
         return p <= 0.5 ? minDB * Float(1 - 2 * p) : maxDB * Float(2 * p - 1)
+    }
+
+    /// Gain after dragging `translation` points (down is positive) from travel `start`.
+    static func gain(dragging translation: CGFloat, from start: Double) -> Float {
+        let next = start - Double(translation / dragTravel)
+        // Detent at 0 dB (in travel, not dB: the two halves have different dB per point).
+        return abs(next - 0.5) < 0.03 ? 0 : gain(for: next)
     }
 
     private var position: Double { Self.position(for: gainDB) }
@@ -48,6 +58,7 @@ struct EQFader: View {
                 .frame(width: 48, height: Self.trackHeight + 14)
                 .allowsHitTesting(isEnabled)
                 .contentShape(Rectangle())
+                .padding(.bottom, 4) // A killed band's thumb must not touch the Play row.
                 .gesture(drag)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { if isEnabled { onChange(0) } })
         }
@@ -90,10 +101,7 @@ struct EQFader: View {
             }
             .onChanged { value in
                 guard isEnabled else { return }
-                let start = dragStart ?? position
-                let next = start - Double(value.translation.height / Self.trackHeight)
-                // Detent at 0 dB (in travel, not dB: the two halves have different dB per point).
-                onChange(abs(next - 0.5) < 0.03 ? 0 : Self.gain(for: next))
+                onChange(Self.gain(dragging: value.translation.height, from: dragStart ?? position))
             }
     }
 }

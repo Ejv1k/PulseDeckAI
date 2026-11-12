@@ -27,4 +27,15 @@ final class DeckEQTests: XCTestCase {
         XCTAssertEqual(audio.deckBGraph.cueEQNode.bands[0].gain, -24, "Headphones hear what the crowd hears")
         XCTAssertEqual(app.deckAEQ, EQ3BandParameters(), "The other channel is untouched")
     }
+
+    func testFaderDragIsGentleOnATrackpad() {
+        // A quick 19 pt flick up from 0 dB (the whole old boost half) now adds little.
+        XCTAssertLessThanOrEqual(EQFader.gain(dragging: -19, from: 0.5), 1.5)
+        // Full +6 dB needs at least 80 pt of travel; the kill needs 80 pt down.
+        XCTAssertLessThan(EQFader.gain(dragging: -70, from: 0.5), EQFader.maxDB)
+        XCTAssertEqual(EQFader.gain(dragging: -80, from: 0.5), EQFader.maxDB)
+        XCTAssertEqual(EQFader.gain(dragging: 80, from: 0.5), EQFader.minDB)
+        // Small jitter around 0 dB stays on the detent.
+        XCTAssertEqual(EQFader.gain(dragging: 4, from: 0.5), 0)
+    }
 }

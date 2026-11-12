@@ -146,7 +146,7 @@ public final class AppState: ObservableObject {
     @Published public private(set) var isDeckBCueActive: Bool = false
     @Published public var crossfaderPosition: Float = 0.5
     @Published public var transitionMacroStyle: TransitionMacroStyle = .beatSyncedBassSwap
-    @Published public var transitionPhraseBars: Int = 16
+    @Published public var transitionPhraseBars: Int = 8
     @Published public private(set) var transitionProgress: Double = 0.0
     @Published public private(set) var activeTransitionState: TransitionExecutionState = .idle
     /// Channel EQ per deck as the DJ set it (or as automation left it after a transition).

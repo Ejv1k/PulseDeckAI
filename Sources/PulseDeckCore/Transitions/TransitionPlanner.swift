@@ -349,9 +349,14 @@ public struct TransitionPlanner: Sendable {
             throw TransitionPlanningError.nonFiniteParameter("Calculated rate out of legal bounds: \(rate)")
         }
 
-        // Midpoint downbeat calculation: half of phrase bars (e.g. bar 8 downbeat for a 16-bar transition)
-        let midpointBars = max(1, bars / 2)
-        let bassSwapOffsetSeconds = barOffsets[midpointBars]
+        // The swap sits 2 bars before the end so the outgoing track owns the mix until a clear, single
+        // switch on a downbeat, then leaves fast (a slow mutual fade blurs both tops into a flam).
+        let swapBar = bars - 2 // validateRequest allows 8, 16 or 32 bars
+        let bassSwapOffsetSeconds = barOffsets[swapBar]
+        // Four gain steps per bar (on the beat in 4/4): the engine applies them as steps, so per-bar steps would zipper.
+        func beatOffset(bar: Int, beat: Int) -> Double {
+            barOffsets[bar] + (barOffsets[bar + 1] - barOffsets[bar]) * Double(beat) / 4
+        }
 
         var events: [ScheduledTransitionEvent] = []
 
@@ -368,7 +373,7 @@ public struct TransitionPlanner: Sendable {
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: -12.0, highGainDB: -12.0)),
+            command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: -24.0, highGainDB: -24.0)),
             priority: .audioProcessing
         ))
         events.append(ScheduledTransitionEvent(
@@ -397,48 +402,45 @@ public struct TransitionPlanner: Sendable {
             priority: .audioProcessing
         ))
 
-        // MARK: Intermediate Bar-Quantized Progressions
-        for barIndex in 1..<bars {
-            let offset = barOffsets[barIndex]
-            let progress = Double(barIndex) / Double(bars)
-
-            // Continuous monotonic outgoing fader fade from 1.0 down towards 0.0
-            let outVol = Float(max(0.0, 1.0 - progress))
+        // MARK: Before the swap: incoming highs rise, outgoing highs make room, everything else holds.
+        let preSwapBeats = swapBar * 4
+        for step in 1..<max(1, preSwapBeats) {
+            let progress = Double(step) / Double(preSwapBeats)
+            let offset = beatOffset(bar: step / 4, beat: step % 4)
             events.append(ScheduledTransitionEvent(
                 timeOffsetSeconds: offset,
-                command: .setVolume(deck: outgoing.deck, volume: outVol),
+                command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: -24.0, highGainDB: Float(-24.0 * (1 - progress)))),
+                priority: .audioProcessing
+            ))
+            events.append(ScheduledTransitionEvent(
+                timeOffsetSeconds: offset,
+                command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: Float(-12.0 * progress))),
+                priority: .audioProcessing
+            ))
+        }
+
+        // MARK: Swap downbeat: lows and mids change hands at once.
+        events.append(ScheduledTransitionEvent(
+            timeOffsetSeconds: bassSwapOffsetSeconds,
+            command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
+            priority: .audioProcessing
+        ))
+        events.append(ScheduledTransitionEvent(
+            timeOffsetSeconds: bassSwapOffsetSeconds,
+            command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: -24.0, highGainDB: -24.0)),
+            priority: .audioProcessing
+        ))
+
+        // MARK: After the swap: the outgoing fader falls to silence by the end (cubed, so it drops early).
+        let postSwapBeats = (bars - swapBar) * 4
+        for step in 0..<postSwapBeats {
+            let remaining = 1 - Double(step) / Double(postSwapBeats)
+            let absolute = swapBar * 4 + step
+            events.append(ScheduledTransitionEvent(
+                timeOffsetSeconds: beatOffset(bar: absolute / 4, beat: absolute % 4),
+                command: .setVolume(deck: outgoing.deck, volume: Float(remaining * remaining * remaining)),
                 priority: .volumeFader
             ))
-
-            // Complementary mid and high frequency EQ crossfade
-            let outMidHigh = Float(-24.0 * progress)
-            let inMidHigh = Float(-12.0 * (1.0 - progress))
-
-            if barIndex < midpointBars {
-                // Pre-swap: outgoing low shelf remains unity (0 dB), incoming low shelf cut (-24 dB)
-                events.append(ScheduledTransitionEvent(
-                    timeOffsetSeconds: offset,
-                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: outMidHigh, highGainDB: outMidHigh)),
-                    priority: .audioProcessing
-                ))
-                events.append(ScheduledTransitionEvent(
-                    timeOffsetSeconds: offset,
-                    command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: inMidHigh, highGainDB: inMidHigh)),
-                    priority: .audioProcessing
-                ))
-            } else {
-                // At and post-midpoint downbeat: INSTANT BASS SWAP (outgoing low = -24 dB, incoming low = 0 dB)
-                events.append(ScheduledTransitionEvent(
-                    timeOffsetSeconds: offset,
-                    command: .setEQ(deck: outgoing.deck, eq: EQ3BandParameters(lowGainDB: -24.0, midGainDB: outMidHigh, highGainDB: outMidHigh)),
-                    priority: .audioProcessing
-                ))
-                events.append(ScheduledTransitionEvent(
-                    timeOffsetSeconds: offset,
-                    command: .setEQ(deck: incoming.deck, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: inMidHigh, highGainDB: inMidHigh)),
-                    priority: .audioProcessing
-                ))
-            }
         }
 
         // MARK: t = totalDuration Completion Events

@@ -3,7 +3,22 @@ import AppKit
 import PulseDeckCore
 
 /// A bare executable starts as a background process; macOS then lets other apps cover its window.
+@MainActor
 final class PulseDeckAppDelegate: NSObject, NSApplicationDelegate {
+    weak var appState: AppState?
+    let playbackActivity = PlaybackActivity()
+
+    /// Quitting mid-song means instant silence in the room, so ask first while a deck plays.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let state = appState, state.isDeckAPlaying || state.isDeckBPlaying else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Music is playing. Quit anyway?"
+        alert.informativeText = "The room goes silent as soon as PulseDeck AI quits."
+        alert.addButton(withTitle: "Keep Playing")
+        alert.addButton(withTitle: "Quit")
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         // Plain activate() does not take focus from the launching terminal; wait until the window exists.
@@ -54,7 +69,11 @@ public struct PulseDeckApp: App {
                     NSApp.appearance = new.colorScheme.map { NSAppearance(named: $0 == .dark ? .darkAqua : .aqua) } ?? nil // Alerts and panels follow it too.
                 }
                 .onAppear {
+                    delegate.appState = appState
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
+                }
+                .onChange(of: appState.isDeckAPlaying || appState.isDeckBPlaying, initial: true) { _, playing in
+                    delegate.playbackActivity.update(isPlaying: playing)
                 }
                 .onChange(of: appState.resolvedLibraryRootURL) { _, _ in
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)

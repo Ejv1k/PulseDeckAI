@@ -72,6 +72,16 @@ public struct DeckStudioView: View {
         }
     }
 
+    /// Large clock: "-2:31" left while playing, the full length when stopped.
+    private func deckClock(deck: DeckIdentifier, track: TrackCacheEntry, isPlaying: Bool) -> some View {
+        let remaining = isPlaying ? max(0, track.duration - (appState.deckPlayheadSeconds(deck) ?? 0)) : track.duration
+        return Text((isPlaying ? "-" : "") + formatDuration(remaining))
+            .font(.system(size: 22, weight: .semibold))
+            .monospacedDigit()
+            .foregroundColor(isPlaying && remaining < 30 ? DJTheme.statusWarning : DJTheme.textPrimary)
+            .accessibilityLabel(isPlaying ? "\(formatDuration(remaining)) left" : "Length \(formatDuration(remaining))")
+    }
+
     @ViewBuilder
     private func mixCountdown(deck: DeckIdentifier, track: TrackCacheEntry) -> some View {
         if let playhead = appState.deckPlayheadSeconds(deck),
@@ -123,69 +133,71 @@ public struct DeckStudioView: View {
                     .accessibilityIdentifier("deckLoadFeedback-\(deck.rawValue)")
             }
 
-            // Track metadata
-            VStack(alignment: .leading, spacing: 2) {
-                if let track {
-                    Text(LibraryTrackTitle.display((track.relativePath as NSString).lastPathComponent))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(DJTheme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            // Track info on the left, the EQ beside it: one row instead of two leaves the faders room to be tall.
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let track {
+                        Text(LibraryTrackTitle.display((track.relativePath as NSString).lastPathComponent))
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(DJTheme.textPrimary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                    HStack(spacing: 8) {
-                        Text(formatDuration(track.duration))
-                            .font(.system(size: 9.5, weight: .medium))
-                            .monospacedDigit()
-                            .foregroundColor(DJTheme.textSecondary)
-
-                        if track.bpm > 0 {
-                            Text(track.tempoLabel)
-                                .font(.system(size: 9.5, weight: .bold))
-                                .monospacedDigit()
-                                .foregroundColor(color)
-                        }
-
-                        if !track.musicalKey.isEmpty, track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
-                            Text(track.musicalKey)
-                                .font(.system(size: 9.5, weight: .semibold))
-                                .foregroundColor(DJTheme.cue)
-                        }
-
-                        if track.analyzerVersion == "unanalysed-playback" {
-                            Text("Not analyzed")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(DJTheme.textMuted)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .overlay(Capsule().stroke(DJTheme.border, lineWidth: 1))
-                                .help("Analyze this track for BPM, key, waveform and cues")
-                        }
-
-                        autoGainBadge(deck: deck)
-
-                        if isPlaying {
-                            // 4 Hz is plenty for a bar count; the playhead is read on demand, not published.
-                            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                                mixCountdown(deck: deck, track: track)
+                        HStack(spacing: 8) {
+                            if track.bpm > 0 {
+                                Text(track.tempoLabel)
+                                    .font(.system(size: 10.5, weight: .bold))
+                                    .monospacedDigit()
+                                    .foregroundColor(color)
                             }
+
+                            if !track.musicalKey.isEmpty, track.musicalKey.caseInsensitiveCompare("Unknown") != .orderedSame {
+                                Text(track.musicalKey)
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundColor(DJTheme.cue)
+                            }
+
+                            if track.analyzerVersion == "unanalysed-playback" {
+                                Text("Not analyzed")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(DJTheme.textMuted)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .overlay(Capsule().stroke(DJTheme.border, lineWidth: 1))
+                                    .help("Analyze this track for BPM, key, waveform and cues")
+                            }
+
+                            autoGainBadge(deck: deck)
                         }
+
+                        // Readable from a step away: time left while playing, length when stopped.
+                        if isPlaying {
+                            // 4 Hz is plenty for seconds and a bar count; the playhead is read on demand, not published.
+                            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    deckClock(deck: deck, track: track, isPlaying: true)
+                                    mixCountdown(deck: deck, track: track)
+                                }
+                            }
+                        } else {
+                            deckClock(deck: deck, track: track, isPlaying: false)
+                        }
+                    } else {
+                        Text("No Track Loaded")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DJTheme.textMuted)
+
+                        Text("Select a track and click Load, or drag it here")
+                            .font(.system(size: 10))
+                            .foregroundColor(DJTheme.textMuted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                } else {
-                    Text("No Track Loaded")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DJTheme.textMuted)
-
-                    Text("Select a track and click Load, or drag it here")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(DJTheme.textMuted)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                DeckEQStrip(appState: appState, deck: deck, color: color)
             }
-            .frame(height: 32, alignment: .leading)
-
-            Divider()
-                .background(DJTheme.border)
-
-            DeckEQStrip(appState: appState, deck: deck, color: color)
 
             // Transport Controls
             HStack(spacing: 8) {

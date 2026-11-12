@@ -12,7 +12,9 @@ struct EQFader: View {
     let onChange: (Float) -> Void
 
     static let minDB: Float = -24, maxDB: Float = 6
-    private static let trackHeight: CGFloat = 38
+    private static let trackHeight: CGFloat = 72
+    /// Thumb big enough to grab on a trackpad without looking.
+    private static let thumbSize = CGSize(width: 34, height: 20)
     /// Drag distance for the whole -24...+6 dB range, larger than the drawn track so a quick trackpad
     /// flick cannot slam a band to +6 dB: the boost half needs 80 pt, the cut side moves 0.3 dB per point.
     static let dragTravel: CGFloat = 160
@@ -48,14 +50,14 @@ struct EQFader: View {
         VStack(spacing: 2) {
             HStack(spacing: 4) {
                 Text(label)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DJTheme.textSecondary)
                 Text(valueText)
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundColor(isKilled ? DJTheme.statusError : DJTheme.textSecondary)
             }
             track
-                .frame(width: 48, height: Self.trackHeight + 14)
+                .frame(width: 56, height: Self.trackHeight + Self.thumbSize.height)
                 .allowsHitTesting(isEnabled)
                 .contentShape(Rectangle())
                 .padding(.bottom, 4) // A killed band's thumb must not touch the Play row.
@@ -81,15 +83,17 @@ struct EQFader: View {
     private var track: some View {
         let thumbY = (1 - position) * Self.trackHeight // 0 = top of the travel
         return ZStack(alignment: .top) {
-            Capsule().fill(DJTheme.border).frame(width: 4, height: Self.trackHeight).offset(y: 7)
-            Rectangle().fill(DJTheme.textMuted).frame(width: 14, height: 1)
-                .offset(y: 6.5 + Self.trackHeight / 2) // The 0 dB notch.
+            let inset = Self.thumbSize.height / 2
+            Capsule().fill(DJTheme.border).frame(width: 5, height: Self.trackHeight).offset(y: inset)
+            Rectangle().fill(DJTheme.textMuted).frame(width: 18, height: 1)
+                .offset(y: inset - 0.5 + Self.trackHeight / 2) // The 0 dB notch.
             Capsule().fill(isKilled ? DJTheme.statusError : color)
-                .frame(width: 4, height: abs(Self.trackHeight / 2 - thumbY))
-                .offset(y: 7 + min(thumbY, Self.trackHeight / 2))
-            RoundedRectangle(cornerRadius: 3).fill(DJTheme.textPrimary)
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(DJTheme.borderActive, lineWidth: 1))
-                .frame(width: 26, height: 14)
+                .frame(width: 5, height: abs(Self.trackHeight / 2 - thumbY))
+                .offset(y: inset + min(thumbY, Self.trackHeight / 2))
+            RoundedRectangle(cornerRadius: 4).fill(DJTheme.textPrimary)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DJTheme.borderActive, lineWidth: 1))
+                .overlay(Rectangle().fill(DJTheme.background.opacity(0.6)).frame(width: 18, height: 1.5)) // Grip line.
+                .frame(width: Self.thumbSize.width, height: Self.thumbSize.height)
                 .offset(y: thumbY)
         }
     }
@@ -115,7 +119,7 @@ struct DeckEQStrip: View {
     var body: some View {
         let eq = appState.deckEQ(deck)
         let enabled = !appState.isEQAutomated
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             EQFader(label: "HI", gainDB: eq.highGainDB, color: color, isEnabled: enabled) { value in
                 var next = appState.deckEQ(deck); next.highGainDB = value
                 appState.setDeckEQ(deck: deck, eq: next)
@@ -129,7 +133,6 @@ struct DeckEQStrip: View {
                 appState.setDeckEQ(deck: deck, eq: next)
             }
         }
-        .frame(maxWidth: .infinity)
         .overlay(alignment: .topTrailing) {
             if !enabled { Text("Auto").font(.system(size: 9, weight: .semibold)).foregroundColor(DJTheme.textSecondary) }
         }

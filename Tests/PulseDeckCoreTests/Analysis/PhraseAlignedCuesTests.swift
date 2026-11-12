@@ -61,4 +61,16 @@ extension PhraseAlignedCuesTests {
         // A downbeat at the very end would leave too few beats: keep the full grid.
         XCTAssertEqual(NativeRhythmTrackAnalyzer.downbeatAlignedBeats(beats: beats, downbeats: [3.0]), beats)
     }
+
+    func testMixOutMovesOffClearSingingOnlyWhenAnEarlierPhraseIsQuieter() {
+        // Phrases start at 0, 15 and 30 s; singing is reported per 3 s window.
+        let singingLate = [Float](repeating: 0.2, count: 10) + [Float](repeating: 0.7, count: 5)
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.quietestMixOut(candidates: [0, 15, 30], phraseLength: 15, singing: singingLate + [0.7, 0.7, 0.7, 0.7, 0.7], rate: 1.0 / 3), 0)
+        // Instrumental: low scores everywhere keep the latest phrase even when one is lower.
+        let instrumental: [Float] = [0.05, 0.05, 0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2]
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.quietestMixOut(candidates: [0, 15, 30], phraseLength: 15, singing: instrumental, rate: 1.0 / 3), 30)
+        // Singing everywhere: no earlier phrase is 30 % quieter, so the latest stays.
+        XCTAssertEqual(NativeRhythmTrackAnalyzer.quietestMixOut(candidates: [0, 15, 30], phraseLength: 15, singing: [Float](repeating: 0.6, count: 20), rate: 1.0 / 3), 30)
+        XCTAssertNil(NativeRhythmTrackAnalyzer.quietestMixOut(candidates: [0, 15, 30], phraseLength: 15, singing: [], rate: 1.0 / 3))
+    }
 }

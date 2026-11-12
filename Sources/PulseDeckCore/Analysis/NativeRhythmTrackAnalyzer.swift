@@ -8,7 +8,7 @@ import Foundation
 public struct NativeRhythmTrackAnalyzer: Sendable {
     /// Distinct version identifier explicitly documenting the model, checkpoint,
     /// fixed 1500-frame context padding adaptation, and FP32 precision.
-    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2"
+    public static let analyzerVersion = "model-beatthis-small0-fixed1500-fp32-phrase1-key1-grid2-sing1"
 
     private let waveformBinLimit = 4_096
     // The model path holds the whole track plus its spectrogram in memory; 30 min keeps peak use near 1 GB.
@@ -213,7 +213,9 @@ public struct NativeRhythmTrackAnalyzer: Sendable {
         let activeRange = activeBounds(envelope, featureRate: featureRate)
         let cues = Self.phraseAlignedCues(
             downbeats: downbeats,
-            fallback: estimateCues(duration: duration, active: activeRange)
+            fallback: estimateCues(duration: duration, active: activeRange),
+            singing: SingingDetector.confidence(url: fileURL),
+            singingRate: 1 / SingingDetector.windowSeconds
         )
         let cueMarkers = CueMarkers(
             startTrimCue: cues.start,
@@ -309,7 +311,24 @@ extension NativeRhythmTrackAnalyzer {
     /// Snaps cues onto an 8-bar phrase grid counted from the first downbeat at or after the audible start.
     /// There is no vocal detection: `vocal` is the phrase boundary closest to the proportional estimate.
     /// Returns `fallback` unchanged when fewer than two phrases of downbeats are available.
-    public static func phraseAlignedCues(downbeats: [Double], fallback: Cues) -> Cues {
+    /// Mix-out phrase start: the latest candidate, unless it falls on clear singing and an earlier one (at
+    /// most 2 phrases back) has at least 30 % less singing in the phrase that follows, so the blend starts outside singing
+    /// without cutting much of the track. Nil without energy data or with fewer than 2 candidates.
+    static func quietestMixOut(candidates: [Double], phraseLength: Double, singing: [Float], rate: Double) -> Double? {
+        guard candidates.count >= 2, !singing.isEmpty, rate > 0, phraseLength > 0 else { return nil }
+        let scored = candidates.compactMap { start -> (Double, Double)? in
+            let lower = max(0, Int(start * rate)), upper = min(singing.count, Int(((start + phraseLength) * rate).rounded(.up)))
+            guard upper > lower else { return nil }
+            let mean = singing[lower..<upper].reduce(0) { $0 + Double($1) } / Double(upper - lower)
+            return mean.isFinite ? (start, mean) : nil
+        }
+        guard let latest = scored.max(by: { $0.0 < $1.0 }),
+              let quietest = scored.min(by: { $0.1 < $1.1 }) else { return nil }
+        // Below 0.3 the classifier is guessing (instrumentals score 0.1-0.2), so keep the latest phrase.
+        return latest.1 >= 0.3 && quietest.1 <= latest.1 * 0.7 ? quietest.0 : latest.0
+    }
+
+    public static func phraseAlignedCues(downbeats: [Double], fallback: Cues, singing: [Float] = [], singingRate: Double = 1) -> Cues {
         let bars = downbeats.sorted().filter { $0 >= fallback.start - 0.05 && $0 <= fallback.end }
         guard bars.count >= barsPerPhrase * 2 else { return fallback }
 
@@ -325,7 +344,10 @@ extension NativeRhythmTrackAnalyzer {
         }
         let latestMixOut = end - Double(transitionBars) * barLength
         let roomy = boundaries.filter { $0 > start && $0 <= latestMixOut }
-        let mixOut = roomy.last ?? nearest(to: fallback.mixOut, in: boundaries.filter { $0 > start })
+        let lastRoomy = roomy.last ?? 0
+        let mixOut = quietestMixOut(candidates: roomy.filter { $0 >= lastRoomy - 16.5 * barLength }, phraseLength: Double(barsPerPhrase) * barLength,
+                                    singing: singing, rate: singingRate)
+            ?? roomy.last ?? nearest(to: fallback.mixOut, in: boundaries.filter { $0 > start })
         let vocalCandidates = boundaries.filter { $0 > start && $0 < mixOut }
         let vocal = vocalCandidates.isEmpty ? start : nearest(to: fallback.vocal, in: vocalCandidates)
 

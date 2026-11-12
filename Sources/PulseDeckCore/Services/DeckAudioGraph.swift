@@ -133,6 +133,14 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
         return _isMasterPlaying
     }
 
+    /// Playing and the scheduled audio has not run out: false once a track plays to its end, while
+    /// `isMasterPlaying` still reports the transport as started.
+    public var isMasterAudible: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isMasterPlaying && _masterSegmentQueued
+    }
+
     /// Monotonic master schedule generation counter for invalidating stale callbacks.
     public var scheduleGeneration: UInt64 {
         stateLock.lock()

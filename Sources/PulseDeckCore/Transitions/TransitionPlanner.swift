@@ -550,7 +550,10 @@ public struct TransitionPlanner: Sendable {
         style: TransitionStyle,
         isFallback: Bool
     ) throws -> TransitionPlan {
-        let keyframeCount = max(Self.defaultWashKeyframes, Int((durationSeconds * Self.washKeyframesPerSecond).rounded(.up)))
+        // A multiple of 4 puts a keyframe exactly at the quarter where the echo reaches its full send;
+        // capped so an absurd duration cannot build a huge plan.
+        let wanted = min(1_024, max(Double(Self.defaultWashKeyframes), (durationSeconds * Self.washKeyframesPerSecond).rounded(.up)))
+        let keyframeCount = (Int(wanted) + 3) / 4 * 4
         var events: [ScheduledTransitionEvent] = []
 
         events.append(ScheduledTransitionEvent(

@@ -825,5 +825,15 @@ final class TransitionPlannerTests: XCTestCase {
             return nil
         }
         XCTAssertLessThanOrEqual(zip(fades, fades.dropFirst()).map { $1 - $0 }.max() ?? 1, 0.13)
+
+        // A duration that does not split into quarters evenly still reaches the full send.
+        let odd = try TransitionPlanner().plan(TransitionRequest(
+            outgoingTrack: makeTrack(deck: .deckA), incomingTrack: makeTrack(deck: .deckB),
+            style: .filterEchoWash(durationSeconds: 6.1, echoSend: 0.6)))
+        let oddLast = odd.events.compactMap { event -> Float? in
+            if case .setEcho(.deckA, true, _, let mix) = event.command { return mix }
+            return nil
+        }.last
+        XCTAssertEqual(oddLast ?? 0, 0.6, accuracy: 1e-6)
     }
 }

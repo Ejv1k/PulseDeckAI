@@ -223,14 +223,15 @@ final class TransitionExecutionTests: XCTestCase {
         XCTAssertEqual(coordinator.deckBGraph.volume, 0.0)
         XCTAssertTrue(coordinator.deckBGraph.isMasterPlaying)
 
-        // Outgoing deck A must have echo engaged
-        XCTAssertFalse(coordinator.deckAGraph.masterEchoNode.bypass)
-        XCTAssertEqual(coordinator.deckAGraph.masterEchoNode.wetDryMix, 60.0, accuracy: 0.01)
-        XCTAssertEqual(coordinator.deckAGraph.masterEchoNode.feedback, 50.0, accuracy: 0.01)
+        // The echo starts dry (no jump in the dry level) and reaches the full send after a quarter (1.5 s).
+        XCTAssertTrue(coordinator.deckAGraph.masterEchoNode.bypass)
 
         // Advance halfway: equal-power S-curve volume and filter sweep
         let midCommands = try await service.advance(to: 8.0)
         XCTAssertFalse(midCommands.isEmpty)
+        XCTAssertFalse(coordinator.deckAGraph.masterEchoNode.bypass)
+        XCTAssertEqual(coordinator.deckAGraph.masterEchoNode.wetDryMix, 60.0, accuracy: 0.01)
+        XCTAssertEqual(coordinator.deckAGraph.masterEchoNode.feedback, 50.0, accuracy: 0.01)
         XCTAssertFalse(coordinator.deckAGraph.masterFilterNode.bypass)
         XCTAssertGreaterThan(coordinator.deckAGraph.masterFilterNode.bands[0].frequency, 20.0)
         XCTAssertGreaterThan(coordinator.deckBGraph.volume, 0.0)

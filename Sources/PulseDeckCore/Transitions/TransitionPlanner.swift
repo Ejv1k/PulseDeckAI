@@ -529,6 +529,27 @@ public struct TransitionPlanner: Sendable {
 
     /// Bar-line offsets from `start` taken from the grid, or nil when the grid lacks `bars` further bars
     /// or a bar is implausibly short or long (a missed or spurious downbeat).
+    /// When the track opens quietly (bass under 60 % of its typical level in the first 4 bars from `start`),
+    /// the first 8-bar phrase start (within 40 s and the first half) whose next 4 bars reach 80 % of that level: where the
+    /// beat is in. Nil when the opening already has bass, there is no bass data, or no phrase qualifies.
+    static func dropDownbeat(bars: [Double], lowBand: [Float], duration: Double, from start: Double, before end: Double) -> Double? {
+        guard lowBand.count >= 8, duration > 0, let first = bars.firstIndex(where: { $0 >= start - 1e-6 }),
+              first + 4 < bars.count else { return nil }
+        let binSeconds = duration / Double(lowBand.count)
+        func level(at index: Int) -> Double {
+            let lower = max(0, Int(bars[index] / binSeconds)), upper = min(lowBand.count, Int((bars[index + 4] / binSeconds).rounded(.up)))
+            return upper > lower ? lowBand[lower..<upper].reduce(0) { $0 + Double($1) } / Double(upper - lower) : 0
+        }
+        let typical = Double(lowBand.sorted()[lowBand.count / 2])
+        guard typical > 0, level(at: first) < 0.6 * typical else { return nil }
+        // A slow build (ballad, film score) is the song itself, not an intro to skip: look at most 40 s ahead.
+        let latest = min(end, duration / 2, bars[first] + 40)
+        for index in stride(from: first + 8, to: bars.count - 4, by: 8) where bars[index] <= latest {
+            if level(at: index) >= 0.8 * typical { return bars[index] }
+        }
+        return nil
+    }
+
     static func barOffsets(bars: Int, from start: Double, barTimestamps: [Double], beatInterval: Double) -> [Double]? {
         let tolerance = 1e-6
         guard let first = barTimestamps.firstIndex(where: { abs($0 - start) <= tolerance }),
@@ -763,7 +784,10 @@ public struct TransitionPlanner: Sendable {
                 }
                 throw TransitionPlanningError.missingBeatGrid(deck: incoming.deck, reason: "No downbeat fits the incoming trim interval")
             }
-            incomingSeekPos = downbeat
+            // "On Drop": land on the phrase where the bass comes in, not in a quiet intro.
+            incomingSeekPos = Self.dropDownbeat(bars: incoming.beatGrid.barTimestamps, lowBand: incoming.lowBandPeaks,
+                                                duration: incoming.duration, from: downbeat,
+                                                before: incoming.cueMarkers.endTrimCue) ?? downbeat
         } else {
             // A hard cut needs only the outgoing grid. Preserve the incoming trim cue for unknown tempo.
             incomingSeekPos = incoming.cueMarkers.startTrimCue

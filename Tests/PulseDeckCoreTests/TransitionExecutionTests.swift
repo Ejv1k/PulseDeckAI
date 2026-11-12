@@ -1188,6 +1188,28 @@ final class TransitionExecutionTests: XCTestCase {
         }
     }
 
+    func testTrackThatPlaysToItsEndIsNoLongerAudible() throws {
+        let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2))
+        try coordinator.masterAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.cueAudioEngine.rawEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try coordinator.start()
+        defer { coordinator.stop() }
+        let url = try createTestWavFile(durationSeconds: 2)
+        defer { try? FileManager.default.removeItem(at: url) }
+        nonisolated(unsafe) var finish: (() -> Void)?
+        coordinator.deckAGraph.segmentCompletionObserverForTesting = { role, completion in
+            if role == .master { finish = completion }
+        }
+        try coordinator.deckAGraph.loadTrack(url: url)
+        coordinator.deckAGraph.play()
+        XCTAssertTrue(coordinator.deckAGraph.isMasterAudible)
+        // The player calls this when the scheduled audio runs out.
+        try XCTUnwrap(finish)()
+        XCTAssertTrue(coordinator.deckAGraph.isMasterPlaying, "The transport still reports started")
+        XCTAssertFalse(coordinator.deckAGraph.isMasterAudible, "Nothing is sent to the room any more")
+    }
+
     func testAutoPilotArmedWhilePausedFiresAfterCoordinatorResume() async throws {
         let coordinator = AudioEngineCoordinator(hal: MockAudioHardware())
         let service = coordinator.transitionExecutionService

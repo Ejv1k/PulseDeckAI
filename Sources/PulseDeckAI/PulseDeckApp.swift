@@ -8,15 +8,42 @@ final class PulseDeckAppDelegate: NSObject, NSApplicationDelegate {
     weak var appState: AppState?
     let playbackActivity = PlaybackActivity()
 
-    /// Quitting mid-song means instant silence in the room, so ask first while a deck plays.
+    private var activityTimer: Timer?
+
+    /// Re-checked every few seconds rather than on play/pause only: a track that plays to its end stops
+    /// the music without a pause event, and the check keeps working with the window closed.
+    func startWatchingPlayback() {
+        guard activityTimer == nil else { return }
+        refreshPlaybackActivity()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPlaybackActivity() }
+        }
+    }
+
+    /// `startedPlaying` comes from the play/pause state, which is set before the engine catches up, so a
+    /// fresh start holds at once; the 5 s check releases the hold once nothing is audible any more.
+    func refreshPlaybackActivity(startedPlaying: Bool = false) {
+        playbackActivity.update(isPlaying: startedPlaying || appState?.isMusicAudible == true)
+    }
+
+    /// Quitting mid-song means instant silence in the room, so ask first while music plays. Logout,
+    /// restart and shutdown go through without a prompt so the Mac is never stuck behind a hidden alert.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let state = appState, state.isDeckAPlaying || state.isDeckBPlaying else { return .terminateNow }
+        guard let state = appState, state.isMusicAudible, !Self.isSystemShutdownQuit() else { return .terminateNow }
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Music is playing. Quit anyway?"
         alert.informativeText = "The room goes silent as soon as PulseDeck AI quits."
         alert.addButton(withTitle: "Keep Playing")
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+
+    private static func isSystemShutdownQuit() -> Bool {
+        guard let reason = NSAppleEventManager.shared().currentAppleEvent?
+            .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAERestart, kAEShowShutdownDialog, kAEShutDown]
+            .map { OSType($0) }.contains(reason)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -70,10 +97,11 @@ public struct PulseDeckApp: App {
                 }
                 .onAppear {
                     delegate.appState = appState
+                    delegate.startWatchingPlayback()
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }
-                .onChange(of: appState.isDeckAPlaying || appState.isDeckBPlaying, initial: true) { _, playing in
-                    delegate.playbackActivity.update(isPlaying: playing)
+                .onChange(of: appState.isDeckAPlaying || appState.isDeckBPlaying) { _, playing in
+                    delegate.refreshPlaybackActivity(startedPlaying: playing) // Hold at once, not up to 5 s later.
                 }
                 .onChange(of: appState.resolvedLibraryRootURL) { _, _ in
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)

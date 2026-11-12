@@ -41,13 +41,17 @@ public struct TrackTransitionDescriptor: Sendable, Equatable {
     /// Detected beat grid timestamps and intervals.
     public let beatGrid: BeatGrid
 
+    /// Low-band (bass) waveform peaks spread evenly over `duration`; empty when unknown.
+    public let lowBandPeaks: [Float]
+
     public init(
         deck: DeckIdentifier,
         duration: Double,
         bpm: Double,
         confidence: Double,
         cueMarkers: CueMarkers,
-        beatGrid: BeatGrid
+        beatGrid: BeatGrid,
+        lowBandPeaks: [Float] = []
     ) {
         self.deck = deck
         self.duration = duration
@@ -55,6 +59,7 @@ public struct TrackTransitionDescriptor: Sendable, Equatable {
         self.confidence = confidence
         self.cueMarkers = cueMarkers
         self.beatGrid = beatGrid
+        self.lowBandPeaks = lowBandPeaks
     }
 
     /// Convenience initializer mapping from a cached library entry.
@@ -65,7 +70,8 @@ public struct TrackTransitionDescriptor: Sendable, Equatable {
             bpm: cacheEntry.bpm,
             confidence: cacheEntry.confidence,
             cueMarkers: cacheEntry.cueMarkers,
-            beatGrid: cacheEntry.beatGrid
+            beatGrid: cacheEntry.beatGrid,
+            lowBandPeaks: cacheEntry.waveformMetadata.lowBandPeaks
         )
     }
 }

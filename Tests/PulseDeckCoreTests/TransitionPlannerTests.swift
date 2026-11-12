@@ -836,4 +836,24 @@ final class TransitionPlannerTests: XCTestCase {
         }.last
         XCTAssertEqual(oddLast ?? 0, 0.6, accuracy: 1e-6)
     }
+
+    func testHardCutLandsWhereTheBeatComesInAfterAQuietIntro() throws {
+        // 240 s at 120 BPM: bars every 2 s. Bass is quiet for the first 32 s, then full.
+        let bins = 4_800 // 20 per second
+        let quietIntro = (0..<bins).map { Float($0 < 640 ? 0.05 : 0.5) }
+        let bars = stride(from: 0.0, to: 240, by: 2.0).map { $0 }
+        XCTAssertEqual(TransitionPlanner.dropDownbeat(bars: bars, lowBand: quietIntro, duration: 240, from: 10, before: 235), 42,
+                       "First phrase start (8 bars from the 10 s downbeat) with full bass")
+        let loudFromStart = [Float](repeating: 0.5, count: bins)
+        XCTAssertNil(TransitionPlanner.dropDownbeat(bars: bars, lowBand: loudFromStart, duration: 240, from: 10, before: 235))
+        let slowBuild = (0..<bins).map { Float($0 < 1_400 ? 0.05 : 0.5) } // beat only after 70 s
+        XCTAssertNil(TransitionPlanner.dropDownbeat(bars: bars, lowBand: slowBuild, duration: 240, from: 10, before: 235))
+        XCTAssertNil(TransitionPlanner.dropDownbeat(bars: bars, lowBand: [], duration: 240, from: 10, before: 235))
+
+        let incoming = makeTrack(deck: .deckB)
+        let withBass = TrackTransitionDescriptor(deck: .deckB, duration: incoming.duration, bpm: incoming.bpm, confidence: incoming.confidence,
+                                                 cueMarkers: incoming.cueMarkers, beatGrid: incoming.beatGrid, lowBandPeaks: quietIntro)
+        let plan = try TransitionPlanner().plan(TransitionRequest(outgoingTrack: makeTrack(deck: .deckA), incomingTrack: withBass, style: .hardCutOnDrop()))
+        XCTAssertTrue(plan.events.contains { $0.command == .seek(deck: .deckB, positionSeconds: 42) })
+    }
 }

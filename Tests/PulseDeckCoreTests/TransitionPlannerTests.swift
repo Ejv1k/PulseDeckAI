@@ -407,7 +407,7 @@ final class TransitionPlannerTests: XCTestCase {
             .seek(deck: .deckB, positionSeconds: incoming.cueMarkers.startTrimCue),
             .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
             .setFilter(deck: .deckB, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
-            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0.6),
+            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0),
             .setFilter(deck: .deckA, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
             .setVolume(deck: .deckB, volume: 0.0),
             .play(deck: .deckB),
@@ -776,7 +776,7 @@ final class TransitionPlannerTests: XCTestCase {
             .seek(deck: .deckB, positionSeconds: incoming.cueMarkers.startTrimCue),
             .setEQ(deck: .deckB, eq: EQ3BandParameters(lowGainDB: 0.0, midGainDB: 0.0, highGainDB: 0.0)),
             .setFilter(deck: .deckB, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
-            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0.6),
+            .setEcho(deck: .deckA, enabled: true, feedback: 0.5, mix: 0),
             .setFilter(deck: .deckA, filter: ResonantFilterParameters(sweep: 0.0, resonance: 1.0)),
             .setVolume(deck: .deckB, volume: 0.0),
             .play(deck: .deckB),
@@ -807,5 +807,23 @@ final class TransitionPlannerTests: XCTestCase {
         }
     }
 
-}
 
+    func testFilterEchoWashRampsEchoAndStepsFinely() throws {
+        let plan = try TransitionPlanner().plan(TransitionRequest(
+            outgoingTrack: makeTrack(deck: .deckA), incomingTrack: makeTrack(deck: .deckB),
+            style: .filterEchoWash(durationSeconds: 8.0, echoSend: 0.6)))
+        let echoMixes = plan.events.compactMap { event -> Float? in
+            if case .setEcho(.deckA, true, _, let mix) = event.command { return mix }
+            return nil
+        }
+        XCTAssertEqual(echoMixes.first, 0, "Starts dry")
+        XCTAssertEqual(echoMixes.last ?? 0, 0.6, accuracy: 1e-6, "Full send after the first quarter")
+        XCTAssertTrue(zip(echoMixes, echoMixes.dropFirst()).allSatisfy { $1 >= $0 && $1 - $0 <= 0.04 }, "Echo rises in small steps")
+        // About 8 gain steps per second: no outgoing volume step longer than 0.13 s.
+        let fades = plan.events.compactMap { event -> Double? in
+            if case .setVolume(.deckA, _) = event.command { return event.timeOffsetSeconds }
+            return nil
+        }
+        XCTAssertLessThanOrEqual(zip(fades, fades.dropFirst()).map { $1 - $0 }.max() ?? 1, 0.13)
+    }
+}

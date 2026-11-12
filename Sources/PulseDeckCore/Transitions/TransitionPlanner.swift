@@ -21,8 +21,11 @@ public struct TransitionPlanner: Sendable {
         return [bpm, bpm * 2, bpm / 2].contains { abs($0 - gridBPM) <= gridBPM * 0.01 }
     }
 
-    /// Discrete keyframe resolution for continuous curve transitions (e.g. Filter Echo Wash).
+    /// Fewest keyframes for continuous curve transitions (e.g. Filter Echo Wash).
     public static let defaultWashKeyframes: Int = 16
+    /// Keyframes per second for those curves: the engine applies each gain as a step, so 8 per second
+    /// keeps every step small (a fixed 16 left 0.5 s steps in an 8 s wash).
+    public static let washKeyframesPerSecond: Double = 8
 
     public init() {}
 
@@ -547,7 +550,7 @@ public struct TransitionPlanner: Sendable {
         style: TransitionStyle,
         isFallback: Bool
     ) throws -> TransitionPlan {
-        let keyframeCount = Self.defaultWashKeyframes
+        let keyframeCount = max(Self.defaultWashKeyframes, Int((durationSeconds * Self.washKeyframesPerSecond).rounded(.up)))
         var events: [ScheduledTransitionEvent] = []
 
         events.append(ScheduledTransitionEvent(
@@ -574,7 +577,8 @@ public struct TransitionPlanner: Sendable {
         ))
         events.append(ScheduledTransitionEvent(
             timeOffsetSeconds: 0.0,
-            command: .setEcho(deck: outgoing.deck, enabled: true, feedback: 0.5, mix: echoSend),
+            // Starts dry: switching straight to the full wet mix drops the dry signal at once.
+            command: .setEcho(deck: outgoing.deck, enabled: true, feedback: 0.5, mix: 0),
             priority: .audioProcessing
         ))
         events.append(ScheduledTransitionEvent(
@@ -622,6 +626,14 @@ public struct TransitionPlanner: Sendable {
                 command: .setVolume(deck: outgoing.deck, volume: outGain),
                 priority: .volumeFader
             ))
+            // The echo fades in over the first quarter of the wash.
+            if p <= 0.25 + 1e-9 {
+                events.append(ScheduledTransitionEvent(
+                    timeOffsetSeconds: offset,
+                    command: .setEcho(deck: outgoing.deck, enabled: true, feedback: 0.5, mix: echoSend * Float(min(1, p / 0.25))),
+                    priority: .audioProcessing
+                ))
+            }
             events.append(ScheduledTransitionEvent(
                 timeOffsetSeconds: offset,
                 command: .setVolume(deck: incoming.deck, volume: inGain),

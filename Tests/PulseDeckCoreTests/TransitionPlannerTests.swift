@@ -75,7 +75,7 @@ final class TransitionPlannerTests: XCTestCase {
         let expectedRate = Float(120.0 / 126.0)
         XCTAssertEqual(try XCTUnwrap(plan.metadata.tempoAdjustmentRate), expectedRate, accuracy: 0.001)
         XCTAssertEqual(plan.metadata.phraseBars, 16)
-        XCTAssertEqual(try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds), 16.0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds), 28.0, accuracy: 0.001)
         XCTAssertFalse(plan.metadata.isFallback)
 
         // Initial setup events at t = 0
@@ -114,8 +114,8 @@ final class TransitionPlannerTests: XCTestCase {
             return false
         })
 
-        // Verify Midpoint Downbeat Bass Swap at t = 16.0s (bar 8 downbeat)
-        let midpointEvents = plan.events.filter { abs($0.timeOffsetSeconds - 16.0) < 0.001 }
+        // Bass swap on the bar 14 downbeat (2 bars before the end) at t = 28.0s
+        let midpointEvents = plan.events.filter { abs($0.timeOffsetSeconds - 28.0) < 0.001 }
         XCTAssertFalse(midpointEvents.isEmpty)
 
         // Outgoing bass cut to -24 dB
@@ -153,61 +153,44 @@ final class TransitionPlannerTests: XCTestCase {
             return false
         })
 
-        // Bounded plan verification: must not create thousands of automation events
-        XCTAssertLessThanOrEqual(plan.events.count, 60)
+        // Bounded plan verification: four steps per bar, never thousands of automation events
+        XCTAssertLessThanOrEqual(plan.events.count, 160)
     }
 
-    func testBeatSyncedBassSwapComplementaryGainProgressionAndContinuousFader() throws {
-        let planner = TransitionPlanner()
-        let outgoing = makeTrack(deck: .deckA, bpm: 120.0)
-        let incoming = makeTrack(deck: .deckB, bpm: 126.0)
+    func testBassSwapHoldsOutgoingThenSwapsOnceAndLeavesFast() throws {
+        let plan = try TransitionPlanner().plan(TransitionRequest(
+            outgoingTrack: makeTrack(deck: .deckA, bpm: 120.0),
+            incomingTrack: makeTrack(deck: .deckB, bpm: 126.0),
+            style: .beatSyncedBassSwap(bars: 8)))
+        let swap = try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds)
+        XCTAssertEqual(swap, 12.0, accuracy: 0.001, "Swap on the bar 6 downbeat of 8 (0.5 s beats)")
 
-        let request = TransitionRequest(
-            outgoingTrack: outgoing,
-            incomingTrack: incoming,
-            style: .beatSyncedBassSwap(bars: 16)
-        )
-
-        let plan = try planner.plan(request)
-        let beatInterval = 60.0 / 120.0 // 0.5s
-
-        // Test each bar boundary 1..<16
-        for barIndex in 1..<16 {
-            let offset = Double(barIndex * 4) * beatInterval
-            let barEvents = plan.events.filter { abs($0.timeOffsetSeconds - offset) < 0.001 }
-            let progress = Double(barIndex) / 16.0
-
-            // 1. Outgoing volume fader must be continuous and monotonic: exactly (1.0 - progress)
-            let outVolEvent = try XCTUnwrap(barEvents.first {
-                if case .setVolume(let d, let v) = $0.command { return d == .deckA && abs(v - Float(1.0 - progress)) < 0.001 }
-                return false
-            })
-            XCTAssertEqual(outVolEvent.priority, .volumeFader)
-
-            // 2. Outgoing EQ mid/high ramps down: -24.0 * progress
-            let expectedOutMidHigh = Float(-24.0 * progress)
-            let expectedOutLow: Float = barIndex < 8 ? 0.0 : -24.0
-            XCTAssertTrue(barEvents.contains {
-                if case .setEQ(let d, let eq) = $0.command {
-                    return d == .deckA && eq.lowGainDB == expectedOutLow
-                        && abs(eq.midGainDB - expectedOutMidHigh) < 0.001
-                        && abs(eq.highGainDB - expectedOutMidHigh) < 0.001
-                }
-                return false
-            })
-
-            // 3. Incoming EQ mid/high ramps up: -12.0 * (1.0 - progress)
-            let expectedInMidHigh = Float(-12.0 * (1.0 - progress))
-            let expectedInLow: Float = barIndex < 8 ? -24.0 : 0.0
-            XCTAssertTrue(barEvents.contains {
-                if case .setEQ(let d, let eq) = $0.command {
-                    return d == .deckB && eq.lowGainDB == expectedInLow
-                        && abs(eq.midGainDB - expectedInMidHigh) < 0.001
-                        && abs(eq.highGainDB - expectedInMidHigh) < 0.001
-                }
-                return false
-            })
+        func eqs(_ deck: DeckIdentifier) -> [(Double, EQ3BandParameters)] {
+            plan.events.compactMap { if case .setEQ(deck, let eq) = $0.command { return ($0.timeOffsetSeconds, eq) }; return nil }
         }
+        let outVolumes = plan.events.compactMap { event -> (Double, Float)? in
+            if case .setVolume(.deckA, let volume) = event.command { return (event.timeOffsetSeconds, volume) }
+            return nil
+        }
+        // Before the swap the outgoing fader, lows and mids hold; the incoming plays highs only.
+        XCTAssertTrue(outVolumes.filter { $0.0 < swap - 1e-6 }.allSatisfy { $0.1 == 1 })
+        XCTAssertTrue(eqs(.deckA).filter { $0.0 < swap - 1e-6 }.allSatisfy { $0.1.lowGainDB == 0 && $0.1.midGainDB == 0 })
+        let incomingBefore = eqs(.deckB).filter { $0.0 < swap - 1e-6 }
+        XCTAssertTrue(incomingBefore.allSatisfy { $0.1.lowGainDB == -24 && $0.1.midGainDB == -24 })
+        let highs = incomingBefore.map(\.1.highGainDB)
+        XCTAssertEqual(highs.first ?? 0, -24)
+        XCTAssertTrue(zip(highs, highs.dropFirst()).allSatisfy { $1 >= $0 && $1 - $0 <= 1.5 }, "Highs rise in small steps")
+
+        // One swap downbeat: lows and mids change hands together.
+        XCTAssertTrue(eqs(.deckB).contains { abs($0.0 - swap) < 1e-6 && $0.1 == EQ3BandParameters(lowGainDB: 0, midGainDB: 0, highGainDB: 0) })
+        XCTAssertTrue(eqs(.deckA).contains { abs($0.0 - swap) < 1e-6 && $0.1.lowGainDB == -24 && $0.1.midGainDB == -24 })
+
+        // After it the outgoing fader only falls: -18 dB one bar later, -36 dB two beats before the end, then silence.
+        let after = outVolumes.filter { $0.0 >= swap - 1e-6 }.sorted { $0.0 < $1.0 }.map(\.1)
+        XCTAssertTrue(zip(after, after.dropFirst()).allSatisfy { $1 <= $0 })
+        XCTAssertLessThanOrEqual(after[4], 0.13)
+        XCTAssertLessThanOrEqual(after.dropLast(2).last ?? 1, 0.016)
+        XCTAssertEqual(after.last, 0)
     }
 
     func testBassSwapBarsFollowThreeFourDownbeats() throws {
@@ -221,12 +204,12 @@ final class TransitionPlannerTests: XCTestCase {
             style: .beatSyncedBassSwap(bars: 8)))
         XCTAssertEqual(plan.startTimestampSeconds, 201.0, accuracy: 0.001, "First 3/4 bar line at or after the 200 s mix-out")
         XCTAssertEqual(plan.durationSeconds, 12.0, accuracy: 0.001, "8 bars x 3 beats x 0.5 s")
-        XCTAssertEqual(plan.metadata.bassSwapOffsetSeconds ?? -1, 6.0, accuracy: 0.001)
+        XCTAssertEqual(plan.metadata.bassSwapOffsetSeconds ?? -1, 9.0, accuracy: 0.001, "Swap on the bar 6 line")
         let fades = plan.events.compactMap { event -> Double? in
             if case .setVolume(.deckA, let volume) = event.command, volume > 0, volume < 1 { return event.timeOffsetSeconds }
             return nil
         }
-        XCTAssertEqual(fades.first ?? -1, 1.5, accuracy: 0.001, "Each fade step lands on a real bar line")
+        XCTAssertEqual(fades.first ?? -1, 9.375, accuracy: 0.001, "Fade steps split the real 3/4 bar into quarters")
     }
 
     func testBarOffsetsFollowDriftingTempoAndRejectShortGrids() {
@@ -330,14 +313,14 @@ final class TransitionPlannerTests: XCTestCase {
         // Schedule must quantize start to the next outgoing downbeat: 200.25s
         XCTAssertEqual(plan.startTimestampSeconds, 200.25, accuracy: 0.0001)
 
-        // Bass swap downbeat occurs at bar 8 = 32 beats * 0.5s = 16.0s offset
-        XCTAssertEqual(try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds), 16.0, accuracy: 0.0001)
+        // Bass swap downbeat occurs at bar 14 = 56 beats * 0.5s = 28.0s offset
+        XCTAssertEqual(try XCTUnwrap(plan.metadata.bassSwapOffsetSeconds), 28.0, accuracy: 0.0001)
 
-        // Absolute outgoing playhead at bass swap: 200.25 + 16.0 = 216.25s
-        let swapTime = plan.startTimestampSeconds + 16.0
-        XCTAssertEqual(swapTime, 216.25, accuracy: 0.0001)
+        // Absolute outgoing playhead at bass swap: 200.25 + 28.0 = 228.25s
+        let swapTime = plan.startTimestampSeconds + 28.0
+        XCTAssertEqual(swapTime, 228.25, accuracy: 0.0001)
 
-        // Verify 216.25 is an exact downbeat on outgoing grid: (216.25 - 0.25) / (4 * 0.5) = 216.0 / 2.0 = 108 bars
+        // Verify 228.25 is an exact downbeat on outgoing grid: (228.25 - 0.25) / (4 * 0.5) = 114 bars
         let outgoingBars = (swapTime - outgoingGrid.firstBeatOffsetSeconds) / (4.0 * outgoingGrid.beatIntervalSeconds)
         XCTAssertEqual(outgoingBars.rounded(), outgoingBars, accuracy: 0.0001)
 

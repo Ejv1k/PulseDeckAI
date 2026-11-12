@@ -7,7 +7,7 @@ public enum TransitionStyle: Sendable, Equatable {
     /// Beat-synced bass swap across 8, 16, or 32 bars.
     /// Requires effective tempo difference strictly below 6.0% (after ½×/2× half/double-time folding) and valid beat grids on both decks.
     /// On the midpoint downbeat, cuts outgoing low shelf to -24 dB and restores incoming low shelf to 0 dB.
-    case beatSyncedBassSwap(bars: Int = 16, allowFallbackToFilter: Bool = false)
+    case beatSyncedBassSwap(bars: Int = 8, allowFallbackToFilter: Bool = false)
 
     /// High-pass filter sweep with echo wash and equal-power S-curve crossfade.
     /// Ideal for larger tempo differentials or tracks without beat grids.

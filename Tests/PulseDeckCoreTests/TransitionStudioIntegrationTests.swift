@@ -142,6 +142,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         await appState.waitForPendingDeckLoad(deck: .deckB)
         appState.toggleDeckPlay(deck: .deckA)
 
+        appState.transitionPhraseBars = 16
         XCTAssertNotNil(appState.autoPilotReadinessMessage)
         appState.transitionPhraseBars = 8
         XCTAssertNil(appState.autoPilotReadinessMessage)

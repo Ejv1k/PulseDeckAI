@@ -6,7 +6,8 @@ import Foundation
 public enum TransitionStyle: Sendable, Equatable {
     /// Beat-synced bass swap across 8, 16, or 32 bars.
     /// Requires effective tempo difference strictly below 6.0% (after ½×/2× half/double-time folding) and valid beat grids on both decks.
-    /// On the midpoint downbeat, cuts outgoing low shelf to -24 dB and restores incoming low shelf to 0 dB.
+    /// The incoming deck adds only its highs until the downbeat 2 bars before the end, where lows and mids
+    /// swap at once; the outgoing deck then fades out within those 2 bars.
     case beatSyncedBassSwap(bars: Int = 8, allowFallbackToFilter: Bool = false)
 
     /// High-pass filter sweep with echo wash and equal-power S-curve crossfade.

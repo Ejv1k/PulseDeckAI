@@ -351,7 +351,7 @@ public struct TransitionPlanner: Sendable {
 
         // The swap sits 2 bars before the end so the outgoing track owns the mix until a clear, single
         // switch on a downbeat, then leaves fast (a slow mutual fade blurs both tops into a flam).
-        let swapBar = bars >= 4 ? bars - 2 : max(1, bars / 2)
+        let swapBar = bars - 2 // validateRequest allows 8, 16 or 32 bars
         let bassSwapOffsetSeconds = barOffsets[swapBar]
         // Four gain steps per bar (on the beat in 4/4): the engine applies them as steps, so per-bar steps would zipper.
         func beatOffset(bar: Int, beat: Int) -> Double {

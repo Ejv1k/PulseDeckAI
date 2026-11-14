@@ -1001,19 +1001,18 @@ struct LibraryTrackAnalysisButton: View {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return "Analysis in progress with \(appState.activeAnalysisMethod[relativePath]?.displayName ?? "local engine"). Playback remains available."
+                return "Running \(appState.activeAnalysisMethod[relativePath]?.displayName.lowercased() ?? "local") analysis. You can keep playing."
             case .complete:
                 return "Analysis complete with \(engineLabel). Right-click for the other analysis."
             case .failed(let reason):
                 return "Analysis failed: \(reason). Click to retry."
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
-            let engine = entry.analyzerVersion.contains("model") ? "Beat This! small0 CoreML" : "DSP baseline"
-            return "Analyzed with \(engine). Click or right-click to re-analyze."
+            return "Analyzed (\(analyzedWith?.displayName ?? "earlier version")). Click to analyze again, right-click to choose Quick or Accurate."
         }
         return appState.isAnalyzingLibraryTrack
-            ? "One local analysis is running. Playback and library selection remain available."
-            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose method."
+            ? "One analysis is running. You can keep playing and browsing."
+            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose Quick or Accurate."
     }
 
     var body: some View {

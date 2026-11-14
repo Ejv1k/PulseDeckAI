@@ -512,7 +512,7 @@ public actor TransitionExecutionService {
             if isDeckInvalidated(deck: request.outgoingTrack.deck)
                 || isDeckInvalidated(deck: request.incomingTrack.deck)
                 || isRateInvalidated(deck: request.outgoingTrack.deck) {
-                disableAutoPilot(reason: "AutoPilot disarmed: tempo or track changed after arming. Arm again.")
+                disableAutoPilot(reason: "Auto Mix cancelled: the tempo or a track changed. Set it again.")
                 return []
             }
 
@@ -533,7 +533,7 @@ public actor TransitionExecutionService {
                 let deckGen = deckGeneration(for: deck)
                 let key = AutoPilotFiredKey(deck: deck, generation: deckGen)
                 guard !autoPilotFiredHistory.contains(key) else {
-                    disableAutoPilot(reason: "AutoPilot already fired for this track. Arm again.")
+                    disableAutoPilot(reason: "Auto Mix already ran for this track. Set it again.")
                     return []
                 }
                 // One-shot AutoPilot fire!

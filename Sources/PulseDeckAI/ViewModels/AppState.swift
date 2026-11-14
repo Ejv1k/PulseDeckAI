@@ -238,8 +238,8 @@ public final class AppState: ObservableObject {
     }
 
     private func readinessMessage(autoPilot: Bool) -> String? {
-        guard let coordinator = audioCoordinator else { return "Audio coordinator unavailable" }
-        guard coordinator.masterAudioEngine.isRunning else { return "Master output is stopped" }
+        guard let coordinator = audioCoordinator else { return "Audio is not available" }
+        guard coordinator.masterAudioEngine.isRunning else { return "Speakers are stopped" }
         guard deckAnalysisValidationTasks.isEmpty else { return "Validating cached analysis; playback remains available." }
         guard let trackA = trackEntry(for: .deckA), let trackB = trackEntry(for: .deckB) else {
             return deckATrack != nil && deckBTrack != nil
@@ -257,7 +257,7 @@ public final class AppState: ObservableObject {
 
         let aPlaying = coordinator.deckAGraph.isMasterPlaying
         let bPlaying = coordinator.deckBGraph.isMasterPlaying
-        guard aPlaying != bPlaying else { return "Play exactly one outgoing deck" }
+        guard aPlaying != bPlaying else { return "Play one track first" }
         let outgoingWeight = aPlaying ? coordinator.deckAGraph.crossfaderWeight : coordinator.deckBGraph.crossfaderWeight
         guard outgoingWeight > 1e-3 else { return "Move the crossfader toward the playing deck" }
         let planner = TransitionPlanner()

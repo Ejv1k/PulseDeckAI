@@ -404,7 +404,7 @@ public struct DeckStudioView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DJTheme.textMuted)
 
-                Picker("Macro", selection: $appState.transitionMacroStyle) {
+                Picker("Transition style", selection: $appState.transitionMacroStyle) {
                     ForEach(TransitionMacroStyle.allCases) { style in
                         Text(style.displayName).tag(style)
                     }
@@ -482,7 +482,7 @@ public struct DeckStudioView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(StudioPressableStyle())
-                    .help("Cancel the armed transition or restore the outgoing deck after an active transition")
+                    .help("Cancel the waiting transition, or bring back the playing track after a mix")
                 }
 
                 Spacer(minLength: 0)
@@ -502,7 +502,7 @@ public struct DeckStudioView: View {
                         .monospacedDigit()
                         .foregroundColor(DJTheme.textAccent)
                 } else if appState.isAutoPilotArmed {
-                    Text("AutoPilot Armed at Mix Out")
+                    Text("Auto Mix waits for the cue")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(DJTheme.textAccent)
                 }

@@ -15,7 +15,7 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(DJTheme.statusError)
-                    Text("Audio Engine Notice: \(startupError)")
+                    Text("Audio problem: \(startupError)")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DJTheme.statusError)
                     Spacer()
@@ -36,7 +36,7 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(DJTheme.statusWarning)
-                    Text("Master and Cue use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone audition is heard on Master.")
+                    Text("Speakers and Headphones use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone listening plays on the speakers.")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DJTheme.statusWarning)
                         .lineLimit(1)

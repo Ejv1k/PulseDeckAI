@@ -1093,6 +1093,12 @@ public final class AppState: ObservableObject {
     }
 
     /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.
+    /// True while a deck still sends music to the room (a track that played to its end does not count).
+    var isMusicAudible: Bool {
+        guard let coordinator = audioCoordinator else { return false }
+        return coordinator.deckAGraph.isMasterAudible || coordinator.deckBGraph.isMasterAudible
+    }
+
     func deckPlayheadSeconds(_ deck: DeckIdentifier) -> Double? {
         let graph = deck == .deckA ? audioCoordinator?.deckAGraph : audioCoordinator?.deckBGraph
         guard let graph, graph.loadedTrackURL != nil else { return nil }

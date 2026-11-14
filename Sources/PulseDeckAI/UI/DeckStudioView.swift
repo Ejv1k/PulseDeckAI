@@ -72,14 +72,18 @@ public struct DeckStudioView: View {
         }
     }
 
-    /// Large clock: "-2:31" left while playing, the full length when stopped.
+    /// Large clock: "-2:31" left once the track has started (playing or paused), the length before that.
     private func deckClock(deck: DeckIdentifier, track: TrackCacheEntry, isPlaying: Bool) -> some View {
-        let remaining = isPlaying ? max(0, track.duration - (appState.deckPlayheadSeconds(deck) ?? 0)) : track.duration
-        return Text((isPlaying ? "-" : "") + formatDuration(remaining))
+        let playhead = appState.deckPlayheadSeconds(deck) ?? 0
+        let started = isPlaying || playhead > 0.5
+        let seconds = Int(max(0, started ? track.duration - playhead : track.duration).rounded(.up))
+        let clock = String(format: "%d:%02d", seconds / 60, seconds % 60)
+        return Text((started ? "-" : "") + clock)
             .font(.system(size: 22, weight: .semibold))
             .monospacedDigit()
-            .foregroundColor(isPlaying && remaining < 30 ? DJTheme.statusWarning : DJTheme.textPrimary)
-            .accessibilityLabel(isPlaying ? "\(formatDuration(remaining)) left" : "Length \(formatDuration(remaining))")
+            .lineLimit(1)
+            .foregroundColor(isPlaying && seconds <= 30 ? DJTheme.statusWarning : DJTheme.textPrimary)
+            .accessibilityLabel(started ? "\(clock) left" : "Length \(clock)")
     }
 
     @ViewBuilder
@@ -88,6 +92,8 @@ public struct DeckStudioView: View {
            let bars = MixCountdown.barsRemaining(playhead: playhead, mixOut: track.cueMarkers.mixOutCue, bpm: track.bpm * 4 / track.beatsPerBar) {
             Text(bars <= 1 ? "Mix now" : "Mix in \(bars) bars")
                 .font(.system(size: 9.5, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
                 .monospacedDigit()
                 .foregroundColor(bars <= 8 ? DJTheme.statusWarning : DJTheme.textSecondary)
                 .help("Bars until this track reaches its mix-out cue")
@@ -113,17 +119,20 @@ public struct DeckStudioView: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(color)
 
+                // In the header row, so going on air never changes the card height.
+                if appState.isMasterDeckOnAir(deck) {
+                    Label(appState.isMasterSafetyLockEnabled ? "On Air · Locked" : "On Air · Unlocked",
+                          systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                }
+
                 Spacer()
 
                 LibraryDeckLoadButton(appState: appState, deck: deck, title: title, color: color)
             }
 
-            if appState.isMasterDeckOnAir(deck) {
-                Label(appState.isMasterSafetyLockEnabled ? "On Air · Locked" : "On Air · Unlocked",
-                      systemImage: appState.isMasterSafetyLockEnabled ? "lock.fill" : "lock.open")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(color)
-            }
 
             if let message = appState.deckLoadMessage(for: deck) {
                 Text(message)

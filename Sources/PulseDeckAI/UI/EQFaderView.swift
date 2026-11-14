@@ -41,6 +41,7 @@ struct EQFader: View {
     private var position: Double { Self.position(for: gainDB) }
     private var isKilled: Bool { gainDB <= Self.minDB }
     private var valueText: String {
+        if !isEnabled { return "Auto" } // A transition is moving this band.
         if isKilled { return "KILL" }
         if abs(gainDB) < 0.05 { return "0" }
         return String(format: "%+.1f", gainDB)
@@ -60,7 +61,7 @@ struct EQFader: View {
                 .frame(width: 56, height: Self.trackHeight + Self.thumbSize.height)
                 .allowsHitTesting(isEnabled)
                 .contentShape(Rectangle())
-                .padding(.bottom, 4) // A killed band's thumb must not touch the Play row.
+                .padding(.bottom, 6) // A killed band's thumb must not touch the Play row.
                 .gesture(drag)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { if isEnabled { onChange(0) } })
         }
@@ -132,9 +133,6 @@ struct DeckEQStrip: View {
                 var next = appState.deckEQ(deck); next.lowGainDB = value
                 appState.setDeckEQ(deck: deck, eq: next)
             }
-        }
-        .overlay(alignment: .topTrailing) {
-            if !enabled { Text("Auto").font(.system(size: 9, weight: .semibold)).foregroundColor(DJTheme.textSecondary) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("deckEQ-\(deck.rawValue)")

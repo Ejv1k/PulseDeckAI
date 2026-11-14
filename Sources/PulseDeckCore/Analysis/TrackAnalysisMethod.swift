@@ -6,14 +6,15 @@ public enum TrackAnalysisMethod: String, CaseIterable, Identifiable, Sendable {
     case nativeModel = "Model"
 
     public var id: String { rawValue }
-    public var displayName: String { rawValue }
+    /// Plain name in the UI; `rawValue` stays the stored identifier.
+    public var displayName: String { self == .dsp ? "Quick" : "Accurate" }
 
     public var helpText: String {
         switch self {
         case .dsp:
-            return "Fast DSP heuristic (onset autocorrelation). Key is not detected."
+            return "Quick analysis: fast tempo and cue estimate. No key."
         case .nativeModel:
-            return "Beat This! beat and downbeat model with phrase-aligned cues and key detection."
+            return "Accurate analysis: beat model with bar-aligned cues, key and singing detection."
         }
     }
 }

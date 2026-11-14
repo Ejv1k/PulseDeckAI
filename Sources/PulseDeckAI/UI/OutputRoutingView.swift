@@ -55,7 +55,7 @@ public struct OutputRoutingView: View {
             HStack(spacing: 8) {
                 routingStrip(
                     role: .master,
-                    title: "Master (FOH)",
+                    title: "Speakers",
                     color: DJTheme.master,
                     selectedUID: appState.masterOutputUID,
                     descriptor: appState.masterDeviceDescriptor,
@@ -66,7 +66,7 @@ public struct OutputRoutingView: View {
 
                 routingStrip(
                     role: .cue,
-                    title: "Headphones / Cue",
+                    title: "Headphones",
                     color: DJTheme.cue,
                     selectedUID: appState.cueOutputUID,
                     descriptor: appState.cueDeviceDescriptor,
@@ -129,7 +129,7 @@ public struct OutputRoutingView: View {
                 }
             )) {
                 if appState.availableOutputDevices.isEmpty {
-                    Text("No Output Devices Found").tag("")
+                    Text("No speakers connected").tag("")
                 } else {
                     ForEach(appState.availableOutputDevices) { device in
                         Text(device.name)

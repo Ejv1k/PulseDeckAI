@@ -240,7 +240,7 @@ public struct WaveformEditorView: View {
                             .font(.system(size: 11))
                             .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
 
-                        Text(model.aiTrimBypass ? "AI Trim: Bypassed" : "AI Trim: Active")
+                        Text(model.aiTrimBypass ? "Auto trim: Off" : "Auto trim: On")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(model.aiTrimBypass ? .orange : DJTheme.master)
                     }

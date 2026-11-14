@@ -10,6 +10,15 @@ public enum TransitionMacroStyle: String, CaseIterable, Hashable, Identifiable, 
     case hardCutOnDrop = "HARD CUT"
 
     public var id: String { rawValue }
+
+    /// Name shown in the transition picker.
+    public var displayName: String {
+        switch self {
+        case .beatSyncedBassSwap: "Bass Swap"
+        case .filterEchoWash: "Filter Echo"
+        case .hardCutOnDrop: "Hard Cut"
+        }
+    }
 }
 
 @MainActor
@@ -592,7 +601,7 @@ public final class AppState: ObservableObject {
                         self.waveformEditorModel.loadTrack(track)
                     }
                 }
-                self.statusMessage = "Loaded \(track.relativePath) into Waveform Editor"
+                self.statusMessage = "Editing \(LibraryTrackTitle.display((track.relativePath as NSString).lastPathComponent))"
             } else {
                 self.statusMessage = "Selected \(relativePath)"
             }
@@ -1165,9 +1174,9 @@ public final class AppState: ObservableObject {
         let startMessage: String
         switch methodToUse {
         case .dsp:
-            startMessage = "Analyzing locally with DSP: \(relativePath). Playback remains available."
+            startMessage = "Quick analysis of \(LibraryTrackTitle.display((relativePath as NSString).lastPathComponent)). You can keep playing."
         case .nativeModel:
-            startMessage = "Analyzing with Native CoreML rhythm: \(relativePath). Playback remains available."
+            startMessage = "Analyzing \(LibraryTrackTitle.display((relativePath as NSString).lastPathComponent)). You can keep playing."
         }
         statusMessage = startMessage
 
@@ -1231,9 +1240,9 @@ public final class AppState: ObservableObject {
                 }
                 switch methodToUse {
                 case .dsp:
-                    self.statusMessage = "Local analysis ready: \(relativePath). Tempo is heuristic; key is not detected by DSP."
+                    self.statusMessage = "Quick analysis done: \(LibraryTrackTitle.display((relativePath as NSString).lastPathComponent)). Tempo is estimated; no key."
                 case .nativeModel:
-                    self.statusMessage = "Native rhythm analysis ready: \(relativePath). Tempo, phrase cues and key estimated on-device."
+                    self.statusMessage = "Analysis done: \(LibraryTrackTitle.display((relativePath as NSString).lastPathComponent)). Tempo, cues and key are ready."
                 }
             } catch {
                 guard let self, self.libraryRootURL.standardizedFileURL == root.standardizedFileURL else { return }

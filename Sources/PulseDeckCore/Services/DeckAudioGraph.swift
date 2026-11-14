@@ -590,7 +590,8 @@ public final class DeckAudioGraph: DeckAudioGraphContract, @unchecked Sendable {
             // If segment completed/nothing queued, reschedule from playhead (or 0.0 if at end)
             if !masterQueued, let masterFile {
                 var playhead = self.currentMasterPlayheadSeconds()
-                if playhead >= duration {
+                // Within the last quarter second counts as the end: replaying a few milliseconds would "end" at once.
+                if playhead >= duration - 0.25 {
                     playhead = 0.0
                 }
                 self.scheduleMasterSegment(file: masterFile, startSeconds: playhead)

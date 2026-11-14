@@ -148,6 +148,8 @@ final class TransitionStudioIntegrationTests: XCTestCase {
 
         try XCTUnwrap(finish)() // The player reports the scheduled audio has run out.
         appState.settleDecksThatPlayedToTheEnd()
+        XCTAssertTrue(appState.isDeckAPlaying, "One check is not enough: the last frames may still be playing")
+        appState.settleDecksThatPlayedToTheEnd()
         XCTAssertFalse(appState.isDeckAPlaying)
         XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
 

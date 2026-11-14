@@ -241,8 +241,7 @@ public struct DeckStudioView: View {
                 } label: {
                     Image(systemName: "stop.fill")
                         .foregroundStyle(DJTheme.textPrimary)
-                        .padding(.horizontal, 8)
-                        .frame(minHeight: DJTheme.minTouchTarget)
+                        .frame(minWidth: 40, minHeight: DJTheme.minTouchTarget) // Wide enough to hit on a trackpad.
                         .background(DJTheme.cardHeader)
                         .cornerRadius(DJTheme.controlRadius)
                         .overlay(RoundedRectangle(cornerRadius: DJTheme.controlRadius).stroke(DJTheme.border.opacity(0.8), lineWidth: 1))
@@ -342,6 +341,7 @@ public struct DeckStudioView: View {
                 ),
                 in: 0.0...1.0
             )
+            .controlSize(.large) // Bigger thumb for a trackpad.
             .accessibilityIdentifier("crossfaderSlider")
             .accentColor(DJTheme.textAccent)
             .disabled(appState.isTransitionBusy)
@@ -398,7 +398,7 @@ public struct DeckStudioView: View {
     }
 
     private func transitionControls() -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("Transition")
                     .font(.system(size: 10, weight: .semibold))
@@ -489,27 +489,30 @@ public struct DeckStudioView: View {
             }
 
             HStack(spacing: 8) {
+                // Readable at a glance: what the transition will do, or why it can't yet.
                 Text(appState.transitionReadinessText)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundColor(appState.transitionIsReady ? DJTheme.textSecondary : DJTheme.textMuted)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(appState.transitionIsReady ? DJTheme.master : DJTheme.textSecondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
+                    .help(appState.transitionReadinessText)
 
                 if appState.isTransitionRunning {
                     ProgressView(value: appState.transitionProgress)
                         .frame(width: 120)
                     Text("\(Int(appState.transitionProgress * 100))%")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .monospacedDigit()
                         .foregroundColor(DJTheme.textAccent)
                 } else if appState.isAutoPilotArmed {
                     Text("Auto Mix waits for the cue")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundColor(DJTheme.textAccent)
                 }
 
                 if let error = appState.transitionErrorMessage {
                     Text(error)
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(DJTheme.statusError)
                         .lineLimit(1)
                         .help(error)

@@ -111,9 +111,9 @@ struct UpNextToggleButton: View {
             if isQueued { appState.removeFromUpNext(relativePath) } else { appState.addToUpNext(relativePath) }
         } label: {
             Image(systemName: isQueued ? "checkmark" : "plus")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(isQueued ? DJTheme.master : DJTheme.textSecondary)
-                .frame(width: 24, height: DJTheme.minTouchTarget)
+                .frame(width: 32, height: DJTheme.minTouchTarget)
                 .contentShape(Rectangle())
         }
         .buttonStyle(StudioPressableStyle())

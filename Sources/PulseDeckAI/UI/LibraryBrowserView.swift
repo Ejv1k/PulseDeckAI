@@ -241,6 +241,7 @@ public struct LibraryBrowserView: View {
                             HStack(spacing: 4) {
                                 Text("Analysis:")
                                     .font(.system(size: 9.5, weight: .bold))
+                                    .fixedSize()
                                     .foregroundColor(DJTheme.textSecondary)
 
                                 Button(action: {
@@ -248,6 +249,7 @@ public struct LibraryBrowserView: View {
                                 }) {
                                     Text("Quick")
                                         .font(.system(size: 9.5, weight: .semibold))
+                                        .fixedSize()
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 3)
                                         .background(appState.selectedAnalysisMethod == .dsp ? DJTheme.deckA.opacity(0.2) : DJTheme.cardHeader)

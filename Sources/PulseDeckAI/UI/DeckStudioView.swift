@@ -494,6 +494,8 @@ public struct DeckStudioView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(appState.transitionIsReady ? DJTheme.master : DJTheme.textSecondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
+                    .help(appState.transitionReadinessText)
 
                 if appState.isTransitionRunning {
                     ProgressView(value: appState.transitionProgress)

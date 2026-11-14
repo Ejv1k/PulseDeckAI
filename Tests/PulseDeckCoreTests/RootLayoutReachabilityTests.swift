@@ -133,7 +133,7 @@ final class RootLayoutReachabilityTests: XCTestCase {
             XCTAssertEqual(root.bounds.size.width, size.width, accuracy: 0.5)
             XCTAssertEqual(root.bounds.size.height, size.height, accuracy: 0.5)
             let views = descendants(root)
-            let outputs = views.compactMap { $0 as? NSPopUpButton }.filter { $0.title == "No Output Devices Found" }
+            let outputs = views.compactMap { $0 as? NSPopUpButton }.filter { $0.title == "No speakers connected" }
             XCTAssertEqual(outputs.count, 2, "Exercise the real Master and Cue selector controls")
             let controls = views.compactMap { $0 as? NSControl }.filter {
                 !($0 is NSScroller) && $0.bounds.width > 0 && $0.bounds.height > 0

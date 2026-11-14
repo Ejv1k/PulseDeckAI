@@ -239,14 +239,14 @@ public struct LibraryBrowserView: View {
                             analyzeAllControl(for: selected)
 
                             HStack(spacing: 4) {
-                                Text("Engine:")
+                                Text("Analysis:")
                                     .font(.system(size: 9.5, weight: .bold))
                                     .foregroundColor(DJTheme.textSecondary)
 
                                 Button(action: {
                                     appState.selectedAnalysisMethod = .dsp
                                 }) {
-                                    Text("DSP")
+                                    Text("Quick")
                                         .font(.system(size: 9.5, weight: .semibold))
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 3)
@@ -259,13 +259,13 @@ public struct LibraryBrowserView: View {
                                         )
                                 }
                                 .buttonStyle(.plain)
-                                .help("Default DSP analyzer (heuristic onset autocorrelation)")
-                                .accessibilityLabel("Select DSP analysis engine")
+                                .help("Quick analysis: fast tempo and cue estimate")
+                                .accessibilityLabel("Use quick analysis")
 
                                 Button(action: {
                                     appState.selectedAnalysisMethod = .nativeModel
                                 }) {
-                                    Text("Model")
+                                    Text("Accurate")
                                         .font(.system(size: 9.5, weight: .semibold))
                                         .fixedSize()
                                         .padding(.horizontal, 6)
@@ -279,8 +279,8 @@ public struct LibraryBrowserView: View {
                                         )
                                 }
                                 .buttonStyle(.plain)
-                                .help("Beat This! beat and downbeat model with phrase-aligned cues and key detection.")
-                                .accessibilityLabel("Select Native CoreML Model analysis engine")
+                                .help("Accurate analysis: beat model with bar-aligned cues, key and singing detection")
+                                .accessibilityLabel("Use accurate analysis")
                             }
                             .frame(minHeight: 28)
                         }
@@ -891,14 +891,14 @@ struct LibraryTrackAnalysisButton: View {
                         Text(appState.activeAnalysisMethod[relativePath]?.displayName ?? "Running")
                     case .complete:
                         Image(systemName: "checkmark")
-                        Text(engineLabel)
+                        Text(analyzedWith?.displayName ?? "Done")
                     case .failed:
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text("Retry")
                     }
                 } else if let entry = appState.loadedCache?.tracks[relativePath] {
                     Image(systemName: "checkmark")
-                    Text(entry.analyzerVersion.contains("model") ? "Model" : "DSP")
+                    Text(analyzedWith?.displayName ?? "Done")
                 } else {
                     Image(systemName: "waveform.path")
                     Text("Analyze")
@@ -917,10 +917,10 @@ struct LibraryTrackAnalysisButton: View {
             .contentShape(Rectangle())
         }
         .contextMenu {
-            Button("Analyze with DSP (Fast Heuristic)") {
+            Button("Quick Analysis") {
                 appState.analyzeTrack(relativePath: relativePath, method: .dsp)
             }
-            Button("Analyze with Model (Beat This!)") {
+            Button("Accurate Analysis") {
                 appState.analyzeTrack(relativePath: relativePath, method: .nativeModel)
             }
         }
@@ -930,15 +930,20 @@ struct LibraryTrackAnalysisButton: View {
         .accessibilityIdentifier("trackAnalyzeButton-\(relativePath)")
     }
 
+    private var analyzedWith: TrackAnalysisMethod? {
+        guard let version = appState.loadedCache?.tracks[relativePath]?.analyzerVersion else { return nil }
+        return version.contains("model") ? .nativeModel : (version.contains("dsp") ? .dsp : nil)
+    }
+
     private var engineLabel: String {
         if let entry = appState.loadedCache?.tracks[relativePath] {
             if entry.analyzerVersion.contains("model") {
-                return "Model"
+                return "accurate analysis"
             } else if entry.analyzerVersion.contains("dsp") {
-                return "DSP"
+                return "quick analysis"
             }
         }
-        return "Analyze"
+        return "analysis"
     }
 
     private var buttonForegroundColor: Color {
@@ -996,19 +1001,18 @@ struct LibraryTrackAnalysisButton: View {
         if let state = appState.analysisStatus(for: relativePath) {
             switch state {
             case .running:
-                return "Analysis in progress with \(appState.activeAnalysisMethod[relativePath]?.displayName ?? "local engine"). Playback remains available."
+                return "Running \(appState.activeAnalysisMethod[relativePath]?.displayName.lowercased() ?? "local") analysis. You can keep playing."
             case .complete:
-                return "Analysis complete with \(engineLabel). Right-click to switch engine."
+                return "Analysis complete with \(engineLabel). Right-click for the other analysis."
             case .failed(let reason):
                 return "Analysis failed: \(reason). Click to retry."
             }
         } else if let entry = appState.loadedCache?.tracks[relativePath] {
-            let engine = entry.analyzerVersion.contains("model") ? "Beat This! small0 CoreML" : "DSP baseline"
-            return "Analyzed with \(engine). Click or right-click to re-analyze."
+            return "Analyzed (\(analyzedWith?.displayName ?? "earlier version")). Click to analyze again, right-click to choose Quick or Accurate."
         }
         return appState.isAnalyzingLibraryTrack
-            ? "One local analysis is running. Playback and library selection remain available."
-            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose method."
+            ? "One analysis is running. You can keep playing and browsing."
+            : "Analyze this file with \(appState.selectedAnalysisMethod.displayName). Right-click to choose Quick or Accurate."
     }
 
     var body: some View {

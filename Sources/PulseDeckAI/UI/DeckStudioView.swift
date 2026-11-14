@@ -404,9 +404,9 @@ public struct DeckStudioView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(DJTheme.textMuted)
 
-                Picker("Macro", selection: $appState.transitionMacroStyle) {
+                Picker("Transition style", selection: $appState.transitionMacroStyle) {
                     ForEach(TransitionMacroStyle.allCases) { style in
-                        Text(style.rawValue).tag(style)
+                        Text(style.displayName).tag(style)
                     }
                 }
                 .labelsHidden()
@@ -425,7 +425,7 @@ public struct DeckStudioView: View {
                 Button {
                     Task { await appState.executeTransition() }
                 } label: {
-                    Label("Execute", systemImage: "arrow.left.arrow.right")
+                    Label("Mix Now", systemImage: "arrow.left.arrow.right")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundColor(appState.transitionIsReady && !appState.isTransitionBusy ? DJTheme.master : DJTheme.textMuted)
                         .padding(.horizontal, 8)
@@ -440,12 +440,12 @@ public struct DeckStudioView: View {
                 }
                 .buttonStyle(StudioPressableStyle())
                 .disabled(!appState.transitionIsReady || appState.isTransitionBusy)
-                .help("Start the selected macro from the outgoing deck's current playhead")
+                .help("Start the transition now, from where the playing track is")
 
                 Button {
                     Task { await appState.toggleAutoPilot() }
                 } label: {
-                    Label(appState.isAutoPilotArmed ? "Disarm" : "Arm", systemImage: "autopilot")
+                    Label(appState.isAutoPilotArmed ? "Cancel Auto Mix" : "Mix at Cue", systemImage: "autopilot")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundColor(appState.isAutoPilotArmed ? DJTheme.cue : DJTheme.textPrimary)
                         .padding(.horizontal, 8)
@@ -461,8 +461,8 @@ public struct DeckStudioView: View {
                 .buttonStyle(StudioPressableStyle())
                 .disabled(appState.isAutoPilotArmed ? false : (appState.autoPilotReadinessMessage != nil || appState.isTransitionBusy))
                 .help(appState.isAutoPilotArmed
-                    ? "Disarm the one-shot transition"
-                    : (appState.autoPilotReadinessMessage ?? "Arm a one-shot transition at the outgoing mix-out cue"))
+                    ? "Cancel the waiting transition"
+                    : (appState.autoPilotReadinessMessage ?? "Start the transition by itself when the playing track reaches its mix-out cue"))
 
                 if appState.isTransitionBusy {
                     Button {
@@ -482,7 +482,7 @@ public struct DeckStudioView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(StudioPressableStyle())
-                    .help("Cancel the armed transition or restore the outgoing deck after an active transition")
+                    .help("Cancel the waiting transition, or bring back the playing track after a mix")
                 }
 
                 Spacer(minLength: 0)
@@ -502,7 +502,7 @@ public struct DeckStudioView: View {
                         .monospacedDigit()
                         .foregroundColor(DJTheme.textAccent)
                 } else if appState.isAutoPilotArmed {
-                    Text("AutoPilot Armed at Mix Out")
+                    Text("Auto Mix waits for the cue")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(DJTheme.textAccent)
                 }
@@ -586,9 +586,9 @@ public struct DeckStudioView: View {
                     .lineLimit(1)
 
                 HStack {
-                    // No file in 08_Soundboard_SFX is the normal default, so this stays muted; orange marks a failed file.
-                    if pad.isFallback {
-                        Text(pad.error != nil ? "File failed · tone" : "Built-in tone")
+                    // The built-in tone is the normal default and needs no label; only a failed file is named.
+                    if pad.isFallback, pad.error != nil {
+                        Text("File failed · tone")
                             .font(.system(size: 8, weight: .medium))
                             .foregroundColor(pad.isPlaying ? Color.black.opacity(0.8) : DJTheme.textMuted)
                     }

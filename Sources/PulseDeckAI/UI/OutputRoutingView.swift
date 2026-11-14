@@ -15,7 +15,7 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(DJTheme.statusError)
-                    Text("Audio Engine Notice: \(startupError)")
+                    Text("Audio problem: \(startupError)")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DJTheme.statusError)
                     Spacer()
@@ -36,7 +36,7 @@ public struct OutputRoutingView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(DJTheme.statusWarning)
-                    Text("Master and Cue use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone audition is heard on Master.")
+                    Text("Speakers and Headphones use the same device (\(appState.masterDeviceDescriptor?.name ?? masterUID)), so headphone listening plays on the speakers.")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DJTheme.statusWarning)
                         .lineLimit(1)
@@ -55,7 +55,7 @@ public struct OutputRoutingView: View {
             HStack(spacing: 8) {
                 routingStrip(
                     role: .master,
-                    title: "Master (FOH)",
+                    title: "Speakers",
                     color: DJTheme.master,
                     selectedUID: appState.masterOutputUID,
                     descriptor: appState.masterDeviceDescriptor,
@@ -66,7 +66,7 @@ public struct OutputRoutingView: View {
 
                 routingStrip(
                     role: .cue,
-                    title: "Headphones / Cue",
+                    title: "Headphones",
                     color: DJTheme.cue,
                     selectedUID: appState.cueOutputUID,
                     descriptor: appState.cueDeviceDescriptor,
@@ -129,7 +129,7 @@ public struct OutputRoutingView: View {
                 }
             )) {
                 if appState.availableOutputDevices.isEmpty {
-                    Text("No Output Devices Found").tag("")
+                    Text("No speakers connected").tag("")
                 } else {
                     ForEach(appState.availableOutputDevices) { device in
                         Text(device.name)

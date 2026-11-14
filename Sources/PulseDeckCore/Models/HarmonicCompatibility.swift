@@ -135,11 +135,17 @@ public enum KeyCompatibility: Sendable, Equatable {
     public var badgeLabel: String {
         switch self {
         case .harmonic(let key, let rel):
-            return "\(key.notation) \(rel.rawValue)"
+            let words = switch rel {
+            case .exact: "same key"
+            case .relative: "relative key"
+            case .adjacentPlus, .adjacentMinus: "next key"
+            case .clash: "key clash"
+            }
+            return "\(key.notation) \(words)"
         case .clash(let key):
-            return "\(key.notation) CLASH"
+            return "\(key.notation) key clash"
         case .unknown:
-            return "KEY UNKNOWN"
+            return "Key unknown"
         }
     }
 }
@@ -162,11 +168,11 @@ public enum TempoCompatibility: Sendable, Equatable {
         case .compatible(let delta):
             return String(format: "%+.1f%%", delta)
         case .mismatch(let delta):
-            return String(format: "%+.1f%% MISMATCH", delta)
+            return String(format: "%+.1f%% tempo too far", delta)
         case .meterMismatch:
-            return "6/8 VS 4/4"
+            return "6/8 vs 4/4"
         case .unknown:
-            return "BPM UNKNOWN"
+            return "BPM unknown"
         }
     }
 }

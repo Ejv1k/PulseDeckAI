@@ -625,7 +625,7 @@ final class StudioCompositionLayoutTests: XCTestCase {
 
         // 4. Transition Execute & Arm buttons interactive height >= 28pt and hit-testable at target margins
         let transitionExecuteBtn = Button(action: {}) {
-            Label("Execute", systemImage: "arrow.left.arrow.right")
+            Label("Mix Now", systemImage: "arrow.left.arrow.right")
                 .font(.system(size: 10.5, weight: .semibold))
                 .padding(.horizontal, 8)
                 .frame(minHeight: DJTheme.minTouchTarget)

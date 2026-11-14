@@ -24,7 +24,7 @@ public enum CueType: String, CaseIterable, Identifiable, Sendable {
     public var shortLabel: String {
         switch self {
         case .startTrim: return "IN"
-        case .vocalEntry: return "VOC"
+        case .vocalEntry: return "VOCAL"
         case .mixOut: return "OUT"
         case .endTrim: return "END"
         }
@@ -739,7 +739,7 @@ public final class WaveformEditorModel: ObservableObject {
             self.currentTrack = track
         }
 
-        self.statusMessage = "AI Trim \(self.aiTrimBypass ? "Bypassed" : "Active")"
+        self.statusMessage = "Auto trim \(self.aiTrimBypass ? "off" : "on")"
         persistCurrentTrackToCache(intent: .aiTrimBypass(acceptedPreviousValues: acceptedPreviousValues))
     }
 

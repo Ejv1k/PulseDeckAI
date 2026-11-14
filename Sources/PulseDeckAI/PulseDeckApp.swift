@@ -150,7 +150,7 @@ public struct PulseDeckApp: App {
             }
             CommandMenu("Playback") {
                 // No bare-key menu shortcut: menus would fire it while typing. The studio handles T itself.
-                Button("Toggle Master Talkover (T)") {
+                Button("Toggle Talkover (T)") {
                     appState.toggleTalkover()
                 }
             }

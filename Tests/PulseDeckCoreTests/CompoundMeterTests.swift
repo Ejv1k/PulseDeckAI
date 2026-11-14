@@ -60,4 +60,18 @@ final class CompoundMeterTests: XCTestCase {
                                                          style: .beatSyncedBassSwap(bars: 8, allowFallbackToFilter: true))).metadata.isFallback)
         XCTAssertNoThrow(try planner.plan(TransitionRequest(outgoingTrack: outgoing, incomingTrack: incoming, style: .hardCutOnDrop())))
     }
+
+    func testCompatibilityBadgesUsePlainWords() {
+        let key = CamelotKey(number: 7, mode: .minor)!
+        XCTAssertEqual(KeyCompatibility.harmonic(key: key, relationship: .exact).badgeLabel, "\(key.notation) same key")
+        XCTAssertEqual(KeyCompatibility.harmonic(key: key, relationship: .relative).badgeLabel, "\(key.notation) relative key")
+        XCTAssertEqual(KeyCompatibility.harmonic(key: key, relationship: .adjacentPlus).badgeLabel, "\(key.notation) next key")
+        XCTAssertEqual(KeyCompatibility.clash(key: key).badgeLabel, "\(key.notation) key clash")
+        XCTAssertEqual(KeyCompatibility.unknown.badgeLabel, "Key unknown")
+        XCTAssertEqual(TempoCompatibility.mismatch(deltaPercent: 7.3).badgeLabel, "+7.3% tempo too far")
+        XCTAssertEqual(TempoCompatibility.meterMismatch.badgeLabel, "6/8 vs 4/4")
+        XCTAssertEqual(TrackAnalysisMethod.dsp.displayName, "Quick")
+        XCTAssertEqual(TrackAnalysisMethod.nativeModel.displayName, "Accurate")
+        XCTAssertEqual(TrackAnalysisMethod.nativeModel.rawValue, "Model", "Stored identifier must not change")
+    }
 }

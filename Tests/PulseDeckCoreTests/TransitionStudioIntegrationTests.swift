@@ -86,7 +86,7 @@ final class TransitionStudioIntegrationTests: XCTestCase {
         appState.selectedTrackPath = "deck-b.wav"
         appState.loadSelectedTrackIntoDeck(deck: .deckB)
         await appState.waitForPendingDeckLoad(deck: .deckB)
-        XCTAssertEqual(appState.transitionReadinessMessage, "Play exactly one outgoing deck")
+        XCTAssertEqual(appState.transitionReadinessMessage, "Play one track first")
 
         appState.transitionPhraseBars = 8
         appState.toggleDeckPlay(deck: .deckA)

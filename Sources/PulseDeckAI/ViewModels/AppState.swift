@@ -1093,6 +1093,37 @@ public final class AppState: ObservableObject {
     }
 
     /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.
+    /// Decks seen ended on the previous check; settled only when a second check agrees.
+    private var decksSeenEnded: Set<DeckIdentifier> = []
+
+    /// A track that played to its end leaves the transport started, so the deck kept showing Pause. Pause
+    /// those decks so they show Play and the next press starts the track again. Checked on the control
+    /// queue so a play() in progress is never mistaken for an ended track; a deck must look ended on two
+    /// checks in a row (the player reports the data consumed slightly before its last frames are heard);
+    /// skipped while a transition runs or the engine is stopped or restarting (the restart resumes decks).
+    /// The headphone cue of an ended deck stops with it, as it follows the master.
+    public func settleDecksThatPlayedToTheEnd() {
+        guard !isTransitionBusy, let coordinator = audioCoordinator else { decksSeenEnded = []; return }
+        let seenBefore = decksSeenEnded
+        var seenNow: Set<DeckIdentifier> = []
+        let ended = coordinator.monitor.performOnControlQueue { () -> [DeckIdentifier] in
+            guard coordinator.masterAudioEngine.isRunning else { return [] }
+            var decks: [DeckIdentifier] = []
+            for (deck, graph) in [(DeckIdentifier.deckA, coordinator.deckAGraph), (.deckB, coordinator.deckBGraph)]
+            where graph.isMasterPlaying && !graph.isMasterAudible {
+                seenNow.insert(deck)
+                if seenBefore.contains(deck) {
+                    graph.pause()
+                    decks.append(deck)
+                }
+            }
+            return decks
+        }
+        decksSeenEnded = seenNow.subtracting(ended)
+        if ended.contains(.deckA) { isDeckAPlaying = false }
+        if ended.contains(.deckB) { isDeckBPlaying = false }
+    }
+
     /// True while a deck still sends music to the room (a track that played to its end does not count).
     var isMusicAudible: Bool {
         guard let coordinator = audioCoordinator else { return false }

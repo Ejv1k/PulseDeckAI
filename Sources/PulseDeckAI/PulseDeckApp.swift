@@ -10,18 +10,21 @@ final class PulseDeckAppDelegate: NSObject, NSApplicationDelegate {
 
     private var activityTimer: Timer?
 
-    /// Re-checked every few seconds rather than on play/pause only: a track that plays to its end stops
+    /// Re-checked every second rather than on play/pause only: a track that plays to its end stops
     /// the music without a pause event, and the check keeps working with the window closed.
     func startWatchingPlayback() {
         guard activityTimer == nil else { return }
         refreshPlaybackActivity()
-        activityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshPlaybackActivity() }
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.appState?.settleDecksThatPlayedToTheEnd()
+                self?.refreshPlaybackActivity()
+            }
         }
     }
 
     /// `startedPlaying` comes from the play/pause state, which is set before the engine catches up, so a
-    /// fresh start holds at once; the 5 s check releases the hold once nothing is audible any more.
+    /// fresh start holds at once; the 1 s check releases the hold once nothing is audible any more.
     func refreshPlaybackActivity(startedPlaying: Bool = false) {
         playbackActivity.update(isPlaying: startedPlaying || appState?.isMusicAudible == true)
     }
@@ -101,7 +104,7 @@ public struct PulseDeckApp: App {
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)
                 }
                 .onChange(of: appState.isDeckAPlaying || appState.isDeckBPlaying) { _, playing in
-                    delegate.refreshPlaybackActivity(startedPlaying: playing) // Hold at once, not up to 5 s later.
+                    delegate.refreshPlaybackActivity(startedPlaying: playing) // Hold at once, not up to 1 s later.
                 }
                 .onChange(of: appState.resolvedLibraryRootURL) { _, _ in
                     Self.updateProjectorLibrary(from: appState, model: projectorViewModel)

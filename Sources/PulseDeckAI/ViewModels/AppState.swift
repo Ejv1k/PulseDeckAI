@@ -1093,6 +1093,24 @@ public final class AppState: ObservableObject {
     }
 
     /// Master playhead of a deck with a loaded track; read on demand by the UI, never published.
+    /// A track that played to its end leaves the transport started, so the deck kept showing Pause. Pause
+    /// those decks so they show Play and the next press starts the track again. Checked on the control
+    /// queue so a play() in progress is never mistaken for an ended track; skipped while a transition runs.
+    public func settleDecksThatPlayedToTheEnd() {
+        guard !isTransitionBusy, let coordinator = audioCoordinator else { return }
+        let ended = coordinator.monitor.performOnControlQueue { () -> [DeckIdentifier] in
+            var decks: [DeckIdentifier] = []
+            for (deck, graph) in [(DeckIdentifier.deckA, coordinator.deckAGraph), (.deckB, coordinator.deckBGraph)]
+            where graph.isMasterPlaying && !graph.isMasterAudible {
+                graph.pause()
+                decks.append(deck)
+            }
+            return decks
+        }
+        if ended.contains(.deckA) { isDeckAPlaying = false }
+        if ended.contains(.deckB) { isDeckBPlaying = false }
+    }
+
     /// True while a deck still sends music to the room (a track that played to its end does not count).
     var isMusicAudible: Bool {
         guard let coordinator = audioCoordinator else { return false }

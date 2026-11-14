@@ -132,6 +132,31 @@ final class TransitionStudioIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testDeckThatPlayedToItsEndShowsPlayAgain() async throws {
+        try prepareStudio()
+        nonisolated(unsafe) var finish: (() -> Void)?
+        coordinator.deckAGraph.segmentCompletionObserverForTesting = { role, completion in
+            if role == .master { finish = completion }
+        }
+        appState.selectedTrackPath = "deck-a.wav"
+        appState.loadSelectedTrackIntoDeck(deck: .deckA)
+        await appState.waitForPendingDeckLoad(deck: .deckA)
+        appState.toggleDeckPlay(deck: .deckA)
+        XCTAssertTrue(appState.isDeckAPlaying)
+        appState.settleDecksThatPlayedToTheEnd()
+        XCTAssertTrue(appState.isDeckAPlaying, "A deck that is still sending audio is left alone")
+
+        try XCTUnwrap(finish)() // The player reports the scheduled audio has run out.
+        appState.settleDecksThatPlayedToTheEnd()
+        XCTAssertFalse(appState.isDeckAPlaying)
+        XCTAssertFalse(coordinator.deckAGraph.isMasterPlaying)
+
+        appState.toggleDeckPlay(deck: .deckA)
+        XCTAssertTrue(appState.isDeckAPlaying, "The next press plays the track again")
+        coordinator.monitor.performOnControlQueue { coordinator.deckAGraph.segmentCompletionObserverForTesting = nil }
+    }
+
+    @MainActor
     func testAutoPilotArmsAtMixOutAndDisarmsWithoutChangingDeckIntent() async throws {
         try prepareStudio()
         appState.selectedTrackPath = "deck-a.wav"
